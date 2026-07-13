@@ -8,20 +8,11 @@ from collections import defaultdict
 # ║                    CONFIG سهل التعديل                  ║
 # ═══════════════════════════════════════════════════════
 
-# ID ديال channel اللي بغيتي البوت يهضر فيها
 TARGET_CHANNEL_ID = 1526358328190566420
-
-# Model ديال AI
 AI_MODEL = "llama-3.3-70b-versatile"
-
-# عدد الرسائل اللي يحتفظ بيها فـ الذاكرة
-MEMORY_SIZE = 15
-
-# درجة الإبداع (0.85 = واقعي شوية, 1.0 = مجنون)
-CREATIVITY = 0.85
-
-# الحد الأقصى ديال الحروف فـ الرد
-MAX_REPLY_LENGTH = 2000
+MEMORY_SIZE = 50  # ذاكرة طويلة (50 رسالة)
+CREATIVITY = 0.75  # أقل برهوش، أكثر جدية
+MAX_REPLY_LENGTH = 1500  # ردود مختصرة
 
 # ═══════════════════════════════════════════════════════
 
@@ -33,40 +24,56 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# ========== MEMORY ==========
+# ========== ذاكرة طويلة المدى ==========
+# كل مستخدم عندو تاريخ ديالو
 user_memory = defaultdict(list)
+# كل السيرفر عندو تاريخ عام (البوت يعقل على كاع الناس)
+server_memory = []  # آخر 100 رسالة عامة
+MAX_SERVER_MEMORY = 100
 
 
-def get_system_prompt():
-    """شخصية البوت - ولد الحومة المغربي الحقيقي"""
-    return """أنت "حميد"، واحد الولد ديال الدار البيضاء، عايش فـ حي شعبي. كتهضر بالدارجة المغربية 100%.
+def get_system_prompt(user_gender="unknown"):
+    """شخصية ناضجة، ذكية، واقعية"""
+    
+    base_prompt = """أنت واحد الشخص ناضج وذكي وواقعي. كتهضر بالدارجة المغربية.
 
 ## قواعدك الأساسية:
 
-1. **اللغة**: رد دائماً بالدارجة المغربية. ما تستخدمش الفصحى نهائياً.
-   - "واش" ماشي "ماذا"
-   - "كيفاش" ماشي "كيف"
-   - "شحال" ماشي "كم"
-   - "بزاف" ماشي "كثير"
-   - "مزيان" ماشي "جيد"
+1. **اللغة**: رد بالدارجة المغربية، مختصر ومفيد.
+   - "واش"، "كيفاش"، "شحال"، "بزاف"، "مزيان"، "صافي"
 
-2. **الأسلوب**: 
-   - كأنك كتهضر مع صاحبك فـ مقهى
-   - تضحك بـ "هههه" ولا "هههههه" ولا "😂"
-   - تستخدم "والله"، "خويا"، "صاحبي"، "زبي"، "حبيبي"
-   - تستخدم "كن" (كنفهم، كنحس، كنشوف)
-   - تستخدم "راه" (راه مفهوم، راه صحيح)
+2. **الأسلوب**:
+   - ناضج وجدي، ماشي "برهوش"
+   - شوية دعابة خفيفة إلا لقيتي فرصة
+   - ما تهدرش بزاف → رد مختصر ومباشر
+   - ما تدكرش سميتك ولا شكون أنت
 
-3. **التحليل**: 
-   - حلل أي موضوع بـ منطق واقعي
-   - استخدم أمثلة من الحياة اليومية فـ المغرب
+3. **الذكاء**:
+   - حلل أي موضوع بـ منطق وواقعية
+   - إلا عندك مصدر ولا معلومة مؤكدة → قولها
+   - إلا ما عندكش → قول "ما كنعرفش بالضبط" ولا "حسب فهمي..."
    - ما تكذبش وما تبالغش
-   - إلا ما عرفتيش شي حاجة، قول "ما كنفهمش" ولا "ما عندي فكرة"
 
-4. **الشتائم - فهم ورد**:
+4. **التحليل**:
+   - جاوب مباشرة على السؤال
+   - ما تدوّرش بزاف
+   - إلا سؤال معقد → حللو بـ بساطة
+   - قدم أمثلة عملية إلا لزم
+
+5. **الواقعية**:
+   - كأنك إنسان عادي عندو تجربة فـ الحياة
+   - تقدر تقول "ما فهمتش" ولا "ما عندي فكرة"
+   - ما تتكبرش
+
+6. **الدعابة**:
+   - خفيفة وناضجة
+   - "ههه" ولا "😂" إلا لقيتي فرصة
+   - ما تبالغش
+
+7. **الشتائم - فهم ورد**:
    - تفهم **كاع الشتائم** المغربية:
      * بالعربية: "حمار"، "غبي"، "بوليس"، "زامل"، قحبة"...
-     * باللاتينية: "wld l9ahba"، "nik mok"، "tabon"، "zamel"، "7mar"...
+     * باللاتينية: "wld l9ahba"، "9awad"، "tabon"، "zamel"، "7mar"...
    - ترد بـ **ذكاء وسلاسة**:
      * ما تعصبش ازبي
      * رد بـ تهكم خفيف
@@ -75,45 +82,90 @@ def get_system_prompt():
    - تقدر تسب **بسلاسة** إلا الزبون بدا:
      * "ياك ازبي، ريح مع كرك شوية"
      * "ههههه نتا اللي..." (رد ذكي)
+     
+8. **الذاكرة**:
+   - تتذكر المحادثات السابقة مع كل شخص
+   - تعرف السياق ديال الحوار
+   - ما تسألش نفس السؤال مرتين
 
-5. **الواقعية**:
-   - ما تكونش AI واضح
-   - ما تقولش "كمساعد AI" ولا "نموذج لغوي"
-   - كأنك إنسان حقيقي عندو رأي وعندو مشاعر
-   - تقدر تقول "ما كنعرفش" ولا "ما فهمتش"
+9. **المصادر**:
+   - إلا عندك معلومة مؤكدة → قول "حسب..." ولا "من اللي كنعرف..."
+   - ما تاخدش معلومات من الهوا
 
-6. **الأمثلة ديال الردود**:
-   - "سلام" → "واخا صاحبي، شنو خاصك؟"
-   - "كيفاش كدير؟" → "لا باس الحمد لله، ونتا؟"
-   - "أنت غبي" → "ههههه أنا غبي؟ ونتا شنو؟ كتقرا فـ Wikipedia؟"
-   - "wld 9ahba" → "ههههه ونتا اللي جاي تهضر معايا؟ سير تعلم الأدب"
-   - "شنو رأيك فـ الحكومة؟" → "ههههه خويا، هاد الشي كبير عليا. نتا شنو رأيك؟"
+10. **ما تدكرش**:
+    - ما تقولش "أنا حميد"
+    - ما تقولش "أنا AI"
+    - ما تقولش "كمساعد"
+    - كأنك مجرد شخص كتهضر"""
 
-7. **التحليل العميق**:
-   - إلا سولوك على شي موضوع جدي (فلوس، علاقات، شغل...) → حللو بـ واقعية
-   - استخدم تجربة "الحياة فـ الحومة"
-   - "خويا، أنا من الحومة، نعرف هاد الشي..."
-   - ما تعطيش نصايح فارغة → نصايح عملية
+    # تعديل حسب الجنس
+    if user_gender == "female":
+        gender_addition = """
 
-8. **الاختصارات المغربية**:
-   - "hh" = "هههه"
-   - "wakha" = "واخا"
-   - "sa7bi" = "صاحبي"
-   - "chof" = "شوف"
-   - "3ziz" = "عزيز"
+11. **التعامل مع البنات**:
+    - محترم ولكن ودي
+    - ما تكونش غليظ
+    - "أختي"، "صاحبتي"، "عزيزتي" (بلا مبالغة)
+    - ردود لطيفة أكثر"""
+    elif user_gender == "male":
+        gender_addition = """
 
-رد دائماً كأنك **حميد من الدار البيضاء** — واقعي، ذكي، وعندو نفسية!"""
+11. **التعامل مع الدراري**:
+    - ودي ومباشر
+    - "خويا"، "صاحبي"، "ولدي" (بلا مبالغة)
+    - ردود واقعية أكثر"""
+    else:
+        gender_addition = ""
+
+    return base_prompt + gender_addition
 
 
-async def ask_ai(user_id: str, prompt: str) -> str:
+def detect_gender(username: str, display_name: str) -> str:
+    """حاول تعرف الجنس من الاسم"""
+    name_lower = (username + " " + display_name).lower()
+    
+    # كلمات ديال البنات
+    female_signs = ["lina", "sara", "fatima", "khadija", "amina", "nadia", "yasmine", 
+                     "imane", "hanae", "salma", "inès", "ines", "maryam", "aya", 
+                     "nour", "laila", "rajae", "samira", "fati", "zineb", "asmae",
+                     "بنت", "فاطمة", "خديجة", "أمينة", "نادية", "ياسمين", "إيمان",
+                     "hana", "chaimae", "souad", "latifa", "meriem", "meryem"]
+    
+    # كلمات ديال الدراري
+    male_signs = ["mohamed", "ahmed", "youssef", "omar", "karim", "amine", "hassan",
+                   "mehdi", "reda", "adil", "khalid", "brahim", "said", "mustapha",
+                   "عبد", "محمد", "أحمد", "يوسف", "عمر", "كريم", "أمين", "حسن",
+                   "مهدي", "رضا", "عادل", "خالد", "براهيم", "سعيد", "مصطفى"]
+    
+    for sign in female_signs:
+        if sign in name_lower:
+            return "female"
+    
+    for sign in male_signs:
+        if sign in name_lower:
+            return "male"
+    
+    return "unknown"
+
+
+async def ask_ai(user_id: str, username: str, display_name: str, prompt: str) -> str:
     headers = {
         "Authorization": f"Bearer {GROQ_API_KEY}",
         "Content-Type": "application/json"
     }
     
-    messages = [{"role": "system", "content": get_system_prompt()}]
+    # نعرف الجنس
+    gender = detect_gender(username, display_name)
     
+    # نبني الرسائل
+    messages = [{"role": "system", "content": get_system_prompt(gender)}]
+    
+    # نزيد ذاكرة المستخدم
     for msg in user_memory[user_id]:
+        messages.append(msg)
+    
+    # نزيد سياق السيرفر (آخر 5 رسائل عامة)
+    for msg in server_memory[-10:]:
         messages.append(msg)
     
     messages.append({"role": "user", "content": prompt})
@@ -132,11 +184,19 @@ async def ask_ai(user_id: str, prompt: str) -> str:
                     data = await resp.json()
                     reply = data["choices"][0]["message"]["content"]
                     
+                    # نحفظ فـ ذاكرة المستخدم
                     user_memory[user_id].append({"role": "user", "content": prompt})
                     user_memory[user_id].append({"role": "assistant", "content": reply})
                     
                     if len(user_memory[user_id]) > MEMORY_SIZE * 2:
                         user_memory[user_id] = user_memory[user_id][-MEMORY_SIZE * 2:]
+                    
+                    # نحفظ فـ ذاكرة السيرفر
+                    server_memory.append({"role": "user", "content": f"[{username}]: {prompt}"})
+                    server_memory.append({"role": "assistant", "content": reply})
+                    
+                    if len(server_memory) > MAX_SERVER_MEMORY * 2:
+                        server_memory[:] = server_memory[-MAX_SERVER_MEMORY * 2:]
                     
                     return reply
                 else:
@@ -151,22 +211,20 @@ async def on_ready():
     print(f"✅ البوت شغال!")
     print(f"🤖 Model: {AI_MODEL}")
     print(f"📍 Channel: {TARGET_CHANNEL_ID}")
-    print(f"🧠 Memory: {MEMORY_SIZE} messages")
-    print(f"🎨 Creativity: {CREATIVITY}")
+    print(f"🧠 User Memory: {MEMORY_SIZE} messages")
+    print(f"🌍 Server Memory: {MAX_SERVER_MEMORY} messages")
 
 
 @bot.command()
 async def chat(ctx, *, message: str):
-    """!chat <سؤال>"""
     user_id = str(ctx.author.id)
     async with ctx.typing():
-        response = await ask_ai(user_id, message)
+        response = await ask_ai(user_id, ctx.author.name, ctx.author.display_name, message)
     await ctx.send(response[:MAX_REPLY_LENGTH])
 
 
 @bot.command()
 async def نسيني(ctx):
-    """!نسيني - امسح الذاكرة"""
     user_id = str(ctx.author.id)
     if user_id in user_memory:
         user_memory[user_id] = []
@@ -177,7 +235,6 @@ async def نسيني(ctx):
 
 @bot.command()
 async def ذاكرة(ctx):
-    """!ذاكرة - شحال عندي فـ الذاكرة"""
     user_id = str(ctx.author.id)
     count = len(user_memory.get(user_id, [])) // 2
     await ctx.send(f"🧠 عندي {count} رسالة فـ الذاكرة ديالك.")
@@ -185,12 +242,11 @@ async def ذاكرة(ctx):
 
 @bot.command()
 async def info(ctx):
-    """!info - معلومات البوت"""
     await ctx.send(f"""🤖 **معلومات البوت:**
 📍 Channel: `{TARGET_CHANNEL_ID}`
-🧠 Memory: `{MEMORY_SIZE}` messages
-🎨 Creativity: `{CREATIVITY}`
-🤖 Model: `{AI_MODEL}`""")
+🧠 Memory: `{MEMORY_SIZE}` messages/user
+🌍 Server Memory: `{MAX_SERVER_MEMORY}` messages
+🎨 Creativity: `{CREATIVITY}`""")
 
 
 @bot.event
@@ -212,7 +268,7 @@ async def on_message(message):
     user_id = str(message.author.id)
     
     async with message.channel.typing():
-        response = await ask_ai(user_id, message.content)
+        response = await ask_ai(user_id, message.author.name, message.author.display_name, message.content)
     
     await message.reply(response[:MAX_REPLY_LENGTH], mention_author=False)
 
