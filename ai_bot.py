@@ -9,7 +9,8 @@ intents.message_content = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 
 genai.configure(api_key=os.getenv('GEMINI_API_KEY'))
-model = genai.GenerativeModel('gemini-1.5-flash')
+تغيير الموديل لموديل مضمون
+model = genai.GenerativeModel('gemini-1.5-pro')
 
 @bot.event
 async def on_ready():
@@ -17,7 +18,11 @@ async def on_ready():
 
 @bot.command(name='ask')
 async def ask(ctx, *, question: str):
-    response = model.generate_content(question)
-    await ctx.send(response.text)
+    try:
+        response = model.generate_content(question)
+        await ctx.send(response.text)
+    except Exception as e:
+        await ctx.send("Error.")
+        print(e)
 
 bot.run(os.getenv('DISCORD_TOKEN'))
