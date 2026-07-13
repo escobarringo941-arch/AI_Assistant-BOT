@@ -23,7 +23,7 @@ async def ask(ctx, *, question: str):
         )
         await ctx.send(response.text)
     except Exception as e:
-        print(f"Error: {e}")
-        await ctx.send("An error occurred.")
+        print(f"Full Error Detail: {e}")
+        await ctx.send(f"Error: {str(e)}")
 
 bot.run(os.getenv('DISCORD_TOKEN'))
