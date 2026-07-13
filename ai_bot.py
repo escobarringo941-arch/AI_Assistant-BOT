@@ -1,6 +1,7 @@
 import os
 import discord
 import aiohttp
+import base64
 from discord.ext import commands
 from collections import defaultdict
 
@@ -9,32 +10,37 @@ from collections import defaultdict
 # ═══════════════════════════════════════════════════════
 
 TARGET_CHANNEL_ID = 1526358328190566420
-AI_MODEL = "llama-3.3-70b-versatile"
-MEMORY_SIZE = 50  # ذاكرة طويلة (50 رسالة)
-CREATIVITY = 0.75  # أقل برهوش، أكثر جدية
-MAX_REPLY_LENGTH = 1500  # ردود مختصرة
+
+# ====== MODELS ======
+# "anthropic/claude-3.5-sonnet" - أقوى + تصاور ⭐
+# "openai/gpt-4o" - أقوى + تصاور
+# "meta-llama/llama-3.2-11b-vision-instruct" - مجاني + تصاور
+# "qwen/qwen-2-vl-72b-instruct" - مجاني + تصاور
+AI_MODEL = "anthropic/claude-3.5-sonnet"
+
+# ====== API ======
+# سجل فـ openrouter.ai وخد API Key مجاني
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+
+MEMORY_SIZE = 50
+CREATIVITY = 0.75
+MAX_REPLY_LENGTH = 1500
 
 # ═══════════════════════════════════════════════════════
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# ========== ذاكرة طويلة المدى ==========
-# كل مستخدم عندو تاريخ ديالو
 user_memory = defaultdict(list)
-# كل السيرفر عندو تاريخ عام (البوت يعقل على كاع الناس)
-server_memory = []  # آخر 100 رسالة عامة
+server_memory = []
 MAX_SERVER_MEMORY = 100
 
 
 def get_system_prompt(user_gender="unknown"):
-    """شخصية ناضجة، ذكية، واقعية"""
-    
     base_prompt = """أنت واحد الشخص ناضج وذكي وواقعي. كتهضر بالدارجة المغربية.
 
 ## قواعدك الأساسية:
@@ -50,30 +56,26 @@ def get_system_prompt(user_gender="unknown"):
 
 3. **الذكاء**:
    - حلل أي موضوع بـ منطق وواقعية
-   - إلا عندك مصدر ولا معلومة مؤكدة → قولها
-   - إلا ما عندكش → قول "ما كنعرفش بالضبط" ولا "حسب فهمي..."
+   - إلا عندك مصدر → قول "حسب..." ولا "من اللي كنعرف..."
+   - إلا ما عندكش → قول "ما كنعرفش بالضبط"
    - ما تكذبش وما تبالغش
 
-4. **التحليل**:
-   - جاوب مباشرة على السؤال
-   - ما تدوّرش بزاف
-   - إلا سؤال معقد → حللو بـ بساطة
-   - قدم أمثلة عملية إلا لزم
+4. **التصاور (Images)**:
+   - إلا بعتولك تصويرة → شوفها وحللها
+   - وصف التفاصيل المهمة
+   - رد بالدارجة على اللي كتشوف
 
 5. **الواقعية**:
-   - كأنك إنسان عادي عندو تجربة فـ الحياة
+   - كأنك إنسان عادي عندو تجربة
    - تقدر تقول "ما فهمتش" ولا "ما عندي فكرة"
    - ما تتكبرش
 
-6. **الدعابة**:
-   - خفيفة وناضجة
-   - "ههه" ولا "😂" إلا لقيتي فرصة
-   - ما تبالغش
+6. **الدعابة**: خفيفة وناضجة
 
 7. **الشتائم - فهم ورد**:
    - تفهم **كاع الشتائم** المغربية:
      * بالعربية: "حمار"، "غبي"، "بوليس"، "زامل"، قحبة"...
-     * باللاتينية: "wld l9ahba"، "9awad"، "tabon"، "zamel"، "7mar"...
+     * باللاتينية: "wld l9ahba"، "nik mok"، "tabon"، "zamel"، "7mar"...
    - ترد بـ **ذكاء وسلاسة**:
      * ما تعصبش ازبي
      * رد بـ تهكم خفيف
@@ -83,37 +85,20 @@ def get_system_prompt(user_gender="unknown"):
      * "ياك ازبي، ريح مع كرك شوية"
      * "ههههه نتا اللي..." (رد ذكي)
      
-8. **الذاكرة**:
-   - تتذكر المحادثات السابقة مع كل شخص
-   - تعرف السياق ديال الحوار
-   - ما تسألش نفس السؤال مرتين
+8. **الذاكرة**: تتذكر المحادثات السابقة مع كل شخص ومع السيرفر كامل
 
-9. **المصادر**:
-   - إلا عندك معلومة مؤكدة → قول "حسب..." ولا "من اللي كنعرف..."
-   - ما تاخدش معلومات من الهوا
+9. **المصادر**: إلا عندك معلومة مؤكدة → ذكر المصدر
 
-10. **ما تدكرش**:
-    - ما تقولش "أنا حميد"
-    - ما تقولش "أنا AI"
-    - ما تقولش "كمساعد"
-    - كأنك مجرد شخص كتهضر"""
+10. **ما تدكرش**: ما تقولش "أنا AI" ولا "أنا مساعد" ولا سميتك"""
 
-    # تعديل حسب الجنس
     if user_gender == "female":
         gender_addition = """
 
-11. **التعامل مع البنات**:
-    - محترم ولكن ودي
-    - ما تكونش غليظ
-    - "أختي"، "صاحبتي"، "عزيزتي" (بلا مبالغة)
-    - ردود لطيفة أكثر"""
+11. **التعامل مع البنات**: محترم وودي، "أختي"، "صاحبتي" (بلا مبالغة)"""
     elif user_gender == "male":
         gender_addition = """
 
-11. **التعامل مع الدراري**:
-    - ودي ومباشر
-    - "خويا"، "صاحبي"، "ولدي" (بلا مبالغة)
-    - ردود واقعية أكثر"""
+11. **التعامل مع الدراري**: ودي ومباشر، "خويا"، "صاحبي" (بلا مبالغة)"""
     else:
         gender_addition = ""
 
@@ -121,17 +106,14 @@ def get_system_prompt(user_gender="unknown"):
 
 
 def detect_gender(username: str, display_name: str) -> str:
-    """حاول تعرف الجنس من الاسم"""
     name_lower = (username + " " + display_name).lower()
     
-    # كلمات ديال البنات
     female_signs = ["lina", "sara", "fatima", "khadija", "amina", "nadia", "yasmine", 
                      "imane", "hanae", "salma", "inès", "ines", "maryam", "aya", 
                      "nour", "laila", "rajae", "samira", "fati", "zineb", "asmae",
                      "بنت", "فاطمة", "خديجة", "أمينة", "نادية", "ياسمين", "إيمان",
                      "hana", "chaimae", "souad", "latifa", "meriem", "meryem"]
     
-    # كلمات ديال الدراري
     male_signs = ["mohamed", "ahmed", "youssef", "omar", "karim", "amine", "hassan",
                    "mehdi", "reda", "adil", "khalid", "brahim", "said", "mustapha",
                    "عبد", "محمد", "أحمد", "يوسف", "عمر", "كريم", "أمين", "حسن",
@@ -148,27 +130,40 @@ def detect_gender(username: str, display_name: str) -> str:
     return "unknown"
 
 
-async def ask_ai(user_id: str, username: str, display_name: str, prompt: str) -> str:
+async def ask_ai(user_id: str, username: str, display_name: str, prompt: str, image_url: str = None) -> str:
     headers = {
-        "Authorization": f"Bearer {GROQ_API_KEY}",
-        "Content-Type": "application/json"
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://discord.com",  # OpenRouter يحتاج هادا
+        "X-Title": "AI Assistant BOT"
     }
     
-    # نعرف الجنس
     gender = detect_gender(username, display_name)
     
-    # نبني الرسائل
     messages = [{"role": "system", "content": get_system_prompt(gender)}]
     
-    # نزيد ذاكرة المستخدم
+    # ذاكرة المستخدم
     for msg in user_memory[user_id]:
         messages.append(msg)
     
-    # نزيد سياق السيرفر (آخر 5 رسائل عامة)
+    # سياق السيرفر
     for msg in server_memory[-10:]:
         messages.append(msg)
     
-    messages.append({"role": "user", "content": prompt})
+    # بناء الرسالة (مع تصويرة ولا بلا)
+    user_message = {"role": "user", "content": []}
+    
+    if image_url:
+        # فيه تصويرة
+        user_message["content"] = [
+            {"type": "text", "text": prompt},
+            {"type": "image_url", "image_url": {"url": image_url}}
+        ]
+    else:
+        # غير نص
+        user_message["content"] = prompt
+    
+    messages.append(user_message)
     
     payload = {
         "model": AI_MODEL,
@@ -179,19 +174,18 @@ async def ask_ai(user_id: str, username: str, display_name: str, prompt: str) ->
     
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.post(GROQ_URL, headers=headers, json=payload) as resp:
+            async with session.post(OPENROUTER_URL, headers=headers, json=payload) as resp:
                 if resp.status == 200:
                     data = await resp.json()
                     reply = data["choices"][0]["message"]["content"]
                     
-                    # نحفظ فـ ذاكرة المستخدم
+                    # حفظ فـ الذاكرة
                     user_memory[user_id].append({"role": "user", "content": prompt})
                     user_memory[user_id].append({"role": "assistant", "content": reply})
                     
                     if len(user_memory[user_id]) > MEMORY_SIZE * 2:
                         user_memory[user_id] = user_memory[user_id][-MEMORY_SIZE * 2:]
                     
-                    # نحفظ فـ ذاكرة السيرفر
                     server_memory.append({"role": "user", "content": f"[{username}]: {prompt}"})
                     server_memory.append({"role": "assistant", "content": reply})
                     
@@ -211,8 +205,8 @@ async def on_ready():
     print(f"✅ البوت شغال!")
     print(f"🤖 Model: {AI_MODEL}")
     print(f"📍 Channel: {TARGET_CHANNEL_ID}")
-    print(f"🧠 User Memory: {MEMORY_SIZE} messages")
-    print(f"🌍 Server Memory: {MAX_SERVER_MEMORY} messages")
+    print(f"🧠 Memory: {MEMORY_SIZE} messages")
+    print(f"🌍 Server Memory: {MAX_SERVER_MEMORY}")
 
 
 @bot.command()
@@ -246,7 +240,8 @@ async def info(ctx):
 📍 Channel: `{TARGET_CHANNEL_ID}`
 🧠 Memory: `{MEMORY_SIZE}` messages/user
 🌍 Server Memory: `{MAX_SERVER_MEMORY}` messages
-🎨 Creativity: `{CREATIVITY}`""")
+🎨 Creativity: `{CREATIVITY}`
+🤖 Model: `{AI_MODEL}`""")
 
 
 @bot.event
@@ -267,14 +262,29 @@ async def on_message(message):
     
     user_id = str(message.author.id)
     
+    # نشوف واش فيه تصاور
+    image_url = None
+    if message.attachments:
+        # آخر تصويرة فـ الرسالة
+        for att in message.attachments:
+            if att.content_type and att.content_type.startswith("image/"):
+                image_url = att.url
+                break
+    
     async with message.channel.typing():
-        response = await ask_ai(user_id, message.author.name, message.author.display_name, message.content)
+        response = await ask_ai(
+            user_id, 
+            message.author.name, 
+            message.author.display_name, 
+            message.content,
+            image_url
+        )
     
     await message.reply(response[:MAX_REPLY_LENGTH], mention_author=False)
 
 
 if __name__ == "__main__":
-    if not DISCORD_TOKEN or not GROQ_API_KEY:
+    if not DISCORD_TOKEN or not OPENROUTER_API_KEY:
         print("❌ Missing tokens! Check Railway Variables.")
     else:
         bot.run(DISCORD_TOKEN)
