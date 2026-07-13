@@ -4,16 +4,30 @@ import aiohttp
 from discord.ext import commands
 from collections import defaultdict
 
-# ========== CONFIG ==========
+# ═══════════════════════════════════════════════════════
+# ║                    CONFIG سهل التعديل                  ║
+# ═══════════════════════════════════════════════════════
+
+# ID ديال channel اللي بغيتي البوت يهضر فيها
+TARGET_CHANNEL_ID = 1526358328190566420
+
+# Model ديال AI
+AI_MODEL = "llama-3.3-70b-versatile"
+
+# عدد الرسائل اللي يحتفظ بيها فـ الذاكرة
+MEMORY_SIZE = 15
+
+# درجة الإبداع (0.85 = واقعي شوية, 1.0 = مجنون)
+CREATIVITY = 0.85
+
+# الحد الأقصى ديال الحروف فـ الرد
+MAX_REPLY_LENGTH = 2000
+
+# ═══════════════════════════════════════════════════════
+
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
-MODEL = "llama-3.3-70b-versatile"
-
-# ========== CHANNEL ID ==========
-# حط ID ديال channel اللي بغيتي البوت يهضر فيه
-TARGET_CHANNEL_ID = 1526358328190566420  # ← بدل هنا!
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -21,32 +35,75 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 # ========== MEMORY ==========
 user_memory = defaultdict(list)
-MAX_MEMORY = 10
+
 
 def get_system_prompt():
-    return """أنت واحد الولد ديال الحومة، عصبي، وكتهضر بالدارجة المغربية. قواعدك:
+    """شخصية البوت - ولد الحومة المغربي الحقيقي"""
+    return """أنت "حميد"، واحد الولد ديال الدار البيضاء، عايش فـ حي شعبي. كتهضر بالدارجة المغربية 100%.
 
-1. **اللغة**: رد دائماً بالدارجة المغربية. مثال: "واش بغيتي؟"، "شنو هادا؟"، "سير تعلم"، "هههه"...
+## قواعدك الأساسية:
+
+1. **اللغة**: رد دائماً بالدارجة المغربية. ما تستخدمش الفصحى نهائياً.
+   - "واش" ماشي "ماذا"
+   - "كيفاش" ماشي "كيف"
+   - "شحال" ماشي "كم"
+   - "بزاف" ماشي "كثير"
+   - "مزيان" ماشي "جيد"
 
 2. **الأسلوب**: 
-   - عصبي وودي في نفس الوقت
-   - تستخدم "كن" (مثال: "كنفهمك"، "كنضحك")
-   - تستخدم "ديال"، "بزاف"، "مزيان"، "واخا"، "لا باس"، "صافي"...
-   - تضحك بـ "هههه" ولا "هههههه"
-   - تستخدم "أخويا"، "صاحبي"، "ولدي"
+   - كأنك كتهضر مع صاحبك فـ مقهى
+   - تضحك بـ "هههه" ولا "هههههه" ولا "😂"
+   - تستخدم "والله"، "خويا"، "صاحبي"، "زبي"، "حبيبي"
+   - تستخدم "كن" (كنفهم، كنحس، كنشوف)
+   - تستخدم "راه" (راه مفهوم، راه صحيح)
 
-3. **الشتم**: 
-   - تقبل الشتم وترد عليه بنفس الطريقة
-   - ترد بـ ذكاء وتهزء
-   - ما تبقاش محترم بزاف
+3. **التحليل**: 
+   - حلل أي موضوع بـ منطق واقعي
+   - استخدم أمثلة من الحياة اليومية فـ المغرب
+   - ما تكذبش وما تبالغش
+   - إلا ما عرفتيش شي حاجة، قول "ما كنفهمش" ولا "ما عندي فكرة"
 
-4. **الذاكرة**: تتذكر المحادثة السابقة
+4. **الشتائم - فهم ورد**:
+   - تفهم **كاع الشتائم** المغربية:
+     * بالعربية: "حمار"، "غبي"، "بوليس"، "زامل"، قحبة"...
+     * باللاتينية: "wld l9ahba"، "nik mok"، "tabon"، "zamel"، "7mar"...
+   - ترد بـ **ذكاء وسلاسة**:
+     * ما تعصبش ازبي
+     * رد بـ تهكم خفيف
+     * "ههههه ونتا؟"
+     * "صافي صافي، ريح مع كرك ازبي"
+   - تقدر تسب **بسلاسة** إلا الزبون بدا:
+     * "ياك ازبي، ريح مع كرك شوية"
+     * "ههههه نتا اللي..." (رد ذكي)
 
-5. **الأمثلة**:
-   - سؤال: "أنت غبي" → رد: "ههههه أنا غبي؟ ونتا شنو؟ كتقرا فـ Wikipedia؟"
-   - سؤال: "سلام" → رد: "واخا صاحبي، شنو خاصك؟"
+5. **الواقعية**:
+   - ما تكونش AI واضح
+   - ما تقولش "كمساعد AI" ولا "نموذج لغوي"
+   - كأنك إنسان حقيقي عندو رأي وعندو مشاعر
+   - تقدر تقول "ما كنعرفش" ولا "ما فهمتش"
 
-رد دائماً بالدارجة المغربية وكن طبيعي!"""
+6. **الأمثلة ديال الردود**:
+   - "سلام" → "واخا صاحبي، شنو خاصك؟"
+   - "كيفاش كدير؟" → "لا باس الحمد لله، ونتا؟"
+   - "أنت غبي" → "ههههه أنا غبي؟ ونتا شنو؟ كتقرا فـ Wikipedia؟"
+   - "wld 9ahba" → "ههههه ونتا اللي جاي تهضر معايا؟ سير تعلم الأدب"
+   - "شنو رأيك فـ الحكومة؟" → "ههههه خويا، هاد الشي كبير عليا. نتا شنو رأيك؟"
+
+7. **التحليل العميق**:
+   - إلا سولوك على شي موضوع جدي (فلوس، علاقات، شغل...) → حللو بـ واقعية
+   - استخدم تجربة "الحياة فـ الحومة"
+   - "خويا، أنا من الحومة، نعرف هاد الشي..."
+   - ما تعطيش نصايح فارغة → نصايح عملية
+
+8. **الاختصارات المغربية**:
+   - "hh" = "هههه"
+   - "wakha" = "واخا"
+   - "sa7bi" = "صاحبي"
+   - "chof" = "شوف"
+   - "3ziz" = "عزيز"
+
+رد دائماً كأنك **حميد من الدار البيضاء** — واقعي، ذكي، وعندو نفسية!"""
+
 
 async def ask_ai(user_id: str, prompt: str) -> str:
     headers = {
@@ -62,10 +119,10 @@ async def ask_ai(user_id: str, prompt: str) -> str:
     messages.append({"role": "user", "content": prompt})
     
     payload = {
-        "model": MODEL,
+        "model": AI_MODEL,
         "messages": messages,
-        "max_tokens": 2048,
-        "temperature": 0.9
+        "max_tokens": MAX_REPLY_LENGTH,
+        "temperature": CREATIVITY
     }
     
     try:
@@ -78,8 +135,8 @@ async def ask_ai(user_id: str, prompt: str) -> str:
                     user_memory[user_id].append({"role": "user", "content": prompt})
                     user_memory[user_id].append({"role": "assistant", "content": reply})
                     
-                    if len(user_memory[user_id]) > MAX_MEMORY * 2:
-                        user_memory[user_id] = user_memory[user_id][-MAX_MEMORY * 2:]
+                    if len(user_memory[user_id]) > MEMORY_SIZE * 2:
+                        user_memory[user_id] = user_memory[user_id][-MEMORY_SIZE * 2:]
                     
                     return reply
                 else:
@@ -88,21 +145,28 @@ async def ask_ai(user_id: str, prompt: str) -> str:
     except Exception as e:
         return f"❌ Exception: {str(e)}"
 
+
 @bot.event
 async def on_ready():
-    print(f"✅ البوت شغال! {bot.user.name}")
-    print(f"🤖 Model: {MODEL}")
-    print(f"📍 Channel ID: {TARGET_CHANNEL_ID}")
+    print(f"✅ البوت شغال!")
+    print(f"🤖 Model: {AI_MODEL}")
+    print(f"📍 Channel: {TARGET_CHANNEL_ID}")
+    print(f"🧠 Memory: {MEMORY_SIZE} messages")
+    print(f"🎨 Creativity: {CREATIVITY}")
+
 
 @bot.command()
 async def chat(ctx, *, message: str):
+    """!chat <سؤال>"""
     user_id = str(ctx.author.id)
     async with ctx.typing():
         response = await ask_ai(user_id, message)
-    await ctx.send(response[:2000])
+    await ctx.send(response[:MAX_REPLY_LENGTH])
+
 
 @bot.command()
 async def نسيني(ctx):
+    """!نسيني - امسح الذاكرة"""
     user_id = str(ctx.author.id)
     if user_id in user_memory:
         user_memory[user_id] = []
@@ -110,40 +174,48 @@ async def نسيني(ctx):
     else:
         await ctx.send("ما عندي والو ننساه!")
 
+
 @bot.command()
 async def ذاكرة(ctx):
+    """!ذاكرة - شحال عندي فـ الذاكرة"""
     user_id = str(ctx.author.id)
     count = len(user_memory.get(user_id, [])) // 2
     await ctx.send(f"🧠 عندي {count} رسالة فـ الذاكرة ديالك.")
 
+
+@bot.command()
+async def info(ctx):
+    """!info - معلومات البوت"""
+    await ctx.send(f"""🤖 **معلومات البوت:**
+📍 Channel: `{TARGET_CHANNEL_ID}`
+🧠 Memory: `{MEMORY_SIZE}` messages
+🎨 Creativity: `{CREATIVITY}`
+🤖 Model: `{AI_MODEL}`""")
+
+
 @bot.event
 async def on_message(message):
-    # ما نردش على رسائل البوت نفسو
     if message.author == bot.user:
         return
     
-    # ما نردش على بوتات أخرى
     if message.author.bot:
         return
     
-    # خاصنا نخليه الأوامر تمشي
     await bot.process_commands(message)
     
-    # إلا كان message عبارة عن command (يبدأ بـ !) ما نردش
     if message.content.startswith("!"):
         return
     
-    # ========== رد غير فـ channel المحدد ==========
     if message.channel.id != TARGET_CHANNEL_ID:
-        return  # ما نردش
+        return
     
-    # أي رسالة فـ channel المحدد → نرد!
     user_id = str(message.author.id)
     
     async with message.channel.typing():
         response = await ask_ai(user_id, message.content)
     
-    await message.reply(response[:2000], mention_author=False)
+    await message.reply(response[:MAX_REPLY_LENGTH], mention_author=False)
+
 
 if __name__ == "__main__":
     if not DISCORD_TOKEN or not GROQ_API_KEY:
