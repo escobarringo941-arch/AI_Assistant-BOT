@@ -8,11 +8,6 @@ DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
-# Models مجانية فـ Groq:
-# "llama-3.1-8b-instant"  - سريع وقوي ⭐
-# "llama-3.1-70b-versatile" - أقوى شوية
-# "mixtral-8x7b-32768" - متعدد اللغات مزيان
-# "gemma-7b-it" - خفيف
 MODEL = "llama-3.1-8b-instant"
 
 intents = discord.Intents.default()
@@ -20,7 +15,6 @@ intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 async def ask_ai(prompt: str) -> str:
-    """نرسل السؤال للـ AI ونرجع الجواب"""
     headers = {
         "Authorization": f"Bearer {GROQ_API_KEY}",
         "Content-Type": "application/json"
@@ -54,26 +48,20 @@ async def ask_ai(prompt: str) -> str:
 @bot.event
 async def on_ready():
     print(f"✅ البوت شغال! {bot.user.name}")
-    print(f"🤖 Model: {MODEL}")
 
 @bot.command()
 async def chat(ctx, *, message: str):
-    """!chat <سؤال>"""
     async with ctx.typing():
         response = await ask_ai(message)
-    # Discord limit: 2000 char
     await ctx.send(response[:2000])
 
 @bot.event
 async def on_message(message):
-    # ما نردش على رسائل البوت نفسو
     if message.author == bot.user:
         return
     
-    # نرد إلا منشونا فـ channel ولا DM
     if bot.user.mentioned_in(message) or isinstance(message.channel, discord.DMChannel):
         async with message.channel.typing():
-            # نحيد الـ mention من الرسالة
             clean = message.content.replace(f"<@{bot.user.id}>", "").strip()
             if clean:
                 response = await ask_ai(clean)
@@ -81,7 +69,6 @@ async def on_message(message):
     
     await bot.process_commands(message)
 
-# ========== RUN ==========
 if __name__ == "__main__":
     if not DISCORD_TOKEN or not GROQ_API_KEY:
         print("❌ Missing tokens! Check Railway Variables.")
