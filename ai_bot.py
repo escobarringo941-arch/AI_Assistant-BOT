@@ -1,15 +1,16 @@
 import discord
 from discord.ext import commands
 import os
-import google.generativeai as genai
+from google import genai
 
+إعداد الـ Intents
 intents = discord.Intents.default()
 intents.message_content = True 
 
 bot = commands.Bot(command_prefix='!', intents=intents, help_command=None)
 
-genai.configure(api_key=os.getenv('GEMINI_API_KEY'))
-model = genai.GenerativeModel('gemini-1.5-flash')
+إعداد الـ Client الجديد
+client = genai.Client(api_key=os.getenv('GEMINI_API_KEY'))
 
 @bot.event
 async def on_ready():
@@ -18,7 +19,11 @@ async def on_ready():
 @bot.command(name='ask')
 async def ask(ctx, *, question: str = "How can I help you?"):
     try:
-        response = model.generate_content(question)
+        # استخدام الطريقة الجديدة للمكتبة الجديدة
+        response = client.models.generate_content(
+            model='gemini-2.0-flash', 
+            contents=question
+        )
         await ctx.send(response.text)
     except Exception as e:
         await ctx.send("Error processing request.")
