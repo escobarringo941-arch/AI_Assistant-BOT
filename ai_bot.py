@@ -9,7 +9,6 @@ intents.message_content = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 
 genai.configure(api_key=os.getenv('GEMINI_API_KEY'))
-تغيير الموديل لموديل مضمون
 model = genai.GenerativeModel('gemini-1.5-pro')
 
 @bot.event
