@@ -3,6 +3,8 @@ import discord
 import aiohttp
 import random
 import asyncio
+import json
+from datetime import datetime, timedelta
 from discord.ext import commands, tasks
 from collections import defaultdict
 
@@ -21,10 +23,29 @@ AI_MODEL = "deepseek/deepseek-chat"
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-MEMORY_SIZE = 100  # زدنا باش يحفظ أكثر
+MEMORY_SIZE = 100
 CREATIVITY = 0.85
 MAX_REPLY_LENGTH = 1500
 API_TIMEOUT = 15
+
+# ═══════════════════════════════════════════════════════
+# ║              MODERATION CONFIG (جديد)                  ║
+# ═══════════════════════════════════════════════════════
+
+# IDs ديال القنوات والأدوار — بدلهم حسب السيرفر ديالك
+MOD_LOGS_CHANNEL_ID = 1524957892925456545  # قناة سجل الموديراتورز (بدلوها)
+MEMBER_ROLE_ID = 1234567890123456789  # الدور لي كيعطى للأعضاء الجداد (بدلوها)
+MUTED_ROLE_ID = 1234567890123456789  # الدور ديال Mute (بدلوها)
+
+# كلمات ممنوعة (Auto-Mod)
+BANNED_WORDS = [
+    'سبام', 'spam', 'www.', 'discord.gg', 'http://', 'https://',
+    'nude', 'porn', 'xxx', 'sex', 'fuck', 'shit', 'bitch'
+]
+
+SPAM_THRESHOLD = 5      # عدد الرسائل فوقاش يتحسب سبام
+SPAM_INTERVAL = 5       # ثواني
+WARN_LIMIT = 3          # عدد التحذيرات قبل auto-kick
 
 # ═══════════════════════════════════════════════════════
 
@@ -35,13 +56,18 @@ intents.message_content = True
 intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# ========== ذاكرة ==========
+# ========== ذاكرة AI ==========
 user_memory = defaultdict(list)
 server_memory = []
 MAX_SERVER_MEMORY = 100
 
 # ========== ذاكرة التعلم ==========
-learned_knowledge = []  # حوايج جديدة علمناهوم
+learned_knowledge = []
+
+# ========== MODERATION DATA (جديد) ==========
+warns_db = {}           # {user_id: {"count": int, "reasons": [str], "dates": [str]}}
+spam_tracker = {}       # {user_id: [timestamps]}
+mute_tasks = {}         # {user_id: asyncio.Task}
 
 
 def get_system_prompt(user_gender="unknown"):
@@ -111,25 +137,25 @@ def get_system_prompt(user_gender="unknown"):
 
 def detect_gender(username: str, display_name: str) -> str:
     name_lower = (username + " " + display_name).lower()
-    
+
     female_signs = ["lina", "sara", "fatima", "khadija", "amina", "nadia", "yasmine", 
                      "imane", "hanae", "salma", "inès", "ines", "maryam", "aya", 
                      "نور", "ليلى", "رجاء", "سميرة", "فاتي", "زينب", "أسماء",
                      "hana", "chaimae", "souad", "latifa", "meriem", "meryem"]
-    
+
     male_signs = ["mohamed", "ahmed", "youssef", "omar", "karim", "amine", "hassan",
                    "mehdi", "reda", "adil", "khalid", "brahim", "said", "mustapha",
                    "عبد", "محمد", "أحمد", "يوسف", "عمر", "كريم", "أمين", "حسن",
                    "مهدي", "رضا", "عادل", "خالد", "براهيم", "سعيد", "مصطفى"]
-    
+
     for sign in female_signs:
         if sign in name_lower:
             return "female"
-    
+
     for sign in male_signs:
         if sign in name_lower:
             return "male"
-    
+
     return "unknown"
 
 
@@ -140,51 +166,49 @@ async def ask_ai(user_id: str, username: str, display_name: str, prompt: str) ->
         "HTTP-Referer": "https://discord.com",
         "X-Title": "AI Assistant BOT"
     }
-    
+
     gender = detect_gender(username, display_name)
-    
-    # نبني الرسائل مع الذاكرة والتعلم
+
     messages = [{"role": "system", "content": get_system_prompt(gender)}]
-    
-    # نزيد حوايج اللي تعلمناهوم
+
     if learned_knowledge:
         knowledge_text = "حوايج جديدة تعلمتهوم:\n" + "\n".join(learned_knowledge[-20:])
         messages.append({"role": "system", "content": knowledge_text})
-    
+
     for msg in user_memory[user_id]:
         messages.append(msg)
-    
+
     for msg in server_memory[-10:]:
         messages.append(msg)
-    
+
     messages.append({"role": "user", "content": prompt})
-    
+
     payload = {
         "model": AI_MODEL,
         "messages": messages,
         "max_tokens": MAX_REPLY_LENGTH,
         "temperature": CREATIVITY
     }
-    
+
     try:
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=API_TIMEOUT)) as session:
             async with session.post(OPENROUTER_URL, headers=headers, json=payload) as resp:
                 if resp.status == 200:
                     data = await resp.json()
                     reply = data["choices"][0]["message"]["content"]
-                    
+
                     user_memory[user_id].append({"role": "user", "content": prompt})
                     user_memory[user_id].append({"role": "assistant", "content": reply})
-                    
+
                     if len(user_memory[user_id]) > MEMORY_SIZE * 2:
                         user_memory[user_id] = user_memory[user_id][-MEMORY_SIZE * 2:]
-                    
+
                     server_memory.append({"role": "user", "content": f"[{username}]: {prompt}"})
                     server_memory.append({"role": "assistant", "content": reply})
-                    
+
                     if len(server_memory) > MAX_SERVER_MEMORY * 2:
                         server_memory[:] = server_memory[-MAX_SERVER_MEMORY * 2:]
-                    
+
                     return reply
                 else:
                     error = await resp.text()
@@ -195,11 +219,90 @@ async def ask_ai(user_id: str, username: str, display_name: str, prompt: str) ->
         return f"❌ Exception: {str(e)[:200]}"
 
 
-# ========== ترحيب الأعضاء الجداد ==========
+# ═══════════════════════════════════════════════════════
+# ║              MODERATION FUNCTIONS (جديد)                ║
+# ═══════════════════════════════════════════════════════
+
+async def log_action(guild, title: str, description: str, color: discord.Color):
+    """سجل الإجراءات فـ mod-logs"""
+    channel = bot.get_channel(MOD_LOGS_CHANNEL_ID)
+    if channel:
+        embed = discord.Embed(
+            title=title,
+            description=description,
+            color=color,
+            timestamp=datetime.now()
+        )
+        embed.set_footer(text=f"سيمو | {datetime.now().strftime('%H:%M:%S')}")
+        await channel.send(embed=embed)
+
+
+async def add_warn(member: discord.Member, reason: str) -> int:
+    """زيد تحذير ورد العدد الجديد"""
+    user_id = str(member.id)
+
+    if user_id not in warns_db:
+        warns_db[user_id] = {"count": 0, "reasons": [], "dates": []}
+
+    warns_db[user_id]["count"] += 1
+    warns_db[user_id]["reasons"].append(reason)
+    warns_db[user_id]["dates"].append(datetime.now().strftime("%Y-%m-%d %H:%M"))
+
+    return warns_db[user_id]["count"]
+
+
+def get_warns(user_id: str) -> dict:
+    """جيب معلومات التحذيرات"""
+    return warns_db.get(user_id, {"count": 0, "reasons": [], "dates": []})
+
+
+def clear_warns(user_id: str):
+    """مسح التحذيرات"""
+    if user_id in warns_db:
+        warns_db[user_id] = {"count": 0, "reasons": [], "dates": []}
+
+
+async def auto_unmute(member: discord.Member, duration_minutes: int, guild: discord.Guild):
+    """فك الكتم تلقائياً بعد المدة"""
+    await asyncio.sleep(duration_minutes * 60)
+
+    muted_role = guild.get_role(MUTED_ROLE_ID)
+    if muted_role and muted_role in member.roles:
+        try:
+            await member.remove_roles(muted_role)
+            await log_action(
+                guild,
+                "🔊 فك الكتم (تلقائي)",
+                f"**المستخدم:** {member.mention}\n"
+                f"**المدة:** {duration_minutes} دقيقة\n"
+                f"**السبب:** انتهت المدة",
+                discord.Color.green()
+            )
+        except discord.Forbidden:
+            pass
+
+
+# ═══════════════════════════════════════════════════════
+# ║              EVENTS (محدّث)                             ║
+# ═══════════════════════════════════════════════════════
+
 @bot.event
 async def on_member_join(member):
+    """ترحيب + Auto-Role"""
     welcome_channel = bot.get_channel(WELCOME_CHANNEL_ID)
-    
+
+    # Auto-Role (جديد)
+    member_role = member.guild.get_role(MEMBER_ROLE_ID)
+    if member_role:
+        try:
+            await member.add_roles(member_role)
+            role_status = f"✅ تم إعطاء الدور **{member_role.name}**"
+        except discord.Forbidden:
+            role_status = "❌ ما قدرتش نعطي الدور"
+    else:
+        role_status = "⚠️ الدور ما لقيتوش (بدل MEMBER_ROLE_ID)"
+
+    # Welcome message
     if welcome_channel:
         welcome_msg = f"""🎉 **مرحبا بيك فـ {SERVER_NAME} يا {member.mention}!** 🎉
 
@@ -218,81 +321,709 @@ async def on_member_join(member):
 🔹 ما تسبش بزاف (شوية مسموح 😂)
 🔹 استمتع!
 
+{role_status}
+
 **مرحبا بيك من قلب!** ❤️
 
 *— لسنا الوحيدين ولكننا الأفضل*"""
-        
+
         await welcome_channel.send(welcome_msg)
 
+    # Log (جديد)
+    await log_action(
+        member.guild,
+        "👤 عضو جديد",
+        f"**المستخدم:** {member.mention} ({member.name})\n"
+        f"**ID:** `{member.id}`\n"
+        f"**رقم العضو:** {member.guild.member_count}",
+        discord.Color.blue()
+    )
 
-# ========== معلومات تلقائية كل 30 دقيقة ==========
-@tasks.loop(minutes=30)
-async def auto_info():
-    """يبعث معلومة جديدة كل 30 دقيقة فـ channel الترحيب"""
-    welcome_channel = bot.get_channel(WELCOME_CHANNEL_ID)
-    
-    if not welcome_channel:
+
+@bot.event
+async def on_member_remove(member):
+    """سجل خروج الأعضاء (جديد)"""
+    await log_action(
+        member.guild,
+        "👋 عضو خرج",
+        f"**المستخدم:** {member.mention} ({member.name})\n"
+        f"**ID:** `{member.id}`",
+        discord.Color.greyple()
+    )
+
+
+@bot.event
+async def on_message_delete(message):
+    """سجل حذف الرسائل (جديد)"""
+    if message.author.bot:
         return
-    
-    topics = [
-        "اخر أخبار العاب الفيديو",
-        "معلومة ثقافية على كل دول العالم",
-        "اخر أخبار الإنمي",
-        "اخر أخبار الموسيقى",
-        "اخر أخبار الأفلام",
-        "آخر الأخبار التقنية",
-        "نصيحة من الحياة",
-        "معلومة علمية",
-        "تاريخ الحضارات القديمة",
-        "وصفة مغربية",
-        "معلومة رياضية"
+
+    await log_action(
+        message.guild,
+        "🗑️ رسالة محذوفة",
+        f"**المستخدم:** {message.author.mention}\n"
+        f"**القناة:** {message.channel.mention}\n"
+        f"**المحتوى:** {message.content[:1000]}",
+        discord.Color.red()
+    )
+
+
+@bot.event
+async def on_message_edit(before, after):
+    """سجل تعديل الرسائل (جديد)"""
+    if before.author.bot or before.content == after.content:
+        return
+
+    await log_action(
+        before.guild,
+        "✏️ رسالة معدّلة",
+        f"**المستخدم:** {before.author.mention}\n"
+        f"**القناة:** {before.channel.mention}\n"
+        f"**قبل:** {before.content[:500]}\n"
+        f"**بعد:** {after.content[:500]}",
+        discord.Color.yellow()
+    )
+
+
+@bot.event
+async def on_message(message):
+    if message.author == bot.user:
+        return
+
+    if message.author.bot:
+        return
+
+    await bot.process_commands(message)
+
+    if message.content.startswith("!"):
+        return
+
+    # ═══════════════════════════════════════════════════
+    # ║         AUTO-MOD SYSTEM (جديد)                    ║
+    # ═══════════════════════════════════════════════════
+
+    msg_lower = message.content.lower()
+    gender = detect_gender(message.author.name, message.author.display_name)
+
+    # فحص الكلمات الممنوعة
+    for word in BANNED_WORDS:
+        if word.lower() in msg_lower:
+            try:
+                await message.delete()
+
+                warn_msg = await message.channel.send(
+                    f"🚫 {message.author.mention} ممنوع السبام والروابط!",
+                    delete_after=5
+                )
+
+                # زيد warning
+                count = await add_warn(message.author, f"رسالة محذوفة (Auto-Mod): {word}")
+
+                await log_action(
+                    message.guild,
+                    "🚨 Auto-Mod | رسالة محذوفة",
+                    f"**المستخدم:** {message.author.mention}\n"
+                    f"**القناة:** {message.channel.mention}\n"
+                    f"**الكلمة الممنوعة:** `{word}`\n"
+                    f"**المحتوى:** {message.content[:500]}\n"
+                    f"**التحذيرات:** {count}/{WARN_LIMIT}",
+                    discord.Color.red()
+                )
+
+                # Auto-kick بعد 3 تحذيرات
+                if count >= WARN_LIMIT:
+                    try:
+                        await message.author.kick(reason=f"3 تحذيرات (Auto-Mod)")
+                        await message.channel.send(
+                            f"🚫 {message.author.mention} تم طرده تلقائياً (3 تحذيرات)!",
+                            delete_after=10
+                        )
+                        await log_action(
+                            message.guild,
+                            "🚫 Auto-Kick",
+                            f"**المستخدم:** {message.author.mention}\n"
+                            f"**السبب:** 3 تحذيرات (Auto-Mod)\n"
+                            f"**التحذيرات:** {', '.join(get_warns(str(message.author.id))['reasons'][-3:])}",
+                            discord.Color.dark_red()
+                        )
+                        clear_warns(str(message.author.id))
+                    except discord.Forbidden:
+                        pass
+
+                return
+            except discord.Forbidden:
+                pass
+
+    # فحص السبام (5 رسائل فـ 5 ثواني)
+    user_id = str(message.author.id)
+    now = datetime.now()
+
+    if user_id not in spam_tracker:
+        spam_tracker[user_id] = []
+
+    spam_tracker[user_id].append(now)
+    spam_tracker[user_id] = [
+        t for t in spam_tracker[user_id]
+        if now - t < timedelta(seconds=SPAM_INTERVAL)
     ]
-    
-    topic = random.choice(topics)
-    
-    headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://discord.com",
-        "X-Title": "AI Assistant BOT"
-    }
-    
-    prompt = f"""عطيني معلومة قصيرة وممتعة على الموضوع: {topic}
-اكتبها بالدارجة المغربية.
-ضيف مصدر إلا كان ممكن.
-كن مختصر (3-4 سطور فقط)."""
-    
-    payload = {
-        "model": AI_MODEL,
-        "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 500,
-        "temperature": 0.8
-    }
-    
+
+    if len(spam_tracker[user_id]) >= SPAM_THRESHOLD:
+        try:
+            await message.channel.send(
+                f"🛑 {message.author.mention} توقف عن السبام!",
+                delete_after=5
+            )
+
+            # Mute تلقائي لـ 5 دقائق
+            muted_role = message.guild.get_role(MUTED_ROLE_ID)
+            if muted_role:
+                await message.author.add_roles(muted_role)
+
+                # Cancel task قديم إلا كاين
+                if user_id in mute_tasks and not mute_tasks[user_id].done():
+                    mute_tasks[user_id].cancel()
+
+                # دير task جديد
+                task = asyncio.create_task(auto_unmute(message.author, 5, message.guild))
+                mute_tasks[user_id] = task
+
+                await log_action(
+                    message.guild,
+                    "🛑 Auto-Mod | سبام مكتشف",
+                    f"**المستخدم:** {message.author.mention}\n"
+                    f"**الإجراء:** Mute 5 دقائق (تلقائي)\n"
+                    f"**الرسائل:** {len(spam_tracker[user_id])} فـ {SPAM_INTERVAL} ثواني",
+                    discord.Color.orange()
+                )
+
+                # مسح tracker
+                spam_tracker[user_id] = []
+        except discord.Forbidden:
+            pass
+
+    # ═══════════════════════════════════════════════════
+    # ║         ردود تلقائية (قديم)                       ║
+    # ═══════════════════════════════════════════════════
+
+    # "سيمو" / "simo" — نعام!
+    if "سيمو" in msg_lower or "simo" in msg_lower:
+        await message.reply("نعام! 😂 واش بغيتي؟", mention_author=False)
+        return
+
+    # "غيرها"
+    if "غيرها" in msg_lower:
+        await message.reply("وخا أسي زبي 😂", mention_author=False)
+        return
+
+    # "سير تقود"
+    if "سير تقود" in msg_lower or "تقود" in msg_lower:
+        await message.reply("وخا هاني غادي نتقود دابا 🏃‍♂️", mention_author=False)
+        return
+
+    # "مالك ازبي" / "مالك زبي"
+    if "مالك" in msg_lower and ("ازبي" in msg_lower or "زبي" in msg_lower):
+        if gender == "female":
+            await message.reply("زبي فكرك مخبي ابنت القحبة 😂", mention_author=False)
+        else:
+            await message.reply("زبي فكرك مخبي اولد القحبة 😂", mention_author=False)
+        return
+
+    # "قحبة"
+    if "قحبة" in msg_lower:
+        await message.reply("القحبة هي مك 😂", mention_author=False)
+        return
+
+    # "سير تحوا"
+    if "سير تحوا" in msg_lower:
+        if gender == "female":
+            await message.reply("سيري تحواي نتي نيت 😂", mention_author=False)
+        else:
+            await message.reply("سير تحوا نتا نيت 😂", mention_author=False)
+        return
+
+    # "اهيا"
+    if "اهيا" in msg_lower or "اه" in msg_lower:
+        await message.reply("وي مالك؟ 🤔", mention_author=False)
+        return
+
+    # "شحال فساعة"
+    if "شحال" in msg_lower and "ساعة" in msg_lower:
+        await message.reply("ساعاتو لله 🕐", mention_author=False)
+        return
+
+    # "زبي" / "ازبي" (أي سياق)
+    if "زبي" in msg_lower or "ازبي" in msg_lower:
+        replies = [
+            "ههههه ونتا؟ 😂",
+            "صافي صافي، ريح مع كرك",
+            "ياك خويا، هدي راسك شوية",
+            "زبي فكرك مخبي 😂"
+        ]
+        await message.reply(random.choice(replies), mention_author=False)
+        return
+
+    # "لقلاوي" (أي سياق)
+    if "لقلاوي" in msg_lower or "لقلاو" in msg_lower:
+        await message.reply("ههههه لقلاوي نتا 😂", mention_author=False)
+        return
+
+    # "زامل" (أي سياق)
+    if "زامل" in msg_lower:
+        if gender == "female":
+            await message.reply("ههههه زاملة نتي 😂", mention_author=False)
+        else:
+            await message.reply("ههههه زامل نتا 😂", mention_author=False)
+        return
+
+    # شتم عام
+    insults = ["حمار", "غبي", "قحبة", "زامل", "طاحون", "بوليس", "ولد القحبة", 
+               "wld l9ahba", "nik mok", "tabon", "zamel", "7mar", "9a7ba", "tahwan",
+               "لي حواك", "قواد", "طبون مك", "ابن القحبة", "ابنت القحبة",
+               "نيك", "زب", "احا", "فمك", "كسمك", "كس"]
+
+    is_insult = any(insult in msg_lower for insult in insults)
+
+    if is_insult:
+        if gender == "female":
+            replies = [
+                "ههههه ونتي نيت ابنت القحبة 😂",
+                "صافي صافي، ريحي مع كرك 😂",
+                "ياك اختي، هدي راسك شوية",
+                "ههههه نتي اللي جاييا تهضري معايا؟"
+            ]
+        else:
+            replies = [
+                "ههههه ونتا نيت اولد القحبة 😂",
+                "صافي صافي، ريح مع كرك 😂",
+                "ياك خويا، هدي راسك شوية",
+                "ههههه نتا اللي جاي تهضر معايا؟"
+            ]
+
+        await message.reply(random.choice(replies), mention_author=False)
+        return
+
+    # رد AI غير فـ channel المحدد
+    if message.channel.id != TARGET_CHANNEL_ID:
+        return
+
+    user_id = str(message.author.id)
+
+    response = await ask_ai(
+        user_id, 
+        message.author.name, 
+        message.author.display_name, 
+        message.content
+    )
+
+    await message.reply(response[:MAX_REPLY_LENGTH], mention_author=False)
+
+
+# ═══════════════════════════════════════════════════════
+# ║              MODERATION COMMANDS (جديد)                 ║
+# ═══════════════════════════════════════════════════════
+
+@bot.command()
+@commands.has_permissions(kick_members=True)
+async def kick(ctx, member: discord.Member, *, reason="ما ذكرش سبب"):
+    """!kick @user [سبب] — طرد عضو"""
     try:
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=API_TIMEOUT)) as session:
-            async with session.post(OPENROUTER_URL, headers=headers, json=payload) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    info = data["choices"][0]["message"]["content"]
-                    
-                    msg = f"""📢 **اجي اجي تسمع!** 📢
+        await member.kick(reason=reason)
 
-{info}
+        embed = discord.Embed(
+            title="👢 طرد",
+            description=f"**{member.mention}** تم طرده.",
+            color=discord.Color.orange(),
+            timestamp=datetime.now()
+        )
+        embed.add_field(name="السبب", value=reason, inline=False)
+        embed.add_field(name="الطارد", value=ctx.author.mention, inline=False)
+        embed.set_footer(text="سيمو | Moderation")
+        await ctx.send(embed=embed)
 
-*— ايوا اشنو بان ليك؟*"""
-                    
-                    await welcome_channel.send(msg)
-    except:
-        pass  # إلا فشل، ما نبينش الخطأ
+        await log_action(
+            ctx.guild,
+            "👢 طرد",
+            f"**المستخدم:** {member.mention} ({member.name})\n"
+            f"**السبب:** {reason}\n"
+            f"**الطارد:** {ctx.author.mention}",
+            discord.Color.orange()
+        )
+    except discord.Forbidden:
+        await ctx.send("❌ ما عنديش الصلاحية!")
+    except Exception as e:
+        await ctx.send(f"❌ خطأ: {str(e)}")
 
 
-@auto_info.before_loop
-async def before_auto_info():
-    await bot.wait_until_ready()
+@bot.command()
+@commands.has_permissions(ban_members=True)
+async def ban(ctx, member: discord.Member, *, reason="ما ذكرش سبب"):
+    """!ban @user [سبب] — حظر عضو"""
+    try:
+        await member.ban(reason=reason)
+
+        embed = discord.Embed(
+            title="🚫 حظر",
+            description=f"**{member.mention}** تم حظره.",
+            color=discord.Color.red(),
+            timestamp=datetime.now()
+        )
+        embed.add_field(name="السبب", value=reason, inline=False)
+        embed.add_field(name="الحاضر", value=ctx.author.mention, inline=False)
+        embed.set_footer(text="سيمو | Moderation")
+        await ctx.send(embed=embed)
+
+        await log_action(
+            ctx.guild,
+            "🚫 حظر",
+            f"**المستخدم:** {member.mention} ({member.name})\n"
+            f"**السبب:** {reason}\n"
+            f"**الحاضر:** {ctx.author.mention}",
+            discord.Color.red()
+        )
+    except discord.Forbidden:
+        await ctx.send("❌ ما عنديش الصلاحية!")
+    except Exception as e:
+        await ctx.send(f"❌ خطأ: {str(e)}")
 
 
-# ========== Commands ==========
+@bot.command()
+@commands.has_permissions(ban_members=True)
+async def unban(ctx, user_id: int):
+    """!unban <user_id> — فك الحظر"""
+    try:
+        user = await bot.fetch_user(user_id)
+        await ctx.guild.unban(user)
+
+        embed = discord.Embed(
+            title="✅ فك الحظر",
+            description=f"**{user.name}** تم فك حظره.",
+            color=discord.Color.green(),
+            timestamp=datetime.now()
+        )
+        embed.set_footer(text="سيمو | Moderation")
+        await ctx.send(embed=embed)
+
+        await log_action(
+            ctx.guild,
+            "✅ فك الحظر",
+            f"**المستخدم:** {user.mention} ({user.name})\n"
+            f"**المنفذ:** {ctx.author.mention}",
+            discord.Color.green()
+        )
+    except discord.NotFound:
+        await ctx.send("❌ ما لقيتش هاد العضو!")
+    except discord.Forbidden:
+        await ctx.send("❌ ما عنديش الصلاحية!")
+
+
+@bot.command()
+@commands.has_permissions(manage_messages=True)
+async def clear(ctx, amount: int = 10):
+    """!clear <عدد> — حذف رسائل (افتراضي: 10)"""
+    if amount < 1 or amount > 100:
+        await ctx.send("❌ خاص العدد يكون بين 1 و 100!")
+        return
+
+    try:
+        deleted = await ctx.channel.purge(limit=amount + 1)
+
+        msg = await ctx.send(f"🗑️ تم حذف {len(deleted) - 1} رسالة")
+        await asyncio.sleep(3)
+        await msg.delete()
+
+        await log_action(
+            ctx.guild,
+            "🗑️ حذف رسائل",
+            f"**القناة:** {ctx.channel.mention}\n"
+            f"**العدد:** {len(deleted) - 1}\n"
+            f"**المنفذ:** {ctx.author.mention}",
+            discord.Color.orange()
+        )
+    except discord.Forbidden:
+        await ctx.send("❌ ما عنديش الصلاحية!")
+
+
+@bot.command()
+@commands.has_permissions(moderate_members=True)
+async def mute(ctx, member: discord.Member, duration: int = 5, *, reason="ما ذكرش سبب"):
+    """!mute @user <دقائق> [سبب] — كتم عضو"""
+    muted_role = ctx.guild.get_role(MUTED_ROLE_ID)
+    if not muted_role:
+        await ctx.send("❌ ما لقيتش دور Mute! حط ID صحيح فـ MUTED_ROLE_ID.")
+        return
+
+    try:
+        await member.add_roles(muted_role)
+
+        embed = discord.Embed(
+            title="🔇 كتم",
+            description=f"**{member.mention}** تم كتم صوته.",
+            color=discord.Color.yellow(),
+            timestamp=datetime.now()
+        )
+        embed.add_field(name="المدة", value=f"{duration} دقيقة", inline=False)
+        embed.add_field(name="السبب", value=reason, inline=False)
+        embed.add_field(name="المنفذ", value=ctx.author.mention, inline=False)
+        embed.set_footer(text="سيمو | Moderation")
+        await ctx.send(embed=embed)
+
+        # Cancel task قديم
+        user_id = str(member.id)
+        if user_id in mute_tasks and not mute_tasks[user_id].done():
+            mute_tasks[user_id].cancel()
+
+        # دير task جديد
+        task = asyncio.create_task(auto_unmute(member, duration, ctx.guild))
+        mute_tasks[user_id] = task
+
+        await log_action(
+            ctx.guild,
+            "🔇 كتم",
+            f"**المستخدم:** {member.mention} ({member.name})\n"
+            f"**المدة:** {duration} دقيقة\n"
+            f"**السبب:** {reason}\n"
+            f"**المنفذ:** {ctx.author.mention}",
+            discord.Color.yellow()
+        )
+    except discord.Forbidden:
+        await ctx.send("❌ ما عنديش الصلاحية!")
+
+
+@bot.command()
+@commands.has_permissions(moderate_members=True)
+async def unmute(ctx, member: discord.Member):
+    """!unmute @user — فك الكتم"""
+    muted_role = ctx.guild.get_role(MUTED_ROLE_ID)
+    if not muted_role:
+        await ctx.send("❌ ما لقيتش دور Mute!")
+        return
+
+    try:
+        await member.remove_roles(muted_role)
+
+        # Cancel auto-unmute task
+        user_id = str(member.id)
+        if user_id in mute_tasks and not mute_tasks[user_id].done():
+            mute_tasks[user_id].cancel()
+
+        embed = discord.Embed(
+            title="🔊 فك الكتم",
+            description=f"**{member.mention}** تم فك الكتم.",
+            color=discord.Color.green(),
+            timestamp=datetime.now()
+        )
+        embed.set_footer(text="سيمو | Moderation")
+        await ctx.send(embed=embed)
+
+        await log_action(
+            ctx.guild,
+            "🔊 فك الكتم",
+            f"**المستخدم:** {member.mention} ({member.name})\n"
+            f"**المنفذ:** {ctx.author.mention}",
+            discord.Color.green()
+        )
+    except discord.Forbidden:
+        await ctx.send("❌ ما عنديش الصلاحية!")
+
+
+@bot.command()
+@commands.has_permissions(kick_members=True)
+async def warn(ctx, member: discord.Member, *, reason):
+    """!warn @user <سبب> — تحذير عضو"""
+    count = await add_warn(member, reason)
+
+    embed = discord.Embed(
+        title="⚠️ تحذير",
+        description=f"**{member.mention}** تم تحذيره.",
+        color=discord.Color.yellow(),
+        timestamp=datetime.now()
+    )
+    embed.add_field(name="السبب", value=reason, inline=False)
+    embed.add_field(name="عدد التحذيرات", value=f"{count}/{WARN_LIMIT}", inline=False)
+    embed.add_field(name="المنفذ", value=ctx.author.mention, inline=False)
+    embed.set_footer(text="سيمو | Moderation")
+    await ctx.send(embed=embed)
+
+    await log_action(
+        ctx.guild,
+        "⚠️ تحذير",
+        f"**المستخدم:** {member.mention} ({member.name})\n"
+        f"**السبب:** {reason}\n"
+        f"**العدد:** {count}/{WARN_LIMIT}\n"
+        f"**المنفذ:** {ctx.author.mention}",
+        discord.Color.yellow()
+    )
+
+    # Auto-kick بعد 3 تحذيرات
+    if count >= WARN_LIMIT:
+        try:
+            await member.kick(reason=f"3 تحذيرات: {reason}")
+
+            await ctx.send(f"🚫 {member.mention} تم طرده تلقائياً (3 تحذيرات)!")
+
+            await log_action(
+                ctx.guild,
+                "🚫 Auto-Kick",
+                f"**المستخدم:** {member.mention} ({member.name})\n"
+                f"**السبب:** 3 تحذيرات\n"
+                f"**آخر تحذير:** {reason}",
+                discord.Color.dark_red()
+            )
+
+            clear_warns(str(member.id))
+        except discord.Forbidden:
+            await ctx.send("❌ ما قدرتش نطردو!")
+
+
+@bot.command()
+@commands.has_permissions(kick_members=True)
+async def warns(ctx, member: discord.Member = None):
+    """!warns [@user] — عرض التحذيرات"""
+    member = member or ctx.author
+    user_warns = get_warns(str(member.id))
+
+    embed = discord.Embed(
+        title=f"⚠️ تحذيرات {member.display_name}",
+        color=discord.Color.yellow(),
+        timestamp=datetime.now()
+    )
+    embed.add_field(name="العدد", value=f"{user_warns['count']}/{WARN_LIMIT}", inline=False)
+
+    if user_warns["reasons"]:
+        reasons_text = "\n".join([
+            f"{i+1}. {r} ({user_warns['dates'][i]})" 
+            for i, r in enumerate(user_warns["reasons"])
+        ])
+        embed.add_field(name="الأسباب والتواريخ", value=reasons_text, inline=False)
+    else:
+        embed.add_field(name="الأسباب", value="ما كاين والو ✅", inline=False)
+
+    embed.set_footer(text="سيمو | Moderation")
+    await ctx.send(embed=embed)
+
+
+@bot.command()
+@commands.has_permissions(kick_members=True)
+async def unwarn(ctx, member: discord.Member):
+    """!unwarn @user — مسح تحذيرات عضو"""
+    clear_warns(str(member.id))
+
+    embed = discord.Embed(
+        title="✅ مسح التحذيرات",
+        description=f"**{member.mention}** تم مسح تحذيراتو.",
+        color=discord.Color.green(),
+        timestamp=datetime.now()
+    )
+    embed.set_footer(text="سيمو | Moderation")
+    await ctx.send(embed=embed)
+
+    await log_action(
+        ctx.guild,
+        "✅ مسح تحذيرات",
+        f"**المستخدم:** {member.mention} ({member.name})\n"
+        f"**المنفذ:** {ctx.author.mention}",
+        discord.Color.green()
+    )
+
+
+# ═══════════════════════════════════════════════════════
+# ║              UTILITY COMMANDS (محدّث)                   ║
+# ═══════════════════════════════════════════════════════
+
+@bot.command()
+async def ping(ctx):
+    """!ping — سرعة البوت"""
+    latency = round(bot.latency * 1000)
+    embed = discord.Embed(
+        title="🏓 Pong!",
+        description=f"**Latency:** {latency}ms\n**API:** DeepSeek V3",
+        color=discord.Color.green(),
+        timestamp=datetime.now()
+    )
+    embed.set_footer(text="سيمو")
+    await ctx.send(embed=embed)
+
+
+@bot.command()
+async def info(ctx):
+    """!info — معلومات البوت"""
+    embed = discord.Embed(
+        title="🤖 معلومات سيمو",
+        color=discord.Color.blue(),
+        timestamp=datetime.now()
+    )
+    embed.add_field(name="💬 AI Channel", value=f"`{TARGET_CHANNEL_ID}`", inline=True)
+    embed.add_field(name="👋 Welcome", value=f"`{WELCOME_CHANNEL_ID}`", inline=True)
+    embed.add_field(name="🧠 Memory", value=f"`{MEMORY_SIZE}` msg/user", inline=True)
+    embed.add_field(name="⏱️ Timeout", value=f"`{API_TIMEOUT}`s", inline=True)
+    embed.add_field(name="🤖 Model", value=f"`{AI_MODEL}`", inline=True)
+    embed.add_field(name="📊 Servers", value=f"`{len(bot.guilds)}`", inline=True)
+    embed.add_field(name="🛡️ Moderation", value="✅ نشط", inline=False)
+    embed.add_field(name="⚠️ Warn Limit", value=f"`{WARN_LIMIT}`", inline=True)
+    embed.add_field(name="🚫 Banned Words", value=f"`{len(BANNED_WORDS)}`", inline=True)
+    embed.set_footer(text="سيمو | GGMW9")
+    await ctx.send(embed=embed)
+
+
+@bot.command()
+async def help(ctx):
+    """!help — قائمة الأوامر"""
+    embed = discord.Embed(
+        title="📋 قائمة أوامر سيمو",
+        description="**سيمو** — بوت AI مغربي + Moderation متكامل",
+        color=discord.Color.blue(),
+        timestamp=datetime.now()
+    )
+
+    # AI Commands
+    ai_cmds = (
+        "`!chat <رسالة>` — هضر مع سيمو\n"
+        "`!نسيني` — امسح ذاكرتك\n"
+        "`!ذاكرة` — شحال من رسالة فالذاكرة\n"
+        "`!انعلمك <حاجة>` — علم سيمو شي حاجة"
+    )
+    embed.add_field(name="🤖 AI & ذاكرة", value=ai_cmds, inline=False)
+
+    # Moderation Commands
+    mod_cmds = (
+        "`!kick @user [سبب]` — طرد عضو\n"
+        "`!ban @user [سبب]` — حظر عضو\n"
+        "`!unban <user_id>` — فك الحظر\n"
+        "`!mute @user <دقائق> [سبب]` — كتم\n"
+        "`!unmute @user` — فك الكتم\n"
+        "`!warn @user <سبب>` — تحذير\n"
+        "`!warns [@user]` — عرض التحذيرات\n"
+        "`!unwarn @user` — مسح التحذيرات\n"
+        "`!clear <عدد>` — حذف رسائل (1-100)"
+    )
+    embed.add_field(name="🛡️ موديراتورز", value=mod_cmds, inline=False)
+
+    # Utility
+    util_cmds = (
+        "`!ping` — سرعة البوت\n"
+        "`!info` — معلومات البوت\n"
+        "`!help` — هاد القائمة"
+    )
+    embed.add_field(name="🔧 أدوات", value=util_cmds, inline=False)
+
+    # Auto-Mod
+    auto_mod = (
+        "✅ كلمات ممنوعة\n"
+        "✅ كشف السبام (5 msg/5s)\n"
+        "✅ Auto-mute\n"
+        "✅ Auto-kick (3 warns)\n"
+        "✅ Logs كاملة"
+    )
+    embed.add_field(name="🤖 Auto-Mod", value=auto_mod, inline=False)
+
+    embed.set_footer(text="سيمو | GGMW9 | Prefix: !")
+    await ctx.send(embed=embed)
+
+
+# ═══════════════════════════════════════════════════════
+# ║              AI COMMANDS (قديم)                         ║
+# ═══════════════════════════════════════════════════════
+
 @bot.command()
 async def chat(ctx, *, message: str):
     user_id = str(ctx.author.id)
@@ -318,23 +1049,12 @@ async def ذاكرة(ctx):
 
 
 @bot.command()
-async def info(ctx):
-    await ctx.send(f"""🤖 **معلومات البوت:**
-💬 Channel: `{TARGET_CHANNEL_ID}`
-👋 Welcome: `{WELCOME_CHANNEL_ID}`
-🧠 Memory: `{MEMORY_SIZE}` messages/user
-⏱️ Timeout: `{API_TIMEOUT}`s
-🤖 Model: `{AI_MODEL}`""")
-
-
-# ========== التعلم ==========
-@bot.command()
 async def انعلمك(ctx, *, knowledge: str):
     """!انعلمك <حاجة جديدة> — علم سيمو شي حاجة"""
     learned_knowledge.append(knowledge)
-    
+
     gender = detect_gender(ctx.author.name, ctx.author.display_name)
-    
+
     if gender == "female":
         await ctx.send(f"✅ **واخا الالة!** تعلمت: {knowledge[:100]}... نتذكرها دايمن! 🧠")
     else:
@@ -347,136 +1067,121 @@ async def انعلمك_شي_حاجة_جديدة(ctx, *, knowledge: str):
     await انعلمك(ctx, knowledge=knowledge)
 
 
-# ========== on_message ==========
-@bot.event
-async def on_message(message):
-    if message.author == bot.user:
-        return
-    
-    if message.author.bot:
-        return
-    
-    await bot.process_commands(message)
-    
-    if message.content.startswith("!"):
-        return
-    
-    # ========== ردود تلقائية ==========
-    msg_lower = message.content.lower()
-    gender = detect_gender(message.author.name, message.author.display_name)
-    
-    # "سيمو" / "simo" — نعام!
-    if "سيمو" in msg_lower or "simo" in msg_lower:
-        await message.reply("نعام! 😂 واش بغيتي؟", mention_author=False)
-        return
-    
-    # "غيرها"
-    if "غيرها" in msg_lower:
-        await message.reply("وخا أسي زبي 😂", mention_author=False)
-        return
-    
-    # "سير تقود"
-    if "سير تقود" in msg_lower or "تقود" in msg_lower:
-        await message.reply("وخا هاني غادي نتقود دابا 🏃‍♂️", mention_author=False)
-        return
-    
-    # "مالك ازبي" / "مالك زبي"
-    if "مالك" in msg_lower and ("ازبي" in msg_lower or "زبي" in msg_lower):
-        if gender == "female":
-            await message.reply("زبي فكرك مخبي ابنت القحبة 😂", mention_author=False)
-        else:
-            await message.reply("زبي فكرك مخبي اولد القحبة 😂", mention_author=False)
-        return
-    
-    # "قحبة"
-    if "قحبة" in msg_lower:
-        await message.reply("القحبة هي مك 😂", mention_author=False)
-        return
-    
-    # "سير تحوا"
-    if "سير تحوا" in msg_lower:
-        if gender == "female":
-            await message.reply("سيري تحواي نتي نيت 😂", mention_author=False)
-        else:
-            await message.reply("سير تحوا نتا نيت 😂", mention_author=False)
-        return
-    
-    # "اهيا"
-    if "اهيا" in msg_lower or "اه" in msg_lower:
-        await message.reply("وي مالك؟ 🤔", mention_author=False)
-        return
-    
-    # "شحال فساعة"
-    if "شحال" in msg_lower and "ساعة" in msg_lower:
-        await message.reply("ساعاتو لله 🕐", mention_author=False)
-        return
-    
-    # "زبي" / "ازبي" (أي سياق)
-    if "زبي" in msg_lower or "ازبي" in msg_lower:
-        replies = [
-            "ههههه ونتا؟ 😂",
-            "صافي صافي، ريح مع كرك",
-            "ياك خويا، هدي راسك شوية",
-            "زبي فكرك مخبي 😂"
-        ]
-        await message.reply(random.choice(replies), mention_author=False)
-        return
-    
-    # "لقلاوي" (أي سياق)
-    if "لقلاوي" in msg_lower or "لقلاو" in msg_lower:
-        await message.reply("ههههه لقلاوي نتا 😂", mention_author=False)
-        return
-    
-    # "زامل" (أي سياق)
-    if "زامل" in msg_lower:
-        if gender == "female":
-            await message.reply("ههههه زاملة نتي 😂", mention_author=False)
-        else:
-            await message.reply("ههههه زامل نتا 😂", mention_author=False)
-        return
-    
-    # ========== شتم عام ==========
-    insults = ["حمار", "غبي", "قحبة", "زامل", "طاحون", "بوليس", "ولد القحبة", 
-               "wld l9ahba", "nik mok", "tabon", "zamel", "7mar", "9a7ba", "tahwan",
-               "لي حواك", "قواد", "طبون مك", "ابن القحبة", "ابنت القحبة",
-               "نيك", "زب", "احا", "فمك", "كسمك", "كس"]
-    
-    is_insult = any(insult in msg_lower for insult in insults)
-    
-    if is_insult:
-        if gender == "female":
-            replies = [
-                "ههههه ونتي نيت ابنت القحبة 😂",
-                "صافي صافي، ريحي مع كرك 😂",
-                "ياك اختي، هدي راسك شوية",
-                "ههههه نتي اللي جاييا تهضري معايا؟"
-            ]
-        else:
-            replies = [
-                "ههههه ونتا نيت اولد القحبة 😂",
-                "صافي صافي، ريح مع كرك 😂",
-                "ياك خويا، هدي راسك شوية",
-                "ههههه نتا اللي جاي تهضر معايا؟"
-            ]
-        
-        await message.reply(random.choice(replies), mention_author=False)
-        return
-    
-    # ========== رد غير فـ channel المحدد ==========
-    if message.channel.id != TARGET_CHANNEL_ID:
-        return
-    
-    user_id = str(message.author.id)
-    
-    response = await ask_ai(
-        user_id, 
-        message.author.name, 
-        message.author.display_name, 
-        message.content
-    )
-    
-    await message.reply(response[:MAX_REPLY_LENGTH], mention_author=False)
+# ═══════════════════════════════════════════════════════
+# ║              AUTO-INFO TASK (قديم)                    ║
+# ═══════════════════════════════════════════════════════
 
+@tasks.loop(minutes=30)
+async def auto_info():
+    """يبعث معلومة جديدة كل 30 دقيقة فـ channel الترحيب"""
+    welcome_channel = bot.get_channel(WELCOME_CHANNEL_ID)
+
+    if not welcome_channel:
+        return
+
+    topics = [
+        "اخر أخبار العاب الفيديو",
+        "معلومة ثقافية على كل دول العالم",
+        "اخر أخبار الإنمي",
+        "اخر أخبار الموسيقى",
+        "اخر أخبار الأفلام",
+        "آخر الأخبار التقنية",
+        "نصيحة من الحياة",
+        "معلومة علمية",
+        "تاريخ الحضارات القديمة",
+        "وصفة مغربية",
+        "معلومة رياضية"
+    ]
+
+    topic = random.choice(topics)
+
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://discord.com",
+        "X-Title": "AI Assistant BOT"
+    }
+
+    prompt = f"""عطيني معلومة قصيرة وممتعة على الموضوع: {topic}
+اكتبها بالدارجة المغربية.
+ضيف مصدر إلا كان ممكن.
+كن مختصر (3-4 سطور فقط)."""
+
+    payload = {
+        "model": AI_MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": 500,
+        "temperature": 0.8
+    }
+
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=API_TIMEOUT)) as session:
+            async with session.post(OPENROUTER_URL, headers=headers, json=payload) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    info = data["choices"][0]["message"]["content"]
+
+                    msg = f"""📢 **اجي اجي تسمع!** 📢
+
+{info}
+
+*— ايوا اشنو بان ليك؟*"""
+
+                    await welcome_channel.send(msg)
+    except:
+        pass
+
+
+@auto_info.before_loop
+async def before_auto_info():
+    await bot.wait_until_ready()
+
+
+# ═══════════════════════════════════════════════════════
+# ║              ERROR HANDLING (جديد)                      ║
+# ═══════════════════════════════════════════════════════
+
+@bot.event
+async def on_command_error(ctx, error):
+    if isinstance(error, commands.MissingPermissions):
+        embed = discord.Embed(
+            title="❌ ما عندكش الصلاحية!",
+            description="خاصك تكون موديراتور باش تستخدم هاد الأمر.",
+            color=discord.Color.red()
+        )
+        await ctx.send(embed=embed, delete_after=5)
+
+    elif isinstance(error, commands.MissingRequiredArgument):
+        embed = discord.Embed(
+            title="❌ ناقص شي حاجة!",
+            description=f"استخدم `!help` باش تشوف كيفاش تستخدم الأمر.",
+            color=discord.Color.red()
+        )
+        await ctx.send(embed=embed, delete_after=5)
+
+    elif isinstance(error, commands.MemberNotFound):
+        embed = discord.Embed(
+            title="❌ ما لقيتش هاد العضو!",
+            description="تأكد من الـ mention ولا الـ ID.",
+            color=discord.Color.red()
+        )
+        await ctx.send(embed=embed, delete_after=5)
+
+    elif isinstance(error, commands.BadArgument):
+        embed = discord.Embed(
+            title="❌ خطأ فـ المدخلات!",
+            description="الرقم ولا الـ ID ما صحيحش.",
+            color=discord.Color.red()
+        )
+        await ctx.send(embed=embed, delete_after=5)
+
+    else:
+        print(f"[ERROR] {error}")
+
+
+# ═══════════════════════════════════════════════════════
+# ║              ON_READY (محدّث)                           ║
+# ═══════════════════════════════════════════════════════
 
 @bot.event
 async def on_ready():
@@ -484,9 +1189,18 @@ async def on_ready():
     print(f"🤖 Model: {AI_MODEL}")
     print(f"💬 Channel: {TARGET_CHANNEL_ID}")
     print(f"👋 Welcome: {WELCOME_CHANNEL_ID}")
+    print(f"🛡️ Mod Logs: {MOD_LOGS_CHANNEL_ID}")
     print(f"⏱️ Timeout: {API_TIMEOUT}s")
-    
-    # نشغل المعلومات التلقائية
+    print(f"🛡️ Moderation: نشط")
+    print(f"⚠️ Warn Limit: {WARN_LIMIT}")
+
+    await bot.change_presence(
+        activity=discord.Activity(
+            type=discord.ActivityType.watching,
+            name=f"!help | {len(bot.guilds)} سيرفرات"
+        )
+    )
+
     if not auto_info.is_running():
         auto_info.start()
 
