@@ -9,7 +9,7 @@ from collections import defaultdict
 # ║                    CONFIG سهل التعديل                  ║
 # ═══════════════════════════════════════════════════════
 
-TARGET_CHANNEL_ID = 1526358328190566420
+TARGET_CHANNEL_ID = 1526384339670270012
 
 # ====== GEMINI MODELS ======
 # "gemini-2.0-flash" - أقوى + سريع + مجاني ⭐
