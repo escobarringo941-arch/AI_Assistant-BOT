@@ -33,13 +33,13 @@ API_TIMEOUT = 15
 # ═══════════════════════════════════════════════════════
 
 # IDs ديال القنوات والأدوار — بدلهم حسب السيرفر ديالك
-MOD_LOGS_CHANNEL_ID = 1524957892925456545   # ← ID قناة mod-logs
-MEMBER_ROLE_ID = 1234567890123456789         # ← ID الدور الجديد  
-MUTED_ROLE_ID = 1234567890123456789          # ← ID دور Mute
+MOD_LOGS_CHANNEL_ID = 1526470164235681832   # ← ID قناة mod-logs
+MEMBER_ROLE_ID = 1526451890399739934         # ← ID الدور الجديد  
+MUTED_ROLE_ID = 1526468718534590574          # ← ID دور Mute
 
 # كلمات ممنوعة (Auto-Mod)
 BANNED_WORDS = [
-    'سبام', 'spam', 'www.', 'discord.gg', 'http://', 'https://',
+    'سبام', 'spam', 'عزية', 'discord.gg', 'naked', 'عزي',
     'nude', 'porn', 'xxx', 'sex', 'fuck', 'shit', 'bitch'
 ]
 
