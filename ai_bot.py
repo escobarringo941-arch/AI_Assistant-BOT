@@ -225,20 +225,21 @@ async def on_member_join(member):
         await welcome_channel.send(welcome_msg)
 
 
-# ========== معلومات تلقائية كل 10 دقائق ==========
-@tasks.loop(minutes=10)
+# ========== معلومات تلقائية كل 30 دقيقة ==========
+@tasks.loop(minutes=30)
 async def auto_info():
-    """يبعث معلومة جديدة كل 10 دقائق فـ channel الترحيب"""
+    """يبعث معلومة جديدة كل 30 دقيقة فـ channel الترحيب"""
     welcome_channel = bot.get_channel(WELCOME_CHANNEL_ID)
     
     if not welcome_channel:
         return
     
     topics = [
-        "أخبار الألعاب الفيديو",
+        "اخر أخبار العاب الفيديو",
         "معلومة ثقافية على كل دول العالم",
-        "أخبار الموسيقى",
-        "أخبار الأفلام",
+        "اخر أخبار الإنمي",
+        "اخر أخبار الموسيقى",
+        "اخر أخبار الأفلام",
         "آخر الأخبار التقنية",
         "نصيحة من الحياة",
         "معلومة علمية",
