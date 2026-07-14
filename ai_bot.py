@@ -8,7 +8,7 @@ from collections import defaultdict
 # ║                    CONFIG سهل التعديل                  ║
 # ═══════════════════════════════════════════════════════
 
-TARGET_CHANNEL_ID = 1526358328190566420
+TARGET_CHANNEL_ID = 1526384339670270012
 
 # ====== DeepSeek V3 - الأذكى ======
 AI_MODEL = "deepseek/deepseek-chat"
