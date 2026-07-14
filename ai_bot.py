@@ -220,6 +220,7 @@ async def on_member_join(member):
 
 **مرحبا بيك من قلب!** ❤️
 
+
         
         await welcome_channel.send(welcome_msg)
 
