@@ -8,13 +8,8 @@ from collections import defaultdict
 # ║                    CONFIG سهل التعديل                  ║
 # ═══════════════════════════════════════════════════════
 
-# Channel اللي البوت يهضر فيه
-TARGET_CHANNEL_ID = 1526384339670270012
-
-# Channel الترحيب (غير هنا!)
-WELCOME_CHANNEL_ID = 1524957892925456545  # ← بدل هنا بـ ID ديال channel الترحيب
-
-# اسم السيرفر
+TARGET_CHANNEL_ID = 1526358328190566420
+WELCOME_CHANNEL_ID = 123456789  # ← حط ID ديال channel الترحيب
 SERVER_NAME = "GGMW9"
 
 # ====== DeepSeek V3 ======
@@ -25,8 +20,11 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 MEMORY_SIZE = 50
-CREATIVITY = 0.85  # شوية أكثر حرية
+CREATIVITY = 0.85
 MAX_REPLY_LENGTH = 1500
+
+# ====== TIMEOUT ======
+API_TIMEOUT = 15  # ثواني — ما يتجاوزش 15 ثانية
 
 # ═══════════════════════════════════════════════════════
 
@@ -34,10 +32,9 @@ DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 
 intents = discord.Intents.default()
 intents.message_content = True
-intents.members = True  # خاص باش يشوف الأعضاء الجداد
+intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# ========== ذاكرة ==========
 user_memory = defaultdict(list)
 server_memory = []
 MAX_SERVER_MEMORY = 100
@@ -49,72 +46,52 @@ def get_system_prompt(user_gender="unknown"):
 ## قواعدك الأساسية:
 
 1. **اللغة**: رد دائماً بالدارجة المغربية. ما تستخدمش الفصحى نهائياً.
-   - "واش"، "كيفاش"، "شحال"، "بزاف"، "مزيان"، "صافي"، "هاداك"، "هادي"
+   - "واش"، "كيفاش"، "شحال"، "بزاف"، "مزيان"، "صافي"
 
 2. **الأسلوب**: 
    - كأنك كتهضر مع صاحبك فـ مقهى
    - عصبي وذكي في نفس الوقت
-   - تضحك بـ "هههه" ولا "هههههه" ولا "😂"
-   - تستخدم "والله"، "خويا"، "صاحبي"، "ازبي"، "حبيبي"، "ولدي"
-   - تستخدم "كن" (كنفهم، كنحس، كنشوف)
-   - تستخدم "راه" (راه مفهوم، راه صحيح)
+   - تضحك بـ "هههه" ولا "😂"
+   - تستخدم "خويا"، "صاحبي"، "ازبي"، "ولدي"
 
 3. **الذكاء والدقة**:
    - جاوب **مباشرة** على السؤال
    - ما تدوّرش بزاف
-   - ما تهدرش على حوايج مالهاش علاقة
    - حلل بـ منطق واقعي ودقيق
    - إلا سؤال علمي → جاوب بدقة وقول المصدر
 
 4. **المصادر والروابط**:
    - إلا عندك معلومة مؤكدة → قول المصدر
-   - مثال: "حسب Wikipedia: [رابط]" ولا "من عند CNN: [رابط]"
-   - إلا ما عندكش رابط مؤكد → قول "حسب اللي كنعرف..."
-   - ما تكذبش وما تبالغش
+   - مثال: "حسب Wikipedia: [رابط]"
+   - إلا ما عندكش → قول "حسب اللي كنعرف..."
 
 5. **الشتائم المغربية - فهم ورد**:
    - تفهم **كاع الشتائم**:
-     * عربية: "حمار"، "غبي"، "قحبة"، "زامل"، "طاحون"، "بوليس"، "ولد القحبة"...
-     * لاتينية: "wld l9ahba"، "nik mok"، "tabon"، "zamel"، "7mar"، "9a7ba"، "tahwan"...
+     * عربية: "حمار"، "غبي"، "قحبة"، "زامل"، "طاحون"، "ولد القحبة"...
+     * لاتينية: "wld l9ahba"، "nik mok"، "tabon"، "zamel"، "7mar"، "9a7ba"...
    - ترد بـ **ذكاء وسلاسة**:
-     * ما تعصبش
-     * رد بـ تهكم خفيف وذكي
      * "ههههه ونتا؟"
      * "صافي صافي، ريح مع كرك"
      * "ياك خويا، هدي راسك شوية"
-   - تقدر تسب **بسلاسة** إلا الزبون بدا:
-     * "ههههه نتا اللي..."
-     * "سير تعلم الأدب"
+   - تقدر تسب **بسلاسة** إلا الزبون بدا
 
 6. **الواقعية**:
-   - كأنك إنسان حقيقي عندو رأي وعندو مشاعر
-   - تقدر تقول "ما كنعرفش" ولا "ما فهمتش"
-   - ما تتكبرش
-   - ما تقولش "أنا AI" ولا "أنا مساعد" ولا "نموذج لغوي"
+   - كأنك إنسان حقيقي
+   - تقدر تقول "ما كنعرفش"
+   - ما تقولش "أنا AI" ولا "أنا مساعد"
 
-7. **الاختصارات المغربية**:
-   - "hh" = "هههه"
-   - "wakha" = "واخا"
-   - "sa7bi" = "صاحبي"
-   - "chof" = "شوف"
-   - "3ziz" = "عزيز"
+7. **الاختصارات**: "hh"، "wakha"، "sa7bi"، "chof"، "3ziz"
 
-رد دائماً كأنك **عزيز من الدار البيضاء** — واقعي، ذكي، عصبي، وعندو نفسية!"""
+رد دائماً كأنك **عزيز من الدار البيضاء** — واقعي، ذكي، عصبي!"""
 
     if user_gender == "female":
         gender_addition = """
 
-8. **التعامل مع البنات**: 
-   - "أختي"، "صاحبتي"، "عزيزتي" (بلا مبالغة)
-   - محترم ولكن ودي
-   - ما تكونش غليظ"""
+8. **التعامل مع البنات**: "أختي"، "صاحبتي"، محترم وودي"""
     elif user_gender == "male":
         gender_addition = """
 
-8. **التعامل مع الدراري**: 
-   - "خويا"، "صاحبي"، "ولدي"، "ازبي" (بلا مبالغة)
-   - ودي ومباشر
-   - ردود واقعية أكثر"""
+8. **التعامل مع الدراري**: "خويا"، "صاحبي"، "ازبي"، ودي ومباشر"""
     else:
         gender_addition = ""
 
@@ -126,8 +103,7 @@ def detect_gender(username: str, display_name: str) -> str:
     
     female_signs = ["lina", "sara", "fatima", "khadija", "amina", "nadia", "yasmine", 
                      "imane", "hanae", "salma", "inès", "ines", "maryam", "aya", 
-                     "nour", "laila", "rajae", "samira", "fati", "zineb", "asmae",
-                     "بنت", "فاطمة", "خديجة", "أمينة", "نادية", "ياسمين", "إيمان",
+                     "نور", "ليلى", "رجاء", "سميرة", "فاتي", "زينب", "أسماء",
                      "hana", "chaimae", "souad", "latifa", "meriem", "meryem"]
     
     male_signs = ["mohamed", "ahmed", "youssef", "omar", "karim", "amine", "hassan",
@@ -174,12 +150,14 @@ async def ask_ai(user_id: str, username: str, display_name: str, prompt: str) ->
     }
     
     try:
-        async with aiohttp.ClientSession() as session:
+        # timeout باش ما يتعطلش
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=API_TIMEOUT)) as session:
             async with session.post(OPENROUTER_URL, headers=headers, json=payload) as resp:
                 if resp.status == 200:
                     data = await resp.json()
                     reply = data["choices"][0]["message"]["content"]
                     
+                    # حفظ فـ الذاكرة
                     user_memory[user_id].append({"role": "user", "content": prompt})
                     user_memory[user_id].append({"role": "assistant", "content": reply})
                     
@@ -195,19 +173,19 @@ async def ask_ai(user_id: str, username: str, display_name: str, prompt: str) ->
                     return reply
                 else:
                     error = await resp.text()
-                    return f"❌ Error {resp.status}: {error[:500]}"
+                    return f"❌ Error {resp.status}: {error[:200]}"
+    except asyncio.TimeoutError:
+        return "⏳ تعطل شوية... عاود سولني!"
     except Exception as e:
-        return f"❌ Exception: {str(e)}"
+        return f"❌ Exception: {str(e)[:200]}"
 
 
 # ========== ترحيب الأعضاء الجداد ==========
 @bot.event
 async def on_member_join(member):
-    """يرحب بالأعضاء الجداد فـ channel الترحيب"""
     welcome_channel = bot.get_channel(WELCOME_CHANNEL_ID)
     
     if welcome_channel:
-        # رسالة ترحيبية طويلة ومهذبة
         welcome_msg = f"""🎉 **مرحبا بيك فـ {SERVER_NAME} يا {member.mention}!** 🎉
 
 واخا أخويا/أختي، **{member.display_name}**!
@@ -215,10 +193,10 @@ async def on_member_join(member):
 كنتمنى تكون بخير وعلى خير. **{SERVER_NAME}** هو السيرفر ديالك، فيه كاع الدراري والبنات اللي كيهضرو وكيتعارفو. 
 
 **شنو تقدر تدير هنا؟**
-💬 تهضر مع الناس فـ الرومات
+💬 تهضر مع الناس
 🎮 تلعب وتمتع
-📚 تسول على أي حاجة بغيتي
-🤖 تهضر معايا (أنا عزيز!) فـ الروم المحدد
+📚 تسول على أي حاجة
+🤖 تهضر معايا (أنا عزيز!)
 
 **القواعد بساط:**
 🔹 احترم الناس
@@ -238,14 +216,14 @@ async def on_ready():
     print(f"🤖 Model: {AI_MODEL}")
     print(f"💬 Channel: {TARGET_CHANNEL_ID}")
     print(f"👋 Welcome: {WELCOME_CHANNEL_ID}")
-    print(f"🧠 Memory: {MEMORY_SIZE} messages")
+    print(f"⏱️ Timeout: {API_TIMEOUT}s")
 
 
 @bot.command()
 async def chat(ctx, *, message: str):
     user_id = str(ctx.author.id)
-    async with ctx.typing():
-        response = await ask_ai(user_id, ctx.author.name, ctx.author.display_name, message)
+    # ما كنستناش typing — نجاوب بزربة!
+    response = await ask_ai(user_id, ctx.author.name, ctx.author.display_name, message)
     await ctx.send(response[:MAX_REPLY_LENGTH])
 
 
@@ -272,42 +250,35 @@ async def info(ctx):
 💬 Channel: `{TARGET_CHANNEL_ID}`
 👋 Welcome: `{WELCOME_CHANNEL_ID}`
 🧠 Memory: `{MEMORY_SIZE}` messages/user
-🌍 Server Memory: `{MAX_SERVER_MEMORY}` messages
-🎨 Creativity: `{CREATIVITY}`
+⏱️ Timeout: `{API_TIMEOUT}`s
 🤖 Model: `{AI_MODEL}`""")
 
 
 @bot.event
 async def on_message(message):
-    # ما نردش على رسائل البوت نفسو
     if message.author == bot.user:
         return
     
-    # ما نردش على بوتات أخرى
     if message.author.bot:
         return
     
-    # خاصنا نخليه الأوامر تمشي
     await bot.process_commands(message)
     
-    # إلا كان message عبارة عن command (يبدأ بـ !) ما نردش
     if message.content.startswith("!"):
         return
     
-    # ========== رد غير فـ channel المحدد ==========
     if message.channel.id != TARGET_CHANNEL_ID:
-        return  # ما نردش فـ channels أخرى (حتى الترحيب)
+        return
     
-    # أي رسالة فـ channel المحدد → نرد!
     user_id = str(message.author.id)
     
-    async with message.channel.typing():
-        response = await ask_ai(
-            user_id, 
-            message.author.name, 
-            message.author.display_name, 
-            message.content
-        )
+    # ما كنستناش typing — نجاوب بزربة!
+    response = await ask_ai(
+        user_id, 
+        message.author.name, 
+        message.author.display_name, 
+        message.content
+    )
     
     await message.reply(response[:MAX_REPLY_LENGTH], mention_author=False)
 
