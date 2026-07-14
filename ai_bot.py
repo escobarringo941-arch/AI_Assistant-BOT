@@ -45,7 +45,7 @@ MEMBER_ROLE_ID = 1526451890399739934
 MUTED_ROLE_ID = 1526468718534590574
 
 BANNED_WORDS = [
-    'سبام', 'spam', 'naked.', 'discord.gg', 'العزية', 'عزي',
+    'سبام', 'spam', 'شلح.', 'discord.gg', 'العزية', 'عزي',
     'nude', 'porn', 'xxx', 'sex', 'fuck', 'shit', 'bitch'
 ]
 
