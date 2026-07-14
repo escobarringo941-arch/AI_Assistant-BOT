@@ -10,11 +10,12 @@ from collections import defaultdict
 
 TARGET_CHANNEL_ID = 1526358328190566420
 
-# ====== GEMINI من OpenRouter ======
-# "google/gemini-2.0-flash-exp:free" - مجاني + سريع ⭐
-# "google/gemini-2.0-flash-lite-preview-02-05:free" - أخف
-# "google/gemini-1.5-flash" - قوي
-AI_MODEL = "google/gemini-2.0-flash-exp:free"
+# ====== MODELS مضمونة من OpenRouter ======
+# "google/gemini-2.0-flash-001" - أقوى + تصاور ⭐
+# "google/gemini-2.0-flash-lite-001" - أخف
+# "google/gemini-1.5-flash-8b" - مجاني غالباً
+# "google/gemini-1.5-pro-002" - أقوى شوية
+AI_MODEL = "google/gemini-2.0-flash-001"  # ← غير هنا!
 
 # ====== API ======
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
@@ -129,15 +130,12 @@ async def ask_ai(user_id: str, username: str, display_name: str, prompt: str, im
     
     messages = [{"role": "system", "content": get_system_prompt(gender)}]
     
-    # نزيد ذاكرة المستخدم
     for msg in user_memory[user_id]:
         messages.append(msg)
     
-    # نزيد سياق السيرفر (آخر 5 رسائل)
     for msg in server_memory[-10:]:
         messages.append(msg)
     
-    # بناء الرسالة
     user_message = {"role": "user", "content": []}
     
     if image_url:
@@ -164,7 +162,6 @@ async def ask_ai(user_id: str, username: str, display_name: str, prompt: str, im
                     data = await resp.json()
                     reply = data["choices"][0]["message"]["content"]
                     
-                    # حفظ فـ الذاكرة
                     user_memory[user_id].append({"role": "user", "content": prompt})
                     user_memory[user_id].append({"role": "assistant", "content": reply})
                     
@@ -247,7 +244,6 @@ async def on_message(message):
     
     user_id = str(message.author.id)
     
-    # نشوف واش فيه تصاور
     image_url = None
     if message.attachments:
         for att in message.attachments:
