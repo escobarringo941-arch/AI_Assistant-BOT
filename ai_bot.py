@@ -3,7 +3,7 @@ import discord
 import aiohttp
 import random
 import asyncio
-from discord.ext import commands
+from discord.ext import commands, tasks
 from collections import defaultdict
 
 # ═══════════════════════════════════════════════════════
@@ -21,7 +21,7 @@ AI_MODEL = "deepseek/deepseek-chat"
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-MEMORY_SIZE = 50
+MEMORY_SIZE = 100  # زدنا باش يحفظ أكثر
 CREATIVITY = 0.85
 MAX_REPLY_LENGTH = 1500
 API_TIMEOUT = 15
@@ -35,18 +35,23 @@ intents.message_content = True
 intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
+# ========== ذاكرة ==========
 user_memory = defaultdict(list)
 server_memory = []
 MAX_SERVER_MEMORY = 100
 
+# ========== ذاكرة التعلم ==========
+learned_knowledge = []  # حوايج جديدة علمناهوم
+
 
 def get_system_prompt(user_gender="unknown"):
-    base_prompt = """أنت "عزيز"، واحد الولد ديال الدار البيضاء، عايش فـ حي شعبي. كتهضر بالدارجة المغربية 100%.
+    base_prompt = """أنت "سيمو"، واحد الولد ديال الدار البيضاء، عايش فـ حي شعبي. كتهضر بالدارجة المغربية 100%.
 
 ## قواعدك الأساسية:
 
 1. **اللغة**: رد دائماً بالدارجة المغربية. ما تستخدمش الفصحى نهائياً.
    - "واش"، "كيفاش"، "شحال"، "بزاف"، "مزيان"، "صافي"
+   - الحروف اللاتينية: "3" = "ع"، "7" = "ح"، "9" = "ق"، "5" = "خ"...
 
 2. **الأسلوب**: 
    - كأنك كتهضر مع صاحبك فـ مقهى
@@ -75,23 +80,29 @@ def get_system_prompt(user_gender="unknown"):
      * "ياك خويا، هدي راسك شوية"
    - تقدر تسب **بسلاسة** إلا الزبون بدا
 
-6. **الواقعية**:
+6. **التعلم**:
+   - إلا شي حد علمك شي حاجة → حفظها واستعملها فـ المستقبل
+   - قول "واخا أسيدي" (للدراري) ولا "واخا الالة" (للبنات)
+   - كون ممتن: "ههههه فهمتك، نتذكر هادا"
+
+7. **الواقعية**:
    - كأنك إنسان حقيقي
    - تقدر تقول "ما كنعرفش"
-   - ما تقولش "أنا AI" ولا "أنا مساعد"
+   - ما تقولش "أنا AI" ولا "أنا مساعد" ولا "سيمو" بزاف
+   - ما تدكرش سميتك إلا سولوك
 
-7. **الاختصارات**: "hh"، "wakha"، "sa7bi"، "chof"، "3ziz"
+8. **الاختصارات**: "hh"، "wakha"، "sa7bi"، "chof"، "3ziz"
 
-رد دائماً كأنك **عزيز من الدار البيضاء** — واقعي، ذكي، عصبي!"""
+رد دائماً كأنك **سيمو من الدار البيضاء** — واقعي، ذكي، عصبي!"""
 
     if user_gender == "female":
         gender_addition = """
 
-8. **التعامل مع البنات**: "أختي"، "صاحبتي"، محترم وودي"""
+9. **التعامل مع البنات**: "أختي"، "صاحبتي"، "واخا الالة"، محترم وودي"""
     elif user_gender == "male":
         gender_addition = """
 
-8. **التعامل مع الدراري**: "خويا"، "صاحبي"، "ازبي"، ودي ومباشر"""
+9. **التعامل مع الدراري**: "خويا"، "صاحبي"، "ازبي"، "واخا أسيدي"، ودي ومباشر"""
     else:
         gender_addition = ""
 
@@ -132,7 +143,13 @@ async def ask_ai(user_id: str, username: str, display_name: str, prompt: str) ->
     
     gender = detect_gender(username, display_name)
     
+    # نبني الرسائل مع الذاكرة والتعلم
     messages = [{"role": "system", "content": get_system_prompt(gender)}]
+    
+    # نزيد حوايج اللي تعلمناهوم
+    if learned_knowledge:
+        knowledge_text = "حوايج جديدة تعلمتهوم:\n" + "\n".join(learned_knowledge[-20:])
+        messages.append({"role": "system", "content": knowledge_text})
     
     for msg in user_memory[user_id]:
         messages.append(msg)
@@ -194,7 +211,7 @@ async def on_member_join(member):
 💬 تهضر مع الناس
 🎮 تلعب وتمتع
 📚 تسول على أي حاجة
-🤖 تهضر معايا (أنا عزيز!)
+🤖 تهضر معايا (أنا سيمو!)
 
 **القواعد بساط:**
 🔹 احترم الناس
@@ -203,20 +220,76 @@ async def on_member_join(member):
 
 **مرحبا بيك من قلب!** ❤️
 
-*— عزيز، الولد ديال الدار البيضاء*"""
+*— سيمو، الولد ديال الدار البيضاء*"""
         
         await welcome_channel.send(welcome_msg)
 
 
-@bot.event
-async def on_ready():
-    print(f"✅ البوت شغال!")
-    print(f"🤖 Model: {AI_MODEL}")
-    print(f"💬 Channel: {TARGET_CHANNEL_ID}")
-    print(f"👋 Welcome: {WELCOME_CHANNEL_ID}")
-    print(f"⏱️ Timeout: {API_TIMEOUT}s")
+# ========== معلومات تلقائية كل 20 دقيقة ==========
+@tasks.loop(minutes=20)
+async def auto_info():
+    """يبعث معلومة جديدة كل 20 دقيقة فـ channel الترحيب"""
+    welcome_channel = bot.get_channel(WELCOME_CHANNEL_ID)
+    
+    if not welcome_channel:
+        return
+    
+    topics = [
+        "أخبار الألعاب الفيديو",
+        "معلومة ثقافية على المغرب",
+        "آخر الأخبار التقنية",
+        "نصيحة من الحياة",
+        "معلومة علمية",
+        "تاريخ المغرب",
+        "وصفة مغربية",
+        "معلومة رياضية"
+    ]
+    
+    topic = random.choice(topics)
+    
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://discord.com",
+        "X-Title": "AI Assistant BOT"
+    }
+    
+    prompt = f"""عطيني معلومة قصيرة وممتعة على الموضوع: {topic}
+اكتبها بالدارجة المغربية.
+ضيف مصدر إلا كان ممكن.
+كن مختصر (3-4 سطور فقط)."""
+    
+    payload = {
+        "model": AI_MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": 500,
+        "temperature": 0.8
+    }
+    
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=API_TIMEOUT)) as session:
+            async with session.post(OPENROUTER_URL, headers=headers, json=payload) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    info = data["choices"][0]["message"]["content"]
+                    
+                    msg = f"""📢 **معلومة جديدة من سيمو!** 📢
+
+{info}
+
+*— سيمو، كل 20 دقيقة معلومة جديدة*"""
+                    
+                    await welcome_channel.send(msg)
+    except:
+        pass  # إلا فشل، ما نبينش الخطأ
 
 
+@auto_info.before_loop
+async def before_auto_info():
+    await bot.wait_until_ready()
+
+
+# ========== Commands ==========
 @bot.command()
 async def chat(ctx, *, message: str):
     user_id = str(ctx.author.id)
@@ -251,6 +324,27 @@ async def info(ctx):
 🤖 Model: `{AI_MODEL}`""")
 
 
+# ========== التعلم ==========
+@bot.command()
+async def انعلمك(ctx, *, knowledge: str):
+    """!انعلمك <حاجة جديدة> — علم سيمو شي حاجة"""
+    learned_knowledge.append(knowledge)
+    
+    gender = detect_gender(ctx.author.name, ctx.author.display_name)
+    
+    if gender == "female":
+        await ctx.send(f"✅ **واخا الالة!** تعلمت: {knowledge[:100]}... نتذكرها دايمن! 🧠")
+    else:
+        await ctx.send(f"✅ **واخا أسيدي!** تعلمت: {knowledge[:100]}... نتذكرها دايمن! 🧠")
+
+
+@bot.command()
+async def انعلمك_شي_حاجة_جديدة(ctx, *, knowledge: str):
+    """نفس الشيء"""
+    await انعلمك(ctx, knowledge=knowledge)
+
+
+# ========== on_message ==========
 @bot.event
 async def on_message(message):
     if message.author == bot.user:
@@ -267,6 +361,11 @@ async def on_message(message):
     # ========== ردود تلقائية ==========
     msg_lower = message.content.lower()
     gender = detect_gender(message.author.name, message.author.display_name)
+    
+    # "سيمو" / "simo" — نعام!
+    if "سيمو" in msg_lower or "simo" in msg_lower:
+        await message.reply("نعام! 😂 واش بغيتي؟", mention_author=False)
+        return
     
     # "غيرها"
     if "غيرها" in msg_lower:
@@ -374,6 +473,19 @@ async def on_message(message):
     )
     
     await message.reply(response[:MAX_REPLY_LENGTH], mention_author=False)
+
+
+@bot.event
+async def on_ready():
+    print(f"✅ سيمو شغال!")
+    print(f"🤖 Model: {AI_MODEL}")
+    print(f"💬 Channel: {TARGET_CHANNEL_ID}")
+    print(f"👋 Welcome: {WELCOME_CHANNEL_ID}")
+    print(f"⏱️ Timeout: {API_TIMEOUT}s")
+    
+    # نشغل المعلومات التلقائية
+    if not auto_info.is_running():
+        auto_info.start()
 
 
 if __name__ == "__main__":
