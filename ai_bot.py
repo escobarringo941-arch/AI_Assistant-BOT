@@ -33,9 +33,9 @@ API_TIMEOUT = 15
 # ═══════════════════════════════════════════════════════
 
 # IDs ديال القنوات والأدوار — بدلهم حسب السيرفر ديالك
-MOD_LOGS_CHANNEL_ID = 1524957892925456545  # قناة سجل الموديراتورز (بدلوها)
-MEMBER_ROLE_ID = 1234567890123456789  # الدور لي كيعطى للأعضاء الجداد (بدلوها)
-MUTED_ROLE_ID = 1234567890123456789  # الدور ديال Mute (بدلوها)
+MOD_LOGS_CHANNEL_ID = 1524957892925456545   # ← ID قناة mod-logs
+MEMBER_ROLE_ID = 1234567890123456789         # ← ID الدور الجديد  
+MUTED_ROLE_ID = 1234567890123456789          # ← ID دور Mute
 
 # كلمات ممنوعة (Auto-Mod)
 BANNED_WORDS = [
@@ -54,7 +54,7 @@ DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
-bot = commands.Bot(command_prefix="!", intents=intents)
+bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
 # ========== ذاكرة AI ==========
 user_memory = defaultdict(list)
