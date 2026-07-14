@@ -8,8 +8,8 @@ from collections import defaultdict
 # ║                    CONFIG سهل التعديل                  ║
 # ═══════════════════════════════════════════════════════
 
-TARGET_CHANNEL_ID = 1526358328190566420
-WELCOME_CHANNEL_ID = 123456789  # ← حط ID ديال channel الترحيب
+TARGET_CHANNEL_ID = 1526384339670270012
+WELCOME_CHANNEL_ID = 1524957892925456545  # ← حط ID ديال channel الترحيب
 SERVER_NAME = "GGMW9"
 
 # ====== DeepSeek V3 ======
