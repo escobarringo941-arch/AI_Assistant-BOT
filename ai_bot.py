@@ -35,7 +35,10 @@ API_TIMEOUT = 15
 MOD_LOGS_CHANNEL_ID = 1524957892925456545
 VERIFY_CHANNEL_ID = 1526481352264781854
 RULES_CHANNEL_ID = 1526474691789721700
-WAITING_CHANNEL_ID = 1526691401293762711  # ← حط ID ديال "Waiting for verification" هنا
+
+# ⏳ Waiting Room — حط IDs ديالك هنا
+WAITING_VOICE_CHANNEL_ID = 1234567890123456789   # ← Voice Channel "Waiting For Verification"
+WAITING_TEXT_CHANNEL_ID = 9876543210987654321    # ← Text Channel "waiting-for-verification"
 
 UNVERIFIED_ROLE_ID = 1526452828267085915
 MEMBER_ROLE_ID = 1526451890399739934
@@ -56,6 +59,7 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 intents.reactions = True
+intents.voice_states = True  # خاص باش يشوف voice channels
 bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
 # ========== ذاكرة AI ==========
@@ -360,15 +364,17 @@ async def on_member_join(member):
         except discord.Forbidden:
             pass
 
-    # 2. نقل لـ "Waiting for verification" (إلا كان فـ voice channel)
-    waiting_channel = bot.get_channel(WAITING_CHANNEL_ID)
-    if waiting_channel and isinstance(waiting_channel, discord.VoiceChannel):
-        try:
-            await member.move_to(waiting_channel)
-        except discord.Forbidden:
-            pass  # ما كاينش فـ voice channel
-        except discord.HTTPException:
-            pass  # ما كاينش فـ voice channel
+    # 2. نقل لـ "Waiting For Verification" (Voice Channel)
+    moved = False
+    waiting_voice = bot.get_channel(WAITING_VOICE_CHANNEL_ID)
+    if waiting_voice and isinstance(waiting_voice, discord.VoiceChannel):
+        # نحاول ننقلو فقط إلا كان فـ voice channel
+        if member.voice and member.voice.channel:
+            try:
+                await member.move_to(waiting_voice)
+                moved = True
+            except (discord.Forbidden, discord.HTTPException):
+                pass
 
     # 3. يرحبو فـ welcome channel
     welcome_channel = bot.get_channel(WELCOME_CHANNEL_ID)
@@ -402,13 +408,13 @@ async def on_member_join(member):
     except discord.Forbidden:
         pass
 
-    # 5. رسالة فـ "Waiting for verification"
-    if waiting_channel and isinstance(waiting_channel, discord.TextChannel):
+    # 5. رسالة فـ "Waiting For Verification" (Text Channel)
+    waiting_text = bot.get_channel(WAITING_TEXT_CHANNEL_ID)
+    if waiting_text and isinstance(waiting_text, discord.TextChannel):
         embed_waiting = discord.Embed(
-            title="⏳ فين وصلت؟",
+            title="⏳ مرحبا بيك فـ Waiting For Verification!",
             description=(
-                f"**مرحبا بيك يا {member.mention}!** 👋\n\n"
-                f"أنت دابا فـ **Waiting for verification**.\n\n"
+                f"**{member.mention}** دخل السيرفر!\n\n"
                 f"**قبل ما تقدر تهضر فالسيرفر، خاصك:**\n\n"
                 f"📜 **1. اقرأ القوانين:**\n"
                 f"روح لـ <#{RULES_CHANNEL_ID}> واقرأ القوانين كاملة.\n\n"
@@ -423,7 +429,7 @@ async def on_member_join(member):
         )
         embed_waiting.set_thumbnail(url=member.display_avatar.url)
         embed_waiting.set_footer(text="سيمو | Waiting Room")
-        await waiting_channel.send(embed=embed_waiting, delete_after=60)
+        await waiting_text.send(embed=embed_waiting)
 
     # 6. Log
     await log_action(
@@ -432,7 +438,8 @@ async def on_member_join(member):
         f"**المستخدم:** {member.mention} ({member.name})\n"
         f"**الحالة:** غير مفعل\n"
         f"**الدور:** {unverified_role.mention if unverified_role else 'N/A'}\n"
-        f"**Waiting Room:** <#{WAITING_CHANNEL_ID}>",
+        f"**Waiting Voice:** <#{WAITING_VOICE_CHANNEL_ID}>\n"
+        f"**نقل Voice:** {'✅ نعم' if moved else '❌ لا (ما كانش فـ voice)'}",
         discord.Color.orange()
     )
 
@@ -1217,7 +1224,8 @@ async def info(ctx):
     embed.add_field(name="💬 AI Channel", value=f"`{TARGET_CHANNEL_ID}`", inline=True)
     embed.add_field(name="👋 Welcome", value=f"`{WELCOME_CHANNEL_ID}`", inline=True)
     embed.add_field(name="✅ Verify", value=f"`{VERIFY_CHANNEL_ID}`", inline=True)
-    embed.add_field(name="⏳ Waiting", value=f"`{WAITING_CHANNEL_ID}`", inline=True)
+    embed.add_field(name="⏳ Waiting Voice", value=f"`{WAITING_VOICE_CHANNEL_ID}`", inline=True)
+    embed.add_field(name="⏳ Waiting Text", value=f"`{WAITING_TEXT_CHANNEL_ID}`", inline=True)
     embed.add_field(name="🧠 Memory", value=f"`{MEMORY_SIZE}` msg/user", inline=True)
     embed.add_field(name="⏱️ Timeout", value=f"`{API_TIMEOUT}`s", inline=True)
     embed.add_field(name="🤖 Model", value=f"`{AI_MODEL}`", inline=True)
@@ -1465,7 +1473,8 @@ async def on_ready():
     print(f"💬 Channel: {TARGET_CHANNEL_ID}")
     print(f"👋 Welcome: {WELCOME_CHANNEL_ID}")
     print(f"✅ Verify: {VERIFY_CHANNEL_ID}")
-    print(f"⏳ Waiting: {WAITING_CHANNEL_ID}")
+    print(f"⏳ Waiting Voice: {WAITING_VOICE_CHANNEL_ID}")
+    print(f"⏳ Waiting Text: {WAITING_TEXT_CHANNEL_ID}")
     print(f"🛡️ Mod Logs: {MOD_LOGS_CHANNEL_ID}")
     print(f"⏱️ Timeout: {API_TIMEOUT}s")
     print(f"🛡️ Moderation: نشط (Staff محمي)")
