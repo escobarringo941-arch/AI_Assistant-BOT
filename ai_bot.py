@@ -220,7 +220,7 @@ async def on_member_join(member):
 
 **مرحبا بيك من قلب!** ❤️
 
-*— سيمو، الولد ديال الدار البيضاء*"""
+*— لسنا الوحيدين ولكننا الأفضل*"""
         
         await welcome_channel.send(welcome_msg)
 
@@ -273,11 +273,11 @@ async def auto_info():
                     data = await resp.json()
                     info = data["choices"][0]["message"]["content"]
                     
-                    msg = f"""📢 **معلومة جديدة من سيمو!** 📢
+                    msg = f"""📢 **اجي اجي تسمع!** 📢
 
 {info}
 
-*— سيمو، كل 20 دقيقة معلومة جديدة*"""
+*— ايوا اشنو بان ليك؟*"""
                     
                     await welcome_channel.send(msg)
     except:
