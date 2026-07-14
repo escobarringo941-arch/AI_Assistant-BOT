@@ -1,6 +1,8 @@
 import os
 import discord
 import aiohttp
+import random
+import asyncio
 from discord.ext import commands
 from collections import defaultdict
 
@@ -9,7 +11,7 @@ from collections import defaultdict
 # ═══════════════════════════════════════════════════════
 
 TARGET_CHANNEL_ID = 1526384339670270012
-WELCOME_CHANNEL_ID = 1524957892925456545  # ← حط ID ديال channel الترحيب
+WELCOME_CHANNEL_ID = 1524957892925456545
 SERVER_NAME = "GGMW9"
 
 # ====== DeepSeek V3 ======
@@ -22,9 +24,7 @@ OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 MEMORY_SIZE = 50
 CREATIVITY = 0.85
 MAX_REPLY_LENGTH = 1500
-
-# ====== TIMEOUT ======
-API_TIMEOUT = 15  # ثواني — ما يتجاوزش 15 ثانية
+API_TIMEOUT = 15
 
 # ═══════════════════════════════════════════════════════
 
@@ -150,14 +150,12 @@ async def ask_ai(user_id: str, username: str, display_name: str, prompt: str) ->
     }
     
     try:
-        # timeout باش ما يتعطلش
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=API_TIMEOUT)) as session:
             async with session.post(OPENROUTER_URL, headers=headers, json=payload) as resp:
                 if resp.status == 200:
                     data = await resp.json()
                     reply = data["choices"][0]["message"]["content"]
                     
-                    # حفظ فـ الذاكرة
                     user_memory[user_id].append({"role": "user", "content": prompt})
                     user_memory[user_id].append({"role": "assistant", "content": reply})
                     
@@ -222,7 +220,6 @@ async def on_ready():
 @bot.command()
 async def chat(ctx, *, message: str):
     user_id = str(ctx.author.id)
-    # ما كنستناش typing — نجاوب بزربة!
     response = await ask_ai(user_id, ctx.author.name, ctx.author.display_name, message)
     await ctx.send(response[:MAX_REPLY_LENGTH])
 
@@ -267,12 +264,108 @@ async def on_message(message):
     if message.content.startswith("!"):
         return
     
+    # ========== ردود تلقائية ==========
+    msg_lower = message.content.lower()
+    gender = detect_gender(message.author.name, message.author.display_name)
+    
+    # "غيرها"
+    if "غيرها" in msg_lower:
+        await message.reply("وخا أسي زبي 😂", mention_author=False)
+        return
+    
+    # "سير تقود"
+    if "سير تقود" in msg_lower or "تقود" in msg_lower:
+        await message.reply("وخا هاني غادي نتقود دابا 🏃‍♂️", mention_author=False)
+        return
+    
+    # "مالك ازبي" / "مالك زبي"
+    if "مالك" in msg_lower and ("ازبي" in msg_lower or "زبي" in msg_lower):
+        if gender == "female":
+            await message.reply("زبي فكرك مخبي ابنت القحبة 😂", mention_author=False)
+        else:
+            await message.reply("زبي فكرك مخبي اولد القحبة 😂", mention_author=False)
+        return
+    
+    # "قحبة"
+    if "قحبة" in msg_lower:
+        await message.reply("القحبة هي مك 😂", mention_author=False)
+        return
+    
+    # "سير تحوا"
+    if "سير تحوا" in msg_lower:
+        if gender == "female":
+            await message.reply("سيري تحواي نتي نيت 😂", mention_author=False)
+        else:
+            await message.reply("سير تحوا نتا نيت 😂", mention_author=False)
+        return
+    
+    # "اهيا"
+    if "اهيا" in msg_lower or "اه" in msg_lower:
+        await message.reply("وي مالك؟ 🤔", mention_author=False)
+        return
+    
+    # "شحال فساعة"
+    if "شحال" in msg_lower and "ساعة" in msg_lower:
+        await message.reply("ساعاتو لله 🕐", mention_author=False)
+        return
+    
+    # "زبي" / "ازبي" (أي سياق)
+    if "زبي" in msg_lower or "ازبي" in msg_lower:
+        replies = [
+            "ههههه ونتا؟ 😂",
+            "صافي صافي، ريح مع كرك",
+            "ياك خويا، هدي راسك شوية",
+            "زبي فكرك مخبي 😂"
+        ]
+        await message.reply(random.choice(replies), mention_author=False)
+        return
+    
+    # "لقلاوي" (أي سياق)
+    if "لقلاوي" in msg_lower or "لقلاو" in msg_lower:
+        await message.reply("ههههه لقلاوي نتا 😂", mention_author=False)
+        return
+    
+    # "زامل" (أي سياق)
+    if "زامل" in msg_lower:
+        if gender == "female":
+            await message.reply("ههههه زاملة نتي 😂", mention_author=False)
+        else:
+            await message.reply("ههههه زامل نتا 😂", mention_author=False)
+        return
+    
+    # ========== شتم عام ==========
+    insults = ["حمار", "غبي", "قحبة", "زامل", "طاحون", "بوليس", "ولد القحبة", 
+               "wld l9ahba", "nik mok", "tabon", "zamel", "7mar", "9a7ba", "tahwan",
+               "لي حواك", "قواد", "طبون مك", "ابن القحبة", "ابنت القحبة",
+               "نيك", "زب", "احا", "فمك", "كسمك", "كس"]
+    
+    is_insult = any(insult in msg_lower for insult in insults)
+    
+    if is_insult:
+        if gender == "female":
+            replies = [
+                "ههههه ونتي نيت ابنت القحبة 😂",
+                "صافي صافي، ريحي مع كرك 😂",
+                "ياك اختي، هدي راسك شوية",
+                "ههههه نتي اللي جاييا تهضري معايا؟"
+            ]
+        else:
+            replies = [
+                "ههههه ونتا نيت اولد القحبة 😂",
+                "صافي صافي، ريح مع كرك 😂",
+                "ياك خويا، هدي راسك شوية",
+                "ههههه نتا اللي جاي تهضر معايا؟"
+            ]
+        
+        await message.reply(random.choice(replies), mention_author=False)
+        return
+    
+    # ========== رد غير فـ channel المحدد ==========
     if message.channel.id != TARGET_CHANNEL_ID:
         return
     
     user_id = str(message.author.id)
     
-    # ما كنستناش typing — نجاوب بزربة!
     response = await ask_ai(
         user_id, 
         message.author.name, 
