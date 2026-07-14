@@ -35,6 +35,7 @@ API_TIMEOUT = 15
 MOD_LOGS_CHANNEL_ID = 1524957892925456545
 VERIFY_CHANNEL_ID = 1526481352264781854
 RULES_CHANNEL_ID = 1526474691789721700
+WAITING_CHANNEL_ID = 1234567890123456789  # ← حط ID ديال "Waiting for verification" هنا
 
 UNVERIFIED_ROLE_ID = 1526452828267085915
 MEMBER_ROLE_ID = 1526451890399739934
@@ -77,15 +78,12 @@ mute_tasks = {}
 
 def is_staff(member: discord.Member) -> bool:
     """تحقق: واش العضو من الـ Staff (Owner, Admin, Mod)"""
-    # Owner ديال السيرفر
     if member.id == member.guild.owner_id:
         return True
     
-    # صلاحيات الإدارة
     if member.guild_permissions.administrator:
         return True
     
-    # Moderator permissions
     if member.guild_permissions.manage_messages:
         return True
     if member.guild_permissions.manage_guild:
@@ -352,8 +350,9 @@ async def setup_verify_message(guild: discord.Guild):
 
 @bot.event
 async def on_member_join(member):
-    """ترحيب + Auto-Role (@Unverified)"""
+    """ترحيب + Auto-Role (@Unverified) + نقل لـ Waiting Room"""
 
+    # 1. يعطي @Unverified تلقائياً
     unverified_role = member.guild.get_role(UNVERIFIED_ROLE_ID)
     if unverified_role:
         try:
@@ -361,16 +360,27 @@ async def on_member_join(member):
         except discord.Forbidden:
             pass
 
+    # 2. نقل لـ "Waiting for verification" (إلا كان فـ voice channel)
+    waiting_channel = bot.get_channel(WAITING_CHANNEL_ID)
+    if waiting_channel and isinstance(waiting_channel, discord.VoiceChannel):
+        try:
+            await member.move_to(waiting_channel)
+        except discord.Forbidden:
+            pass  # ما كاينش فـ voice channel
+        except discord.HTTPException:
+            pass  # ما كاينش فـ voice channel
+
+    # 3. يرحبو فـ welcome channel
     welcome_channel = bot.get_channel(WELCOME_CHANNEL_ID)
     if welcome_channel:
         embed = discord.Embed(
             title=f"👋 مرحبا بيك {member.display_name}!",
             description=(
                 f"واخا أخويا/أختي! **{SERVER_NAME}** هو السيرفر ديالك.\n\n"
-                f"**قبل ما تبدأ:**\n"
+                f"**قبل ما تبدأ خاصك:**\n"
                 f"1️⃣ اقرأ القوانين فـ <#{RULES_CHANNEL_ID}>\n"
-                f"2️⃣ وافق فـ <#{VERIFY_CHANNEL_ID}>\n"
-                f"3️⃣ استمتع! 🎉"
+                f"2️⃣ روح لـ <#{VERIFY_CHANNEL_ID}> وكليك على ✅\n\n"
+                f"**ملاحظة:** إلا ما وافقتش، ما غاديش تقدر تهضر ولا تفاعل!"
             ),
             color=discord.Color.orange(),
             timestamp=datetime.now()
@@ -379,22 +389,50 @@ async def on_member_join(member):
         embed.set_footer(text="سيمو | Verification System")
         await welcome_channel.send(embed=embed)
 
+    # 4. رسالة فـ DM
     try:
         await member.send(
             f"👋 مرحبا بيك فـ **{SERVER_NAME}**!\n\n"
-            f"قبل ما تقدر تهضر فالسيرفر، خاصك توافق على القوانين.\n"
-            f"روح لـ <#{VERIFY_CHANNEL_ID}> وكليك على ✅\n\n"
+            f"**الخطوات باش تتفعّل:**\n"
+            f"1️⃣ اقرأ القوانين فـ <#{RULES_CHANNEL_ID}>\n"
+            f"2️⃣ روح لـ <#{VERIFY_CHANNEL_ID}> وكليك على ✅\n\n"
+            f"إلا ما درتيش هاد الخطوات، ما غاديش تقدر تهضر فالسيرفر!\n\n"
             f"شكراً! 🙏"
         )
     except discord.Forbidden:
         pass
 
+    # 5. رسالة فـ "Waiting for verification"
+    if waiting_channel and isinstance(waiting_channel, discord.TextChannel):
+        embed_waiting = discord.Embed(
+            title="⏳ فين وصلت؟",
+            description=(
+                f"**مرحبا بيك يا {member.mention}!** 👋\n\n"
+                f"أنت دابا فـ **Waiting for verification**.\n\n"
+                f"**قبل ما تقدر تهضر فالسيرفر، خاصك:**\n\n"
+                f"📜 **1. اقرأ القوانين:**\n"
+                f"روح لـ <#{RULES_CHANNEL_ID}> واقرأ القوانين كاملة.\n\n"
+                f"✅ **2. وافق على القوانين:**\n"
+                f"من بعد ما تقراهم، روح لـ <#{VERIFY_CHANNEL_ID}> وكليك على ✅\n\n"
+                f"🔓 **3. استمتع!**\n"
+                f"من بعد التفعيل، غادي تقدر تهضر فكاع القنوات.\n\n"
+                f"**ملاحظة:** إلا ما وافقتش، ما غاديش تقدر تهضر ولا تفاعل!"
+            ),
+            color=discord.Color.blue(),
+            timestamp=datetime.now()
+        )
+        embed_waiting.set_thumbnail(url=member.display_avatar.url)
+        embed_waiting.set_footer(text="سيمو | Waiting Room")
+        await waiting_channel.send(embed=embed_waiting, delete_after=60)
+
+    # 6. Log
     await log_action(
         member.guild,
         "👤 عضو جديد (Unverified)",
         f"**المستخدم:** {member.mention} ({member.name})\n"
         f"**الحالة:** غير مفعل\n"
-        f"**الدور:** {unverified_role.mention if unverified_role else 'N/A'}",
+        f"**الدور:** {unverified_role.mention if unverified_role else 'N/A'}\n"
+        f"**Waiting Room:** <#{WAITING_CHANNEL_ID}>",
         discord.Color.orange()
     )
 
@@ -721,7 +759,6 @@ async def on_message(message):
 async def kick(ctx, member: discord.Member, *, reason="ما ذكرش سبب"):
     """!kick @user [سبب] — طرد عضو"""
     
-    # ✅ ما نقدرش نطرد Staff
     if is_staff(member):
         embed = discord.Embed(
             title="🛡️ محمي!",
@@ -764,7 +801,6 @@ async def kick(ctx, member: discord.Member, *, reason="ما ذكرش سبب"):
 async def ban(ctx, member: discord.Member, *, reason="ما ذكرش سبب"):
     """!ban @user [سبب] — حظر عضو"""
     
-    # ✅ ما نقدرش نحظر Staff
     if is_staff(member):
         embed = discord.Embed(
             title="🛡️ محمي!",
@@ -841,7 +877,6 @@ async def clear(ctx, amount: int = 10):
         return
 
     try:
-        # ✅ ما نحذفش رسائل Staff
         def not_staff(m):
             return not is_staff(m.author) if m.author != bot.user else True
 
@@ -868,7 +903,6 @@ async def clear(ctx, amount: int = 10):
 async def mute(ctx, member: discord.Member, duration: int = 5, *, reason="ما ذكرش سبب"):
     """!mute @user <دقائق> [سبب] — كتم عضو"""
     
-    # ✅ ما نقدرش نكتم Staff
     if is_staff(member):
         embed = discord.Embed(
             title="🛡️ محمي!",
@@ -959,7 +993,6 @@ async def unmute(ctx, member: discord.Member):
 async def warn(ctx, member: discord.Member, *, reason):
     """!warn @user <سبب> — تحذير عضو"""
     
-    # ✅ ما نقدرش نحذر Staff
     if is_staff(member):
         embed = discord.Embed(
             title="🛡️ محمي!",
@@ -1045,7 +1078,6 @@ async def warns(ctx, member: discord.Member = None):
 async def unwarn(ctx, member: discord.Member):
     """!unwarn @user — مسح تحذيرات عضو"""
     
-    # ✅ ما نقدرش نمسح تحذيرات Staff
     if is_staff(member):
         embed = discord.Embed(
             title="🛡️ محمي!",
@@ -1185,11 +1217,12 @@ async def info(ctx):
     embed.add_field(name="💬 AI Channel", value=f"`{TARGET_CHANNEL_ID}`", inline=True)
     embed.add_field(name="👋 Welcome", value=f"`{WELCOME_CHANNEL_ID}`", inline=True)
     embed.add_field(name="✅ Verify", value=f"`{VERIFY_CHANNEL_ID}`", inline=True)
+    embed.add_field(name="⏳ Waiting", value=f"`{WAITING_CHANNEL_ID}`", inline=True)
     embed.add_field(name="🧠 Memory", value=f"`{MEMORY_SIZE}` msg/user", inline=True)
     embed.add_field(name="⏱️ Timeout", value=f"`{API_TIMEOUT}`s", inline=True)
     embed.add_field(name="🤖 Model", value=f"`{AI_MODEL}`", inline=True)
     embed.add_field(name="📊 Servers", value=f"`{len(bot.guilds)}`", inline=True)
-    embed.add_field(name="🛡️ Moderation", value="✅ نشط", inline=False)
+    embed.add_field(name="🛡️ Moderation", value="✅ نشط (Staff محمي)", inline=False)
     embed.add_field(name="✅ Verification", value="✅ نشط", inline=False)
     embed.add_field(name="⚠️ Warn Limit", value=f"`{WARN_LIMIT}`", inline=True)
     embed.add_field(name="🚫 Banned Words", value=f"`{len(BANNED_WORDS)}`", inline=True)
@@ -1432,6 +1465,7 @@ async def on_ready():
     print(f"💬 Channel: {TARGET_CHANNEL_ID}")
     print(f"👋 Welcome: {WELCOME_CHANNEL_ID}")
     print(f"✅ Verify: {VERIFY_CHANNEL_ID}")
+    print(f"⏳ Waiting: {WAITING_CHANNEL_ID}")
     print(f"🛡️ Mod Logs: {MOD_LOGS_CHANNEL_ID}")
     print(f"⏱️ Timeout: {API_TIMEOUT}s")
     print(f"🛡️ Moderation: نشط (Staff محمي)")
