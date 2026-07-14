@@ -1,7 +1,6 @@
 import os
 import discord
 import aiohttp
-import base64
 from discord.ext import commands
 from collections import defaultdict
 
@@ -9,19 +8,14 @@ from collections import defaultdict
 # ║                    CONFIG سهل التعديل                  ║
 # ═══════════════════════════════════════════════════════
 
-TARGET_CHANNEL_ID = 1526384339670270012
+TARGET_CHANNEL_ID = 1526358328190566420
 
-# ====== GEMINI MODELS ======
-# "gemini-2.0-flash" - أقوى + سريع + مجاني ⭐
-# "gemini-2.0-flash-lite" - أخف + مجاني
-# "gemini-1.5-flash" - قوي + مجاني
-# "gemini-1.5-pro" - أقوى (ولكن محدود)
-AI_MODEL = "gemini-2.0-flash"  # ← غير هنا!
+# ====== DeepSeek V3 - الأذكى ======
+AI_MODEL = "deepseek/deepseek-chat"
 
 # ====== API ======
-# سجل فـ aistudio.google.com/app/apikey
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{AI_MODEL}:generateContent"
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 MEMORY_SIZE = 50
 CREATIVITY = 0.75
@@ -61,34 +55,29 @@ def get_system_prompt(user_gender="unknown"):
    - إلا ما عندكش → قول "ما كنعرفش بالضبط"
    - ما تكذبش وما تبالغش
 
-4. **التصاور (Images)**:
-   - إلا بعتولك تصويرة → شوفها وحللها
-   - وصف التفاصيل المهمة
-   - رد بالدارجة على اللي كتشوف
-
-5. **الواقعية**:
+4. **الواقعية**:
    - كأنك إنسان عادي عندو تجربة
    - تقدر تقول "ما فهمتش" ولا "ما عندي فكرة"
    - ما تتكبرش
 
-6. **الدعابة**: خفيفة وناضجة
+5. **الدعابة**: خفيفة وناضجة
 
-7. **الشتائم**: تفهمها بس رد بـ ذكاء ونضج
+6. **الشتائم**: تفهمها بس رد بـ ذكاء ونضج
 
-8. **الذاكرة**: تتذكر المحادثات السابقة مع كل شخص ومع السيرفر كامل
+7. **الذاكرة**: تتذكر المحادثات السابقة مع كل شخص ومع السيرفر كامل
 
-9. **المصادر**: إلا عندك معلومة مؤكدة → ذكر المصدر
+8. **المصادر**: إلا عندك معلومة مؤكدة → ذكر المصدر
 
-10. **ما تدكرش**: ما تقولش "أنا AI" ولا "أنا مساعد" ولا سميتك"""
+9. **ما تدكرش**: ما تقولش "أنا AI" ولا "أنا مساعد" ولا سميتك"""
 
     if user_gender == "female":
         gender_addition = """
 
-11. **التعامل مع البنات**: محترم وودي، "أختي"، "صاحبتي" (بلا مبالغة)"""
+10. **التعامل مع البنات**: محترم وودي، "أختي"، "صاحبتي" (بلا مبالغة)"""
     elif user_gender == "male":
         gender_addition = """
 
-11. **التعامل مع الدراري**: ودي ومباشر، "خويا"، "صاحبي" (بلا مبالغة)"""
+10. **التعامل مع الدراري**: ودي ومباشر، "خويا"، "صاحبي" (بلا مبالغة)"""
     else:
         gender_addition = ""
 
@@ -120,84 +109,53 @@ def detect_gender(username: str, display_name: str) -> str:
     return "unknown"
 
 
-async def ask_ai(user_id: str, username: str, display_name: str, prompt: str, image_url: str = None) -> str:
+async def ask_ai(user_id: str, username: str, display_name: str, prompt: str) -> str:
     headers = {
-        "Content-Type": "application/json"
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://discord.com",
+        "X-Title": "AI Assistant BOT"
     }
     
     gender = detect_gender(username, display_name)
-    system_prompt = get_system_prompt(gender)
     
-    # نبني المحتوى
-    parts = [{"text": system_prompt + "\n\nالمستخدم: " + prompt}]
+    messages = [{"role": "system", "content": get_system_prompt(gender)}]
     
-    # إلا فيه تصويرة
-    if image_url:
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(image_url) as img_resp:
-                    if img_resp.status == 200:
-                        image_data = await img_resp.read()
-                        image_base64 = base64.b64encode(image_data).decode('utf-8')
-                        
-                        content_type = img_resp.headers.get('Content-Type', 'image/jpeg')
-                        
-                        parts = [
-                            {"text": system_prompt + "\n\nالمستخدم: " + prompt},
-                            {
-                                "inline_data": {
-                                    "mime_type": content_type,
-                                    "data": image_base64
-                                }
-                            }
-                        ]
-        except:
-            pass
+    for msg in user_memory[user_id]:
+        messages.append(msg)
+    
+    for msg in server_memory[-10:]:
+        messages.append(msg)
+    
+    messages.append({"role": "user", "content": prompt})
     
     payload = {
-        "contents": [
-            {
-                "role": "user",
-                "parts": parts
-            }
-        ],
-        "generationConfig": {
-            "temperature": CREATIVITY,
-            "maxOutputTokens": MAX_REPLY_LENGTH,
-            "topP": 0.9,
-            "topK": 40
-        }
+        "model": AI_MODEL,
+        "messages": messages,
+        "max_tokens": MAX_REPLY_LENGTH,
+        "temperature": CREATIVITY
     }
-    
-    url = f"{GEMINI_URL}?key={GEMINI_API_KEY}"
     
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.post(url, headers=headers, json=payload) as resp:
+            async with session.post(OPENROUTER_URL, headers=headers, json=payload) as resp:
                 if resp.status == 200:
                     data = await resp.json()
+                    reply = data["choices"][0]["message"]["content"]
                     
-                    if "candidates" in data and len(data["candidates"]) > 0:
-                        candidate = data["candidates"][0]
-                        if "content" in candidate and "parts" in candidate["content"]:
-                            reply = candidate["content"]["parts"][0]["text"]
-                            
-                            # حفظ فـ الذاكرة
-                            user_memory[user_id].append({"role": "user", "content": prompt})
-                            user_memory[user_id].append({"role": "assistant", "content": reply})
-                            
-                            if len(user_memory[user_id]) > MEMORY_SIZE * 2:
-                                user_memory[user_id] = user_memory[user_id][-MEMORY_SIZE * 2:]
-                            
-                            server_memory.append({"role": "user", "content": f"[{username}]: {prompt}"})
-                            server_memory.append({"role": "assistant", "content": reply})
-                            
-                            if len(server_memory) > MAX_SERVER_MEMORY * 2:
-                                server_memory[:] = server_memory[-MAX_SERVER_MEMORY * 2:]
-                            
-                            return reply
+                    user_memory[user_id].append({"role": "user", "content": prompt})
+                    user_memory[user_id].append({"role": "assistant", "content": reply})
                     
-                    return "❌ ما فهمتش الجواب ديال Gemini"
+                    if len(user_memory[user_id]) > MEMORY_SIZE * 2:
+                        user_memory[user_id] = user_memory[user_id][-MEMORY_SIZE * 2:]
+                    
+                    server_memory.append({"role": "user", "content": f"[{username}]: {prompt}"})
+                    server_memory.append({"role": "assistant", "content": reply})
+                    
+                    if len(server_memory) > MAX_SERVER_MEMORY * 2:
+                        server_memory[:] = server_memory[-MAX_SERVER_MEMORY * 2:]
+                    
+                    return reply
                 else:
                     error = await resp.text()
                     return f"❌ Error {resp.status}: {error[:500]}"
@@ -267,27 +225,19 @@ async def on_message(message):
     
     user_id = str(message.author.id)
     
-    image_url = None
-    if message.attachments:
-        for att in message.attachments:
-            if att.content_type and att.content_type.startswith("image/"):
-                image_url = att.url
-                break
-    
     async with message.channel.typing():
         response = await ask_ai(
             user_id, 
             message.author.name, 
             message.author.display_name, 
-            message.content,
-            image_url
+            message.content
         )
     
     await message.reply(response[:MAX_REPLY_LENGTH], mention_author=False)
 
 
 if __name__ == "__main__":
-    if not DISCORD_TOKEN or not GEMINI_API_KEY:
+    if not DISCORD_TOKEN or not OPENROUTER_API_KEY:
         print("❌ Missing tokens! Check Railway Variables.")
     else:
         bot.run(DISCORD_TOKEN)
