@@ -203,7 +203,7 @@ async def on_member_join(member):
 
 **مرحبا بيك من قلب!** ❤️
 
-*— عزيز، الولد ديال الدار البيضاء*"""
+
         
         await welcome_channel.send(welcome_msg)
 
