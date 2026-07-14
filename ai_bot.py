@@ -1,6 +1,7 @@
 import os
 import discord
 import aiohttp
+import base64
 from discord.ext import commands
 from collections import defaultdict
 
@@ -10,16 +11,17 @@ from collections import defaultdict
 
 TARGET_CHANNEL_ID = 1526358328190566420
 
-# ====== MODELS مضمونة من OpenRouter ======
-# "google/gemini-2.0-flash-001" - أقوى + تصاور ⭐
-# "google/gemini-2.0-flash-lite-001" - أخف
-# "google/gemini-1.5-flash-8b" - مجاني غالباً
-# "google/gemini-1.5-pro-002" - أقوى شوية
-AI_MODEL = "google/gemini-2.0-flash-001"  # ← غير هنا!
+# ====== GEMINI MODELS ======
+# "gemini-2.0-flash" - أقوى + سريع + مجاني ⭐
+# "gemini-2.0-flash-lite" - أخف + مجاني
+# "gemini-1.5-flash" - قوي + مجاني
+# "gemini-1.5-pro" - أقوى (ولكن محدود)
+AI_MODEL = "gemini-2.0-flash"  # ← غير هنا!
 
 # ====== API ======
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+# سجل فـ aistudio.google.com/app/apikey
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{AI_MODEL}:generateContent"
 
 MEMORY_SIZE = 50
 CREATIVITY = 0.75
@@ -120,61 +122,82 @@ def detect_gender(username: str, display_name: str) -> str:
 
 async def ask_ai(user_id: str, username: str, display_name: str, prompt: str, image_url: str = None) -> str:
     headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://discord.com",
-        "X-Title": "AI Assistant BOT"
+        "Content-Type": "application/json"
     }
     
     gender = detect_gender(username, display_name)
+    system_prompt = get_system_prompt(gender)
     
-    messages = [{"role": "system", "content": get_system_prompt(gender)}]
+    # نبني المحتوى
+    parts = [{"text": system_prompt + "\n\nالمستخدم: " + prompt}]
     
-    for msg in user_memory[user_id]:
-        messages.append(msg)
-    
-    for msg in server_memory[-10:]:
-        messages.append(msg)
-    
-    user_message = {"role": "user", "content": []}
-    
+    # إلا فيه تصويرة
     if image_url:
-        user_message["content"] = [
-            {"type": "text", "text": prompt},
-            {"type": "image_url", "image_url": {"url": image_url}}
-        ]
-    else:
-        user_message["content"] = prompt
-    
-    messages.append(user_message)
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(image_url) as img_resp:
+                    if img_resp.status == 200:
+                        image_data = await img_resp.read()
+                        image_base64 = base64.b64encode(image_data).decode('utf-8')
+                        
+                        content_type = img_resp.headers.get('Content-Type', 'image/jpeg')
+                        
+                        parts = [
+                            {"text": system_prompt + "\n\nالمستخدم: " + prompt},
+                            {
+                                "inline_data": {
+                                    "mime_type": content_type,
+                                    "data": image_base64
+                                }
+                            }
+                        ]
+        except:
+            pass
     
     payload = {
-        "model": AI_MODEL,
-        "messages": messages,
-        "max_tokens": MAX_REPLY_LENGTH,
-        "temperature": CREATIVITY
+        "contents": [
+            {
+                "role": "user",
+                "parts": parts
+            }
+        ],
+        "generationConfig": {
+            "temperature": CREATIVITY,
+            "maxOutputTokens": MAX_REPLY_LENGTH,
+            "topP": 0.9,
+            "topK": 40
+        }
     }
+    
+    url = f"{GEMINI_URL}?key={GEMINI_API_KEY}"
     
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.post(OPENROUTER_URL, headers=headers, json=payload) as resp:
+            async with session.post(url, headers=headers, json=payload) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    reply = data["choices"][0]["message"]["content"]
                     
-                    user_memory[user_id].append({"role": "user", "content": prompt})
-                    user_memory[user_id].append({"role": "assistant", "content": reply})
+                    if "candidates" in data and len(data["candidates"]) > 0:
+                        candidate = data["candidates"][0]
+                        if "content" in candidate and "parts" in candidate["content"]:
+                            reply = candidate["content"]["parts"][0]["text"]
+                            
+                            # حفظ فـ الذاكرة
+                            user_memory[user_id].append({"role": "user", "content": prompt})
+                            user_memory[user_id].append({"role": "assistant", "content": reply})
+                            
+                            if len(user_memory[user_id]) > MEMORY_SIZE * 2:
+                                user_memory[user_id] = user_memory[user_id][-MEMORY_SIZE * 2:]
+                            
+                            server_memory.append({"role": "user", "content": f"[{username}]: {prompt}"})
+                            server_memory.append({"role": "assistant", "content": reply})
+                            
+                            if len(server_memory) > MAX_SERVER_MEMORY * 2:
+                                server_memory[:] = server_memory[-MAX_SERVER_MEMORY * 2:]
+                            
+                            return reply
                     
-                    if len(user_memory[user_id]) > MEMORY_SIZE * 2:
-                        user_memory[user_id] = user_memory[user_id][-MEMORY_SIZE * 2:]
-                    
-                    server_memory.append({"role": "user", "content": f"[{username}]: {prompt}"})
-                    server_memory.append({"role": "assistant", "content": reply})
-                    
-                    if len(server_memory) > MAX_SERVER_MEMORY * 2:
-                        server_memory[:] = server_memory[-MAX_SERVER_MEMORY * 2:]
-                    
-                    return reply
+                    return "❌ ما فهمتش الجواب ديال Gemini"
                 else:
                     error = await resp.text()
                     return f"❌ Error {resp.status}: {error[:500]}"
@@ -264,7 +287,7 @@ async def on_message(message):
 
 
 if __name__ == "__main__":
-    if not DISCORD_TOKEN or not OPENROUTER_API_KEY:
+    if not DISCORD_TOKEN or not GEMINI_API_KEY:
         print("❌ Missing tokens! Check Railway Variables.")
     else:
         bot.run(DISCORD_TOKEN)
