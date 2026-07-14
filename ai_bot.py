@@ -9,10 +9,10 @@ from collections import defaultdict
 # ═══════════════════════════════════════════════════════
 
 # Channel اللي البوت يهضر فيه
-TARGET_CHANNEL_ID = 1526358328190566420
+TARGET_CHANNEL_ID = 1526384339670270012
 
 # Channel الترحيب (غير هنا!)
-WELCOME_CHANNEL_ID = 123456789  # ← بدل هنا بـ ID ديال channel الترحيب
+WELCOME_CHANNEL_ID = 1524957892925456545  # ← بدل هنا بـ ID ديال channel الترحيب
 
 # اسم السيرفر
 SERVER_NAME = "GGMW9"
