@@ -29,37 +29,47 @@ MAX_REPLY_LENGTH = 1500
 API_TIMEOUT = 15
 
 # ═══════════════════════════════════════════════════════
+# ║              CHANNELS ديال AUTO-INFO (جديد)           ║
+# ═══════════════════════════════════════════════════════
+
+NEWS_CHANNEL_ID = 1524957892925456545      # #news-📰
+GAMES_CHANNEL_ID = 1526384339670270013      # #games-🎮  ← بدل هادا
+MOVIES_CHANNEL_ID = 1526384339670270014     # #movies-🎬  ← بدل هادا
+ANIME_CHANNEL_ID = 1526384339670270015      # #anime-📺   ← بدل هادا
+MUSIC_CHANNEL_ID = 1526384339670270016     # #music-🎧   ← بدل هادا
+
+# ═══════════════════════════════════════════════════════
 # ║              MODERATION & VERIFICATION CONFIG          ║
 # ═══════════════════════════════════════════════════════
 
-MOD_LOGS_CHANNEL_ID = 1524957892925456545
-VERIFY_CHANNEL_ID = 1526481352264781854
-RULES_CHANNEL_ID = 1526474691789721700
+# IDs ديال القنوات والأدوار — بدلهم حسب السيرفر ديالك
+MOD_LOGS_CHANNEL_ID = 1524957892925456545  # قناة سجل الموديراتورز (بدلوها)
+VERIFY_CHANNEL_ID = 1526481352264781854    # قناة التفعيل (بدلوها)
+RULES_CHANNEL_ID = 1526474691789721700     # قناة القوانين (بدلوها)
 
-# ⏳ Waiting Room — حط IDs ديالك هنا
-WAITING_VOICE_CHANNEL_ID = 1234567890123456789   # ← Voice Channel "Waiting For Verification"
-WAITING_TEXT_CHANNEL_ID = 9876543210987654321      # ← Text Channel "waiting-for-verification"
+# الأدوار
+UNVERIFIED_ROLE_ID = 1526452828267085915   # @Unverified — غير مفعل (بدلوها)
+MEMBER_ROLE_ID = 1526451890399739934       # @Member — مفعل (بدلوها)
+MUTED_ROLE_ID = 1526468718534590574        # @Muted — عقوبة (بدلوها)
 
-UNVERIFIED_ROLE_ID = 1526452828267085915
-MEMBER_ROLE_ID = 1526451890399739934
-MUTED_ROLE_ID = 1526468718534590574
-
+# كلمات ممنوعة (Auto-Mod)
 BANNED_WORDS = [
     'سبام', 'spam', 'naked.', 'discord.gg', 'العزية', 'عزي',
     'nude', 'porn', 'xxx', 'sex', 'fuck', 'shit', 'bitch'
 ]
 
-SPAM_THRESHOLD = 5
-SPAM_INTERVAL = 5
-WARN_LIMIT = 3
+SPAM_THRESHOLD = 5      # عدد الرسائل فوقاش يتحسب سبام
+SPAM_INTERVAL = 5       # ثواني
+WARN_LIMIT = 3          # عدد التحذيرات قبل auto-kick
+
+# ═══════════════════════════════════════════════════════
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
-intents.reactions = True
-intents.voice_states = True  # خاص باش يشوف voice channels
+intents.reactions = True  # خاص باش يشوف reactions
 bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
 # ========== ذاكرة AI ==========
@@ -71,38 +81,9 @@ MAX_SERVER_MEMORY = 100
 learned_knowledge = []
 
 # ========== MODERATION DATA ==========
-warns_db = {}
-spam_tracker = {}
-mute_tasks = {}
-
-# ========== قائمة الناس اللي فـ Waiting Room ==========
-waiting_members = set()  # {user_id, user_id, ...}
-
-
-# ═══════════════════════════════════════════════════════
-# ║           فنكشن التحقق من الرتب المحمية                ║
-# ═══════════════════════════════════════════════════════
-
-def is_staff(member: discord.Member) -> bool:
-    """تحقق: واش العضو من الـ Staff (Owner, Admin, Mod)"""
-    if member.id == member.guild.owner_id:
-        return True
-    
-    if member.guild_permissions.administrator:
-        return True
-    
-    if member.guild_permissions.manage_messages:
-        return True
-    if member.guild_permissions.manage_guild:
-        return True
-    if member.guild_permissions.kick_members:
-        return True
-    if member.guild_permissions.ban_members:
-        return True
-    if member.guild_permissions.moderate_members:
-        return True
-    
-    return False
+warns_db = {}           # {user_id: {"count": int, "reasons": [str], "dates": [str]}}
+spam_tracker = {}       # {user_id: [timestamps]}
+mute_tasks = {}         # {user_id: asyncio.Task}
 
 
 def get_system_prompt(user_gender="unknown"):
@@ -318,7 +299,7 @@ async def auto_unmute(member: discord.Member, duration_minutes: int, guild: disc
 
 
 # ═══════════════════════════════════════════════════════
-# ║              VERIFICATION SYSTEM                      ║
+# ║              VERIFICATION SYSTEM (جديد)                 ║
 # ═══════════════════════════════════════════════════════
 
 async def setup_verify_message(guild: discord.Guild):
@@ -327,10 +308,12 @@ async def setup_verify_message(guild: discord.Guild):
     if not verify_channel:
         return
 
+    # شوف إلا رسالة التفعيل موجودة
     async for message in verify_channel.history(limit=10):
         if message.author == bot.user and "✅" in message.content:
-            return
+            return  # موجودة
 
+    # صاوب رسالة جديدة
     embed = discord.Embed(
         title="✅ تفعيل العضوية",
         description=(
@@ -357,55 +340,27 @@ async def setup_verify_message(guild: discord.Guild):
 
 @bot.event
 async def on_member_join(member):
-    """ترحيب + Auto-Role (@Unverified) + نقل لـ Waiting Room"""
+    """ترحيب + Auto-Role (@Unverified)"""
 
-    # 1. ✅ يعطي @Unverified تلقائياً (هادا أهم حاجة!)
+    # 1. يعطي @Unverified تلقائياً
     unverified_role = member.guild.get_role(UNVERIFIED_ROLE_ID)
     if unverified_role:
         try:
             await member.add_roles(unverified_role)
-            print(f"✅ {member.name} → @Unverified")
         except discord.Forbidden:
-            print(f"❌ ما قدرتش نعطي @Unverified لـ {member.name}")
             pass
-    else:
-        print(f"⚠️ ما لقيتش @Unverified role!")
 
-    # 2. نجيب invite link للـ Waiting Voice Channel
-    waiting_voice = bot.get_channel(WAITING_VOICE_CHANNEL_ID)
-    invite_link = None
-    
-    if waiting_voice and isinstance(waiting_voice, discord.VoiceChannel):
-        try:
-            invites = await waiting_voice.invites()
-            invite = None
-            
-            for inv in invites:
-                if inv.max_age == 0 and inv.max_uses == 0:
-                    invite = inv
-                    break
-            
-            if not invite:
-                invite = await waiting_voice.create_invite(max_age=0, max_uses=0, unique=False)
-            
-            invite_link = invite.url
-            
-        except discord.Forbidden:
-            print(f"❌ ما عنديش صلاحية نصاوب invite!")
-        except discord.HTTPException as e:
-            print(f"❌ خطأ فـ invite: {e}")
-
-    # 3. يرحبو فـ welcome channel
+    # 2. يرحبو فـ welcome channel
     welcome_channel = bot.get_channel(WELCOME_CHANNEL_ID)
     if welcome_channel:
         embed = discord.Embed(
             title=f"👋 مرحبا بيك {member.display_name}!",
             description=(
                 f"واخا أخويا/أختي! **{SERVER_NAME}** هو السيرفر ديالك.\n\n"
-                f"**قبل ما تبدأ خاصك:**\n"
+                f"**قبل ما تبدأ:**\n"
                 f"1️⃣ اقرأ القوانين فـ <#{RULES_CHANNEL_ID}>\n"
-                f"2️⃣ روح لـ <#{VERIFY_CHANNEL_ID}> وكليك على ✅\n\n"
-                f"**ملاحظة:** إلا ما وافقتش، ما غاديش تقدر تهضر ولا تفاعل!"
+                f"2️⃣ وافق فـ <#{VERIFY_CHANNEL_ID}>\n"
+                f"3️⃣ استمتع! 🎉"
             ),
             color=discord.Color.orange(),
             timestamp=datetime.now()
@@ -414,139 +369,31 @@ async def on_member_join(member):
         embed.set_footer(text="سيمو | Verification System")
         await welcome_channel.send(embed=embed)
 
-    # 4. رسالة فـ DM (مع رابط الـ Voice Channel)
-    dm_msg = f"""👋 **مرحبا بيك فـ {SERVER_NAME}!**
-
-🔒 **أنت دابا غير مفعل (@Unverified)!**
-
-**قبل ما تقدر تهضر فالسيرفر، خاصك:**
-
-📜 **1. اقرأ القوانين:**
-روح لـ <#{RULES_CHANNEL_ID}> واقرأ القوانين كاملة.
-
-✅ **2. وافق على القوانين:**
-من بعد ما تقراهم، روح لـ <#{VERIFY_CHANNEL_ID}> وكليك على ✅
-
-🔓 **3. استمتع!**
-من بعد التفعيل، غادي تقدر تهضر فكاع القنوات.
-
-⚠️ **ملاحظة:** إلا ما وافقتش، ما غاديش تقدر تهضر ولا تفاعل!"""
-
-    if invite_link:
-        dm_msg += f"\n\n🎙️ **ادخل هنا باش تستنى فـ Waiting Room:**\n{invite_link}\n\n*ملي تدخل، البوت غادي يحتفظ بيك حتى تتفعّل!*"
-
+    # 3. يرسلو DM
     try:
-        await member.send(dm_msg)
-        print(f"✅ DM بعث لـ {member.name}")
+        await member.send(
+            f"👋 مرحبا بيك فـ **{SERVER_NAME}**!\n\n"
+            f"قبل ما تقدر تهضر فالسيرفر، خاصك توافق على القوانين.\n"
+            f"روح لـ <#{VERIFY_CHANNEL_ID}> وكليك على ✅\n\n"
+            f"شكراً! 🙏"
+        )
     except discord.Forbidden:
-        print(f"❌ {member.name} سد DM!")
         pass
 
-    # 5. رسالة فـ "waiting-for-verification" (Text Channel)
-    waiting_text = bot.get_channel(WAITING_TEXT_CHANNEL_ID)
-    if waiting_text and isinstance(waiting_text, discord.TextChannel):
-        embed_waiting = discord.Embed(
-            title="⏳ عضو جديد فـ Waiting Room!",
-            description=(
-                f"**{member.mention}** دخل السيرفر!\n\n"
-                f"**الحالة:** ⏳ في انتظار التفعيل\n"
-                f"**الدور:** @Unverified\n\n"
-                f"**خاصو يدير:**\n"
-                f"1️⃣ اقرأ القوانين فـ <#{RULES_CHANNEL_ID}>\n"
-                f"2️⃣ وافق فـ <#{VERIFY_CHANNEL_ID}> ✅"
-            ),
-            color=discord.Color.orange(),
-            timestamp=datetime.now()
-        )
-        embed_waiting.set_thumbnail(url=member.display_avatar.url)
-        embed_waiting.set_footer(text="سيمو | Waiting Room")
-        await waiting_text.send(embed=embed_waiting)
-
-    # 6. نضيفو للـ waiting list
-    waiting_members.add(str(member.id))
-    print(f"✅ {member.name} → waiting_members")
-
-    # 7. Log
+    # 4. Log
     await log_action(
         member.guild,
         "👤 عضو جديد (Unverified)",
         f"**المستخدم:** {member.mention} ({member.name})\n"
         f"**الحالة:** غير مفعل\n"
-        f"**الدور:** {unverified_role.mention if unverified_role else 'N/A'}\n"
-        f"**Waiting Voice:** <#{WAITING_VOICE_CHANNEL_ID}>\n"
-        f"**Invite DM:** {'✅ نعم' if invite_link else '❌ لا'}",
+        f"**الدور:** {unverified_role.mention if unverified_role else 'N/A'}",
         discord.Color.orange()
     )
-
-
-# ═══════════════════════════════════════════════════════
-# ║         مراقبة Voice Channels - يحتفظ بالـ Unverified  ║
-# ═══════════════════════════════════════════════════════
-
-@bot.event
-async def on_voice_state_update(member, before, after):
-    """ملي يبدل voice channel"""
-    
-    user_id = str(member.id)
-    
-    # إلا كان فـ waiting list ومازال Unverified
-    if user_id in waiting_members:
-        unverified_role = member.guild.get_role(UNVERIFIED_ROLE_ID)
-        
-        # نتحقق بلي مازال Unverified
-        if unverified_role and unverified_role in member.roles:
-            waiting_voice = bot.get_channel(WAITING_VOICE_CHANNEL_ID)
-            
-            if not waiting_voice:
-                return
-            
-            # حالة 1: دخل voice channel آخر (ماشي Waiting)
-            if after.channel and after.channel.id != WAITING_VOICE_CHANNEL_ID:
-                # نرجعو لـ Waiting Room!
-                try:
-                    await member.move_to(waiting_voice)
-                    
-                    # نبعث ليه تذكير
-                    try:
-                        await member.send(
-                            f"⏳ **{member.display_name}**، خاصك تتفعّل قبل ما تقدر تتحرك!\n\n"
-                            f"روح لـ <#{VERIFY_CHANNEL_ID}> وكليك على ✅"
-                        )
-                    except discord.Forbidden:
-                        pass
-                        
-                except (discord.Forbidden, discord.HTTPException):
-                    pass
-            
-            # حالة 2: خرج من voice (disconnected)
-            elif before.channel and not after.channel:
-                # ما نقدرش نجبرو يدخل، نبعث ليه invite
-                try:
-                    invites = await waiting_voice.invites()
-                    invite = None
-                    for inv in invites:
-                        if inv.max_age == 0 and inv.max_uses == 0:
-                            invite = inv
-                            break
-                    if not invite:
-                        invite = await waiting_voice.create_invite(max_age=0, max_uses=0, unique=False)
-                    
-                    await member.send(
-                        f"⏳ **رجع لـ Waiting Room!**\n\n"
-                        f"ما زال ما تفعّلتيش! ادخل من هنا:\n"
-                        f"{invite.url}\n\n"
-                        f"و من بعد روح لـ <#{VERIFY_CHANNEL_ID}> ✅"
-                    )
-                except:
-                    pass
 
 
 @bot.event
 async def on_member_remove(member):
     """سجل خروج الأعضاء"""
-    # نحيدو من waiting list
-    waiting_members.discard(str(member.id))
-    
     await log_action(
         member.guild,
         "👋 عضو خرج",
@@ -560,9 +407,11 @@ async def on_member_remove(member):
 async def on_raw_reaction_add(payload):
     """Verification: ملي يكليك ✅"""
 
+    # غير فـ verify channel
     if payload.channel_id != VERIFY_CHANNEL_ID:
         return
 
+    # غير ✅ emoji
     if str(payload.emoji) != "✅":
         return
 
@@ -574,6 +423,7 @@ async def on_raw_reaction_add(payload):
     if not member or member.bot:
         return
 
+    # شيل @Unverified
     unverified_role = guild.get_role(UNVERIFIED_ROLE_ID)
     if unverified_role and unverified_role in member.roles:
         try:
@@ -581,6 +431,7 @@ async def on_raw_reaction_add(payload):
         except discord.Forbidden:
             pass
 
+    # زيد @Member
     member_role = guild.get_role(MEMBER_ROLE_ID)
     if member_role:
         try:
@@ -588,9 +439,7 @@ async def on_raw_reaction_add(payload):
         except discord.Forbidden:
             pass
 
-    # ✅ نحيدو من waiting list
-    waiting_members.discard(str(member.id))
-
+    # Log
     await log_action(
         guild,
         "✅ تفعيل",
@@ -600,6 +449,7 @@ async def on_raw_reaction_add(payload):
         discord.Color.green()
     )
 
+    # DM
     try:
         await member.send(f"✅ تم تفعيلك فـ **{SERVER_NAME}**! مرحبا بيك! 🎉")
     except:
@@ -653,111 +503,104 @@ async def on_message(message):
         return
 
     # ═══════════════════════════════════════════════════
-    # ║         AUTO-MOD SYSTEM - محمي للـ Staff          ║
-    # ═══════════════════════════════════════════════════
-
-    # ✅ ما نطبقش Auto-Mod على الـ Staff
-    if is_staff(message.author):
-        pass  # Staff محميين من Auto-Mod
-    else:
-        msg_lower = message.content.lower()
-        gender = detect_gender(message.author.name, message.author.display_name)
-
-        # فحص الكلمات الممنوعة
-        for word in BANNED_WORDS:
-            if word.lower() in msg_lower:
-                try:
-                    await message.delete()
-
-                    warn_msg = await message.channel.send(
-                        f"🚫 {message.author.mention} ممنوع السبام والروابط!",
-                        delete_after=5
-                    )
-
-                    count = await add_warn(message.author, f"رسالة محذوفة (Auto-Mod): {word}")
-
-                    await log_action(
-                        message.guild,
-                        "🚨 Auto-Mod | رسالة محذوفة",
-                        f"**المستخدم:** {message.author.mention}\n"
-                        f"**القناة:** {message.channel.mention}\n"
-                        f"**الكلمة الممنوعة:** `{word}`\n"
-                        f"**المحتوى:** {message.content[:500]}\n"
-                        f"**التحذيرات:** {count}/{WARN_LIMIT}",
-                        discord.Color.red()
-                    )
-
-                    if count >= WARN_LIMIT:
-                        try:
-                            await message.author.kick(reason=f"3 تحذيرات (Auto-Mod)")
-                            await message.channel.send(
-                                f"🚫 {message.author.mention} تم طرده تلقائياً (3 تحذيرات)!",
-                                delete_after=10
-                            )
-                            await log_action(
-                                message.guild,
-                                "🚫 Auto-Kick",
-                                f"**المستخدم:** {message.author.mention}\n"
-                                f"**السبب:** 3 تحذيرات (Auto-Mod)",
-                                discord.Color.dark_red()
-                            )
-                            clear_warns(str(message.author.id))
-                        except discord.Forbidden:
-                            pass
-
-                    return
-                except discord.Forbidden:
-                    pass
-
-        # فحص السبام
-        user_id = str(message.author.id)
-        now = datetime.now()
-
-        if user_id not in spam_tracker:
-            spam_tracker[user_id] = []
-
-        spam_tracker[user_id].append(now)
-        spam_tracker[user_id] = [
-            t for t in spam_tracker[user_id]
-            if now - t < timedelta(seconds=SPAM_INTERVAL)
-        ]
-
-        if len(spam_tracker[user_id]) >= SPAM_THRESHOLD:
-            try:
-                await message.channel.send(
-                    f"🛑 {message.author.mention} توقف عن السبام!",
-                    delete_after=5
-                )
-
-                muted_role = message.guild.get_role(MUTED_ROLE_ID)
-                if muted_role:
-                    await message.author.add_roles(muted_role)
-
-                    if user_id in mute_tasks and not mute_tasks[user_id].done():
-                        mute_tasks[user_id].cancel()
-
-                    task = asyncio.create_task(auto_unmute(message.author, 5, message.guild))
-                    mute_tasks[user_id] = task
-
-                    await log_action(
-                        message.guild,
-                        "🛑 Auto-Mod | سبام مكتشف",
-                        f"**المستخدم:** {message.author.mention}\n"
-                        f"**الإجراء:** Mute 5 دقائق (تلقائي)\n"
-                        f"**الرسائل:** {len(spam_tracker[user_id])} فـ {SPAM_INTERVAL} ثواني",
-                        discord.Color.orange()
-                    )
-
-                    spam_tracker[user_id] = []
-            except discord.Forbidden:
-                pass
-
-    # ═══════════════════════════════════════════════════
-    # ║         ردود تلقائية (لكل)                        ║
+    # ║         AUTO-MOD SYSTEM                           ║
     # ═══════════════════════════════════════════════════
 
     msg_lower = message.content.lower()
     gender = detect_gender(message.author.name, message.author.display_name)
+
+    # فحص الكلمات الممنوعة
+    for word in BANNED_WORDS:
+        if word.lower() in msg_lower:
+            try:
+                await message.delete()
+
+                warn_msg = await message.channel.send(
+                    f"🚫 {message.author.mention} ممنوع السبام والروابط!",
+                    delete_after=5
+                )
+
+                count = await add_warn(message.author, f"رسالة محذوفة (Auto-Mod): {word}")
+
+                await log_action(
+                    message.guild,
+                    "🚨 Auto-Mod | رسالة محذوفة",
+                    f"**المستخدم:** {message.author.mention}\n"
+                    f"**القناة:** {message.channel.mention}\n"
+                    f"**الكلمة الممنوعة:** `{word}`\n"
+                    f"**المحتوى:** {message.content[:500]}\n"
+                    f"**التحذيرات:** {count}/{WARN_LIMIT}",
+                    discord.Color.red()
+                )
+
+                if count >= WARN_LIMIT:
+                    try:
+                        await message.author.kick(reason=f"3 تحذيرات (Auto-Mod)")
+                        await message.channel.send(
+                            f"🚫 {message.author.mention} تم طرده تلقائياً (3 تحذيرات)!",
+                            delete_after=10
+                        )
+                        await log_action(
+                            message.guild,
+                            "🚫 Auto-Kick",
+                            f"**المستخدم:** {message.author.mention}\n"
+                            f"**السبب:** 3 تحذيرات (Auto-Mod)",
+                            discord.Color.dark_red()
+                        )
+                        clear_warns(str(message.author.id))
+                    except discord.Forbidden:
+                        pass
+
+                return
+            except discord.Forbidden:
+                pass
+
+    # فحص السبام
+    user_id = str(message.author.id)
+    now = datetime.now()
+
+    if user_id not in spam_tracker:
+        spam_tracker[user_id] = []
+
+    spam_tracker[user_id].append(now)
+    spam_tracker[user_id] = [
+        t for t in spam_tracker[user_id]
+        if now - t < timedelta(seconds=SPAM_INTERVAL)
+    ]
+
+    if len(spam_tracker[user_id]) >= SPAM_THRESHOLD:
+        try:
+            await message.channel.send(
+                f"🛑 {message.author.mention} توقف عن السبام!",
+                delete_after=5
+            )
+
+            muted_role = message.guild.get_role(MUTED_ROLE_ID)
+            if muted_role:
+                await message.author.add_roles(muted_role)
+
+                if user_id in mute_tasks and not mute_tasks[user_id].done():
+                    mute_tasks[user_id].cancel()
+
+                task = asyncio.create_task(auto_unmute(message.author, 5, message.guild))
+                mute_tasks[user_id] = task
+
+                await log_action(
+                    message.guild,
+                    "🛑 Auto-Mod | سبام مكتشف",
+                    f"**المستخدم:** {message.author.mention}\n"
+                    f"**الإجراء:** Mute 5 دقائق (تلقائي)\n"
+                    f"**الرسائل:** {len(spam_tracker[user_id])} فـ {SPAM_INTERVAL} ثواني",
+                    discord.Color.orange()
+                )
+
+                spam_tracker[user_id] = []
+        except discord.Forbidden:
+            pass
+
+    # ═══════════════════════════════════════════════════
+    # ║         ردود تلقائية (قديم)                     ║
+    # ═══════════════════════════════════════════════════
 
     if "سيمو" in msg_lower or "simo" in msg_lower:
         await message.reply("نعام! 😂 واش بغيتي؟", mention_author=False)
@@ -861,23 +704,13 @@ async def on_message(message):
 
 
 # ═══════════════════════════════════════════════════════
-# ║              MODERATION COMMANDS - محمية للـ Staff      ║
+# ║              MODERATION COMMANDS                        ║
 # ═══════════════════════════════════════════════════════
 
 @bot.command()
 @commands.has_permissions(kick_members=True)
 async def kick(ctx, member: discord.Member, *, reason="ما ذكرش سبب"):
     """!kick @user [سبب] — طرد عضو"""
-    
-    if is_staff(member):
-        embed = discord.Embed(
-            title="🛡️ محمي!",
-            description=f"**{member.mention}** من الـ Staff! ما نقدرش نطردو.",
-            color=discord.Color.red()
-        )
-        await ctx.send(embed=embed, delete_after=5)
-        return
-    
     try:
         await member.kick(reason=reason)
 
@@ -910,16 +743,6 @@ async def kick(ctx, member: discord.Member, *, reason="ما ذكرش سبب"):
 @commands.has_permissions(ban_members=True)
 async def ban(ctx, member: discord.Member, *, reason="ما ذكرش سبب"):
     """!ban @user [سبب] — حظر عضو"""
-    
-    if is_staff(member):
-        embed = discord.Embed(
-            title="🛡️ محمي!",
-            description=f"**{member.mention}** من الـ Staff! ما نقدرش نحظرو.",
-            color=discord.Color.red()
-        )
-        await ctx.send(embed=embed, delete_after=5)
-        return
-    
     try:
         await member.ban(reason=reason)
 
@@ -987,12 +810,9 @@ async def clear(ctx, amount: int = 10):
         return
 
     try:
-        def not_staff(m):
-            return not is_staff(m.author) if m.author != bot.user else True
+        deleted = await ctx.channel.purge(limit=amount + 1)
 
-        deleted = await ctx.channel.purge(limit=amount + 1, check=not_staff)
-
-        msg = await ctx.send(f"🗑️ تم حذف {len(deleted) - 1} رسالة (ما فيهاش Staff)")
+        msg = await ctx.send(f"🗑️ تم حذف {len(deleted) - 1} رسالة")
         await asyncio.sleep(3)
         await msg.delete()
 
@@ -1012,16 +832,6 @@ async def clear(ctx, amount: int = 10):
 @commands.has_permissions(moderate_members=True)
 async def mute(ctx, member: discord.Member, duration: int = 5, *, reason="ما ذكرش سبب"):
     """!mute @user <دقائق> [سبب] — كتم عضو"""
-    
-    if is_staff(member):
-        embed = discord.Embed(
-            title="🛡️ محمي!",
-            description=f"**{member.mention}** من الـ Staff! ما نقدرش نكتم صوتو.",
-            color=discord.Color.red()
-        )
-        await ctx.send(embed=embed, delete_after=5)
-        return
-    
     muted_role = ctx.guild.get_role(MUTED_ROLE_ID)
     if not muted_role:
         await ctx.send("❌ ما لقيتش دور Mute! حط ID صحيح فـ MUTED_ROLE_ID.")
@@ -1102,16 +912,6 @@ async def unmute(ctx, member: discord.Member):
 @commands.has_permissions(kick_members=True)
 async def warn(ctx, member: discord.Member, *, reason):
     """!warn @user <سبب> — تحذير عضو"""
-    
-    if is_staff(member):
-        embed = discord.Embed(
-            title="🛡️ محمي!",
-            description=f"**{member.mention}** من الـ Staff! ما نقدرش نحذرو.",
-            color=discord.Color.red()
-        )
-        await ctx.send(embed=embed, delete_after=5)
-        return
-    
     count = await add_warn(member, reason)
 
     embed = discord.Embed(
@@ -1187,16 +987,6 @@ async def warns(ctx, member: discord.Member = None):
 @commands.has_permissions(kick_members=True)
 async def unwarn(ctx, member: discord.Member):
     """!unwarn @user — مسح تحذيرات عضو"""
-    
-    if is_staff(member):
-        embed = discord.Embed(
-            title="🛡️ محمي!",
-            description=f"**{member.mention}** من الـ Staff! ما نقدرش نمسح تحذيراتو.",
-            color=discord.Color.red()
-        )
-        await ctx.send(embed=embed, delete_after=5)
-        return
-    
     clear_warns(str(member.id))
 
     embed = discord.Embed(
@@ -1218,7 +1008,7 @@ async def unwarn(ctx, member: discord.Member):
 
 
 # ═══════════════════════════════════════════════════════
-# ║              VERIFICATION COMMANDS                      ║
+# ║              VERIFICATION COMMANDS (جديد)               ║
 # ═══════════════════════════════════════════════════════
 
 @bot.command()
@@ -1234,16 +1024,15 @@ async def setupverify(ctx):
 async def verify(ctx, member: discord.Member):
     """!verify @user — يفعّل عضو يدوياً (Admin فقط)"""
 
+    # شيل @Unverified
     unverified_role = ctx.guild.get_role(UNVERIFIED_ROLE_ID)
     if unverified_role and unverified_role in member.roles:
         await member.remove_roles(unverified_role)
 
+    # زيد @Member
     member_role = ctx.guild.get_role(MEMBER_ROLE_ID)
     if member_role:
         await member.add_roles(member_role)
-
-    # نحيدو من waiting list
-    waiting_members.discard(str(member.id))
 
     embed = discord.Embed(
         title="✅ تفعيل يدوي",
@@ -1274,16 +1063,15 @@ async def verify(ctx, member: discord.Member):
 async def unverify(ctx, member: discord.Member):
     """!unverify @user — يرجعو @Unverified (Admin فقط)"""
 
+    # شيل @Member
     member_role = ctx.guild.get_role(MEMBER_ROLE_ID)
     if member_role and member_role in member.roles:
         await member.remove_roles(member_role)
 
+    # زيد @Unverified
     unverified_role = ctx.guild.get_role(UNVERIFIED_ROLE_ID)
     if unverified_role:
         await member.add_roles(unverified_role)
-
-    # نزيدو للـ waiting list
-    waiting_members.add(str(member.id))
 
     embed = discord.Embed(
         title="🔄 إلغاء التفعيل",
@@ -1297,7 +1085,7 @@ async def unverify(ctx, member: discord.Member):
 
     await log_action(
         ctx.guild,
-        "🔄 إلغاء تفعيل",
+        "🔄 إلغاء التفعيل",
         f"**المستخدم:** {member.mention} ({member.name})\n"
         f"**المنفذ:** {ctx.author.mention}",
         discord.Color.orange()
@@ -1305,7 +1093,7 @@ async def unverify(ctx, member: discord.Member):
 
 
 # ═══════════════════════════════════════════════════════
-# ║              UTILITY COMMANDS                         ║
+# ║              UTILITY COMMANDS                           ║
 # ═══════════════════════════════════════════════════════
 
 @bot.command()
@@ -1333,14 +1121,13 @@ async def info(ctx):
     embed.add_field(name="💬 AI Channel", value=f"`{TARGET_CHANNEL_ID}`", inline=True)
     embed.add_field(name="👋 Welcome", value=f"`{WELCOME_CHANNEL_ID}`", inline=True)
     embed.add_field(name="✅ Verify", value=f"`{VERIFY_CHANNEL_ID}`", inline=True)
-    embed.add_field(name="⏳ Waiting Voice", value=f"`{WAITING_VOICE_CHANNEL_ID}`", inline=True)
-    embed.add_field(name="⏳ Waiting Text", value=f"`{WAITING_TEXT_CHANNEL_ID}`", inline=True)
     embed.add_field(name="🧠 Memory", value=f"`{MEMORY_SIZE}` msg/user", inline=True)
     embed.add_field(name="⏱️ Timeout", value=f"`{API_TIMEOUT}`s", inline=True)
     embed.add_field(name="🤖 Model", value=f"`{AI_MODEL}`", inline=True)
     embed.add_field(name="📊 Servers", value=f"`{len(bot.guilds)}`", inline=True)
-    embed.add_field(name="🛡️ Moderation", value="✅ نشط (Staff محمي)", inline=False)
+    embed.add_field(name="🛡️ Moderation", value="✅ نشط", inline=False)
     embed.add_field(name="✅ Verification", value="✅ نشط", inline=False)
+    embed.add_field(name="📰 Auto-Info", value="✅ نشط (5 channels)", inline=False)
     embed.add_field(name="⚠️ Warn Limit", value=f"`{WARN_LIMIT}`", inline=True)
     embed.add_field(name="🚫 Banned Words", value=f"`{len(BANNED_WORDS)}`", inline=True)
     embed.set_footer(text="سيمو | GGMW9")
@@ -1352,11 +1139,12 @@ async def help(ctx):
     """!help — قائمة الأوامر"""
     embed = discord.Embed(
         title="📋 قائمة أوامر سيمو",
-        description="**سيمو** — بوت AI مغربي + Moderation + Verification",
+        description="**سيمو** — بوت AI مغربي + Moderation + Verification + Auto-Info",
         color=discord.Color.blue(),
         timestamp=datetime.now()
     )
 
+    # AI Commands
     ai_cmds = (
         "`!chat <رسالة>` — هضر مع سيمو\n"
         "`!نسيني` — امسح ذاكرتك\n"
@@ -1365,6 +1153,7 @@ async def help(ctx):
     )
     embed.add_field(name="🤖 AI & ذاكرة", value=ai_cmds, inline=False)
 
+    # Moderation Commands
     mod_cmds = (
         "`!kick @user [سبب]` — طرد عضو\n"
         "`!ban @user [سبب]` — حظر عضو\n"
@@ -1378,6 +1167,7 @@ async def help(ctx):
     )
     embed.add_field(name="🛡️ موديراتورز", value=mod_cmds, inline=False)
 
+    # Verification Commands
     verif_cmds = (
         "`!setupverify` — صاوب رسالة التفعيل (Admin)\n"
         "`!verify @user` — يفعّل عضو يدوياً (Admin)\n"
@@ -1385,6 +1175,7 @@ async def help(ctx):
     )
     embed.add_field(name="✅ تفعيل", value=verif_cmds, inline=False)
 
+    # Utility
     util_cmds = (
         "`!ping` — سرعة البوت\n"
         "`!info` — معلومات البوت\n"
@@ -1392,6 +1183,7 @@ async def help(ctx):
     )
     embed.add_field(name="🔧 أدوات", value=util_cmds, inline=False)
 
+    # Auto-Mod
     auto_mod = (
         "✅ كلمات ممنوعة\n"
         "✅ كشف السبام (5 msg/5s)\n"
@@ -1401,6 +1193,18 @@ async def help(ctx):
     )
     embed.add_field(name="🤖 Auto-Mod", value=auto_mod, inline=False)
 
+    # Auto-Info
+    auto_info_cmds = (
+        "📰 #news — أخبار عامة\n"
+        "🎮 #games — أخبار ألعاب\n"
+        "🎬 #movies — أفلام + ملخصات\n"
+        "📺 #anime — أنمي + ملخصات\n"
+        "🎧 #music — أخبار موسيقى + أغاني\n"
+        "⏱️ كل 30 دقيقة"
+    )
+    embed.add_field(name="📰 Auto-Info", value=auto_info_cmds, inline=False)
+
+    # Verification Info
     verif_info = (
         "🔒 @Unverified — جديد (ما يهضرش)\n"
         "✅ @Member — مفعل (يهضر)\n"
@@ -1413,7 +1217,7 @@ async def help(ctx):
 
 
 # ═══════════════════════════════════════════════════════
-# ║              AI COMMANDS                                ║
+# ║              AI COMMANDS (قديم)                       ║
 # ═══════════════════════════════════════════════════════
 
 @bot.command()
@@ -1460,33 +1264,11 @@ async def انعلمك_شي_حاجة_جديدة(ctx, *, knowledge: str):
 
 
 # ═══════════════════════════════════════════════════════
-# ║              AUTO-INFO TASK                           ║
+# ║              AUTO-INFO TASK (محدّث بالكامل)            ║
 # ═══════════════════════════════════════════════════════
 
-@tasks.loop(minutes=30)
-async def auto_info():
-    """يبعث معلومة جديدة كل 30 دقيقة فـ channel الترحيب"""
-    welcome_channel = bot.get_channel(WELCOME_CHANNEL_ID)
-
-    if not welcome_channel:
-        return
-
-    topics = [
-        "اخر أخبار العاب الفيديو",
-        "معلومة ثقافية على كل دول العالم",
-        "اخر أخبار الإنمي",
-        "اخر أخبار الموسيقى",
-        "اخر أخبار الأفلام",
-        "آخر الأخبار التقنية",
-        "نصيحة من الحياة",
-        "معلومة علمية",
-        "تاريخ الحضارات القديمة",
-        "وصفة مغربية",
-        "معلومة رياضية"
-    ]
-
-    topic = random.choice(topics)
-
+async def fetch_ai_news(prompt: str) -> str:
+    """جيب خبر من AI حسب الموضوع"""
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "Content-Type": "application/json",
@@ -1494,16 +1276,11 @@ async def auto_info():
         "X-Title": "AI Assistant BOT"
     }
 
-    prompt = f"""عطيني معلومة قصيرة وممتعة على الموضوع: {topic}
-اكتبها بالدارجة المغربية.
-ضيف مصدر إلا كان ممكن.
-كن مختصر (3-4 سطور فقط)."""
-
     payload = {
         "model": AI_MODEL,
         "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 500,
-        "temperature": 0.8
+        "max_tokens": 800,
+        "temperature": 0.85
     }
 
     try:
@@ -1511,17 +1288,96 @@ async def auto_info():
             async with session.post(OPENROUTER_URL, headers=headers, json=payload) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    info = data["choices"][0]["message"]["content"]
-
-                    msg = f"""📢 **اجي اجي تسمع!** 📢
-
-{info}
-
-*— ايوا اشنو بان ليك؟*"""
-
-                    await welcome_channel.send(msg)
+                    return data["choices"][0]["message"]["content"]
+                else:
+                    return ""
     except:
-        pass
+        return ""
+
+
+@tasks.loop(minutes=30)
+async def auto_info():
+    """يبعث معلومات موزعة على كل channel حسب نوعو — كل 30 دقيقة"""
+
+    # ═══════ 📰 NEWS — أخبار عامة ═══════
+    news_channel = bot.get_channel(NEWS_CHANNEL_ID)
+    if news_channel:
+        news_prompt = """عطيني خبر تقني أو عالمي أو ثقافي جديد وممتع.
+اكتبو بالدارجة المغربية.
+ضيف مصدر إلا كان ممكن.
+كن مختصر (4-5 سطور فقط).
+ابدا بـ "📰""""
+        news = await fetch_ai_news(news_prompt)
+        if news:
+            await news_channel.send(f"📢 **اجي اجي تسمع!** 📢\n\n{news}\n\n*— واش عجبك الخبر؟*")
+
+    await asyncio.sleep(2)  # باش ما يطيحش الـ rate limit
+
+    # ═══════ 🎮 GAMES — أخبار ألعاب ═══════
+    games_channel = bot.get_channel(GAMES_CHANNEL_ID)
+    if games_channel:
+        games_prompt = """عطيني خبار جديدة على ألعاب الفيديو (release جديد، update، trailer...).
+اكتبو بالدارجة المغربية.
+قول شنو هو اللعبة واش جديد فيها.
+كن مختصر (4-5 سطور فقط).
+ابدا بـ "🎮""""
+        games_news = await fetch_ai_news(games_prompt)
+        if games_news:
+            await games_channel.send(f"🎮 **جديد فـ عالم الألعاب!** 🎮\n\n{games_news}\n\n*— واش كتلعب هاد اللعبة؟*")
+
+    await asyncio.sleep(2)
+
+    # ═══════ 🎬 MOVIES — أفلام + ملخص ═══════
+    movies_channel = bot.get_channel(MOVIES_CHANNEL_ID)
+    if movies_channel:
+        movies_prompt = """عطيني فيلم جديد (رعب، أكشن، كوميديا، دراما...) مع:
+1. السمية ديال الفيلم
+2. النوع (Genre)
+3. ملخص قصير وممتع
+4. واش يستاهل التفرج ولا لا
+
+اكتب بالدارجة المغربية.
+كن مختصر (5-6 سطور).
+ابدا بـ "🎬""""
+        movie = await fetch_ai_news(movies_prompt)
+        if movie:
+            await movies_channel.send(f"🍿 **فيلم جديد باش تشوفو!** 🍿\n\n{movie}\n\n*— واش غادي تفرج فيه؟*")
+
+    await asyncio.sleep(2)
+
+    # ═══════ 📺 ANIME — أنمي + ملخص ═══════
+    anime_channel = bot.get_channel(ANIME_CHANNEL_ID)
+    if anime_channel:
+        anime_prompt = """عطيني أنمي جديد (ولا حلقة جديدة ديال أنمي مشهور) مع:
+1. السمية ديال الأنمي
+2. النوع (shonen، isekai، romance...)
+3. ملخص قصير وممتع
+4. واش يستاهل التفرج
+
+اكتب بالدارجة المغربية.
+كن مختصر (5-6 سطور).
+ابدا بـ "📺""""
+        anime = await fetch_ai_news(anime_prompt)
+        if anime:
+            await anime_channel.send(f"📺 **جديد فـ عالم الأنمي!** 📺\n\n{anime}\n\n*— واش كتتبع هاد الأنمي؟*")
+
+    await asyncio.sleep(2)
+
+    # ═══════ 🎧 MUSIC — موسيقى + أغاني ═══════
+    music_channel = bot.get_channel(MUSIC_CHANNEL_ID)
+    if music_channel:
+        music_prompt = """عطيني خبار موسيقية جديدة:
+1. سمية الأغنية والفنان
+2. النوع (rap، pop، r&b، rock...)
+3. شنو جديد فـ الأغنية
+4. واش تستاهل التسمع
+
+اكتب بالدارجة المغربية.
+كن مختصر (4-5 سطور).
+ابدا بـ "🎧""""
+        music = await fetch_ai_news(music_prompt)
+        if music:
+            await music_channel.send(f"🎵 **جديد فـ الموسيقى!** 🎵\n\n{music}\n\n*— واش سمعتي هاد الأغنية؟*")
 
 
 @auto_info.before_loop
@@ -1579,15 +1435,19 @@ async def on_command_error(ctx, error):
 async def on_ready():
     print(f"✅ سيمو شغال!")
     print(f"🤖 Model: {AI_MODEL}")
-    print(f"💬 Channel: {TARGET_CHANNEL_ID}")
+    print(f"💬 AI Channel: {TARGET_CHANNEL_ID}")
     print(f"👋 Welcome: {WELCOME_CHANNEL_ID}")
     print(f"✅ Verify: {VERIFY_CHANNEL_ID}")
-    print(f"⏳ Waiting Voice: {WAITING_VOICE_CHANNEL_ID}")
-    print(f"⏳ Waiting Text: {WAITING_TEXT_CHANNEL_ID}")
     print(f"🛡️ Mod Logs: {MOD_LOGS_CHANNEL_ID}")
+    print(f"📰 News: {NEWS_CHANNEL_ID}")
+    print(f"🎮 Games: {GAMES_CHANNEL_ID}")
+    print(f"🎬 Movies: {MOVIES_CHANNEL_ID}")
+    print(f"📺 Anime: {ANIME_CHANNEL_ID}")
+    print(f"🎧 Music: {MUSIC_CHANNEL_ID}")
     print(f"⏱️ Timeout: {API_TIMEOUT}s")
-    print(f"🛡️ Moderation: نشط (Staff محمي)")
+    print(f"🛡️ Moderation: نشط")
     print(f"✅ Verification: نشط")
+    print(f"📰 Auto-Info: نشط (5 channels)")
     print(f"⚠️ Warn Limit: {WARN_LIMIT}")
 
     await bot.change_presence(
@@ -1600,6 +1460,7 @@ async def on_ready():
     if not auto_info.is_running():
         auto_info.start()
 
+    # صاوب رسالة التفعيل فـ كل سيرفر
     for guild in bot.guilds:
         await setup_verify_message(guild)
 
