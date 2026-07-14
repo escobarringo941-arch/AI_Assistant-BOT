@@ -37,15 +37,15 @@ VERIFY_CHANNEL_ID = 1526481352264781854
 RULES_CHANNEL_ID = 1526474691789721700
 
 # ⏳ Waiting Room — حط IDs ديالك هنا
-WAITING_VOICE_CHANNEL_ID = 1526691401293762711   # ← Voice Channel "Waiting For Verification"
-WAITING_TEXT_CHANNEL_ID = 1526696621511934082    # ← Text Channel "waiting-for-verification"
+WAITING_VOICE_CHANNEL_ID = 1234567890123456789   # ← Voice Channel "Waiting For Verification"
+WAITING_TEXT_CHANNEL_ID = 9876543210987654321      # ← Text Channel "waiting-for-verification"
 
 UNVERIFIED_ROLE_ID = 1526452828267085915
 MEMBER_ROLE_ID = 1526451890399739934
 MUTED_ROLE_ID = 1526468718534590574
 
 BANNED_WORDS = [
-    'سبام', 'spam', 'شلح.', 'discord.gg', 'العزية', 'عزي',
+    'سبام', 'spam', 'naked.', 'discord.gg', 'العزية', 'عزي',
     'nude', 'porn', 'xxx', 'sex', 'fuck', 'shit', 'bitch'
 ]
 
@@ -74,6 +74,9 @@ learned_knowledge = []
 warns_db = {}
 spam_tracker = {}
 mute_tasks = {}
+
+# ========== قائمة الناس اللي فـ Waiting Room ==========
+waiting_members = set()  # {user_id, user_id, ...}
 
 
 # ═══════════════════════════════════════════════════════
@@ -356,25 +359,41 @@ async def setup_verify_message(guild: discord.Guild):
 async def on_member_join(member):
     """ترحيب + Auto-Role (@Unverified) + نقل لـ Waiting Room"""
 
-    # 1. يعطي @Unverified تلقائياً
+    # 1. ✅ يعطي @Unverified تلقائياً (هادا أهم حاجة!)
     unverified_role = member.guild.get_role(UNVERIFIED_ROLE_ID)
     if unverified_role:
         try:
             await member.add_roles(unverified_role)
+            print(f"✅ {member.name} → @Unverified")
         except discord.Forbidden:
+            print(f"❌ ما قدرتش نعطي @Unverified لـ {member.name}")
             pass
+    else:
+        print(f"⚠️ ما لقيتش @Unverified role!")
 
-    # 2. نقل لـ "Waiting For Verification" (Voice Channel)
-    moved = False
+    # 2. نجيب invite link للـ Waiting Voice Channel
     waiting_voice = bot.get_channel(WAITING_VOICE_CHANNEL_ID)
+    invite_link = None
+    
     if waiting_voice and isinstance(waiting_voice, discord.VoiceChannel):
-        # نحاول ننقلو فقط إلا كان فـ voice channel
-        if member.voice and member.voice.channel:
-            try:
-                await member.move_to(waiting_voice)
-                moved = True
-            except (discord.Forbidden, discord.HTTPException):
-                pass
+        try:
+            invites = await waiting_voice.invites()
+            invite = None
+            
+            for inv in invites:
+                if inv.max_age == 0 and inv.max_uses == 0:
+                    invite = inv
+                    break
+            
+            if not invite:
+                invite = await waiting_voice.create_invite(max_age=0, max_uses=0, unique=False)
+            
+            invite_link = invite.url
+            
+        except discord.Forbidden:
+            print(f"❌ ما عنديش صلاحية نصاوب invite!")
+        except discord.HTTPException as e:
+            print(f"❌ خطأ فـ invite: {e}")
 
     # 3. يرحبو فـ welcome channel
     welcome_channel = bot.get_channel(WELCOME_CHANNEL_ID)
@@ -395,43 +414,59 @@ async def on_member_join(member):
         embed.set_footer(text="سيمو | Verification System")
         await welcome_channel.send(embed=embed)
 
-    # 4. رسالة فـ DM
+    # 4. رسالة فـ DM (مع رابط الـ Voice Channel)
+    dm_msg = f"""👋 **مرحبا بيك فـ {SERVER_NAME}!**
+
+🔒 **أنت دابا غير مفعل (@Unverified)!**
+
+**قبل ما تقدر تهضر فالسيرفر، خاصك:**
+
+📜 **1. اقرأ القوانين:**
+روح لـ <#{RULES_CHANNEL_ID}> واقرأ القوانين كاملة.
+
+✅ **2. وافق على القوانين:**
+من بعد ما تقراهم، روح لـ <#{VERIFY_CHANNEL_ID}> وكليك على ✅
+
+🔓 **3. استمتع!**
+من بعد التفعيل، غادي تقدر تهضر فكاع القنوات.
+
+⚠️ **ملاحظة:** إلا ما وافقتش، ما غاديش تقدر تهضر ولا تفاعل!"""
+
+    if invite_link:
+        dm_msg += f"\n\n🎙️ **ادخل هنا باش تستنى فـ Waiting Room:**\n{invite_link}\n\n*ملي تدخل، البوت غادي يحتفظ بيك حتى تتفعّل!*"
+
     try:
-        await member.send(
-            f"👋 مرحبا بيك فـ **{SERVER_NAME}**!\n\n"
-            f"**الخطوات باش تتفعّل:**\n"
-            f"1️⃣ اقرأ القوانين فـ <#{RULES_CHANNEL_ID}>\n"
-            f"2️⃣ روح لـ <#{VERIFY_CHANNEL_ID}> وكليك على ✅\n\n"
-            f"إلا ما درتيش هاد الخطوات، ما غاديش تقدر تهضر فالسيرفر!\n\n"
-            f"شكراً! 🙏"
-        )
+        await member.send(dm_msg)
+        print(f"✅ DM بعث لـ {member.name}")
     except discord.Forbidden:
+        print(f"❌ {member.name} سد DM!")
         pass
 
-    # 5. رسالة فـ "Waiting For Verification" (Text Channel)
+    # 5. رسالة فـ "waiting-for-verification" (Text Channel)
     waiting_text = bot.get_channel(WAITING_TEXT_CHANNEL_ID)
     if waiting_text and isinstance(waiting_text, discord.TextChannel):
         embed_waiting = discord.Embed(
-            title="⏳ مرحبا بيك فـ Waiting For Verification!",
+            title="⏳ عضو جديد فـ Waiting Room!",
             description=(
                 f"**{member.mention}** دخل السيرفر!\n\n"
-                f"**قبل ما تقدر تهضر فالسيرفر، خاصك:**\n\n"
-                f"📜 **1. اقرأ القوانين:**\n"
-                f"روح لـ <#{RULES_CHANNEL_ID}> واقرأ القوانين كاملة.\n\n"
-                f"✅ **2. وافق على القوانين:**\n"
-                f"من بعد ما تقراهم، روح لـ <#{VERIFY_CHANNEL_ID}> وكليك على ✅\n\n"
-                f"🔓 **3. استمتع!**\n"
-                f"من بعد التفعيل، غادي تقدر تهضر فكاع القنوات.\n\n"
-                f"**ملاحظة:** إلا ما وافقتش، ما غاديش تقدر تهضر ولا تفاعل!"
+                f"**الحالة:** ⏳ في انتظار التفعيل\n"
+                f"**الدور:** @Unverified\n\n"
+                f"**خاصو يدير:**\n"
+                f"1️⃣ اقرأ القوانين فـ <#{RULES_CHANNEL_ID}>\n"
+                f"2️⃣ وافق فـ <#{VERIFY_CHANNEL_ID}> ✅"
             ),
-            color=discord.Color.blue(),
+            color=discord.Color.orange(),
             timestamp=datetime.now()
         )
         embed_waiting.set_thumbnail(url=member.display_avatar.url)
         embed_waiting.set_footer(text="سيمو | Waiting Room")
         await waiting_text.send(embed=embed_waiting)
 
-    # 6. Log
+    # 6. نضيفو للـ waiting list
+    waiting_members.add(str(member.id))
+    print(f"✅ {member.name} → waiting_members")
+
+    # 7. Log
     await log_action(
         member.guild,
         "👤 عضو جديد (Unverified)",
@@ -439,14 +474,79 @@ async def on_member_join(member):
         f"**الحالة:** غير مفعل\n"
         f"**الدور:** {unverified_role.mention if unverified_role else 'N/A'}\n"
         f"**Waiting Voice:** <#{WAITING_VOICE_CHANNEL_ID}>\n"
-        f"**نقل Voice:** {'✅ نعم' if moved else '❌ لا (ما كانش فـ voice)'}",
+        f"**Invite DM:** {'✅ نعم' if invite_link else '❌ لا'}",
         discord.Color.orange()
     )
+
+
+# ═══════════════════════════════════════════════════════
+# ║         مراقبة Voice Channels - يحتفظ بالـ Unverified  ║
+# ═══════════════════════════════════════════════════════
+
+@bot.event
+async def on_voice_state_update(member, before, after):
+    """ملي يبدل voice channel"""
+    
+    user_id = str(member.id)
+    
+    # إلا كان فـ waiting list ومازال Unverified
+    if user_id in waiting_members:
+        unverified_role = member.guild.get_role(UNVERIFIED_ROLE_ID)
+        
+        # نتحقق بلي مازال Unverified
+        if unverified_role and unverified_role in member.roles:
+            waiting_voice = bot.get_channel(WAITING_VOICE_CHANNEL_ID)
+            
+            if not waiting_voice:
+                return
+            
+            # حالة 1: دخل voice channel آخر (ماشي Waiting)
+            if after.channel and after.channel.id != WAITING_VOICE_CHANNEL_ID:
+                # نرجعو لـ Waiting Room!
+                try:
+                    await member.move_to(waiting_voice)
+                    
+                    # نبعث ليه تذكير
+                    try:
+                        await member.send(
+                            f"⏳ **{member.display_name}**، خاصك تتفعّل قبل ما تقدر تتحرك!\n\n"
+                            f"روح لـ <#{VERIFY_CHANNEL_ID}> وكليك على ✅"
+                        )
+                    except discord.Forbidden:
+                        pass
+                        
+                except (discord.Forbidden, discord.HTTPException):
+                    pass
+            
+            # حالة 2: خرج من voice (disconnected)
+            elif before.channel and not after.channel:
+                # ما نقدرش نجبرو يدخل، نبعث ليه invite
+                try:
+                    invites = await waiting_voice.invites()
+                    invite = None
+                    for inv in invites:
+                        if inv.max_age == 0 and inv.max_uses == 0:
+                            invite = inv
+                            break
+                    if not invite:
+                        invite = await waiting_voice.create_invite(max_age=0, max_uses=0, unique=False)
+                    
+                    await member.send(
+                        f"⏳ **رجع لـ Waiting Room!**\n\n"
+                        f"ما زال ما تفعّلتيش! ادخل من هنا:\n"
+                        f"{invite.url}\n\n"
+                        f"و من بعد روح لـ <#{VERIFY_CHANNEL_ID}> ✅"
+                    )
+                except:
+                    pass
 
 
 @bot.event
 async def on_member_remove(member):
     """سجل خروج الأعضاء"""
+    # نحيدو من waiting list
+    waiting_members.discard(str(member.id))
+    
     await log_action(
         member.guild,
         "👋 عضو خرج",
@@ -487,6 +587,9 @@ async def on_raw_reaction_add(payload):
             await member.add_roles(member_role)
         except discord.Forbidden:
             pass
+
+    # ✅ نحيدو من waiting list
+    waiting_members.discard(str(member.id))
 
     await log_action(
         guild,
@@ -1139,6 +1242,9 @@ async def verify(ctx, member: discord.Member):
     if member_role:
         await member.add_roles(member_role)
 
+    # نحيدو من waiting list
+    waiting_members.discard(str(member.id))
+
     embed = discord.Embed(
         title="✅ تفعيل يدوي",
         description=f"**{member.mention}** تم تفعيله.",
@@ -1175,6 +1281,9 @@ async def unverify(ctx, member: discord.Member):
     unverified_role = ctx.guild.get_role(UNVERIFIED_ROLE_ID)
     if unverified_role:
         await member.add_roles(unverified_role)
+
+    # نزيدو للـ waiting list
+    waiting_members.add(str(member.id))
 
     embed = discord.Embed(
         title="🔄 إلغاء التفعيل",
