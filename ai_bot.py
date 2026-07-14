@@ -281,22 +281,22 @@ async def on_message(message):
     # "مالك ازبي" / "مالك زبي"
     if "مالك" in msg_lower and ("ازبي" in msg_lower or "زبي" in msg_lower):
         if gender == "female":
-            await message.reply("زبي فكرك مخبي ابنت القحبة 😂", mention_author=False)
+            await message.reply("زبي فكرك مخبي ابنت القحبة", mention_author=False)
         else:
-            await message.reply("زبي فكرك مخبي اولد القحبة 😂", mention_author=False)
+            await message.reply("زبي فكرك مخبي اولد القحبة", mention_author=False)
         return
     
     # "قحبة"
     if "قحبة" in msg_lower:
-        await message.reply("القحبة هي مك 😂", mention_author=False)
+        await message.reply("القحبة هي مك", mention_author=False)
         return
     
     # "سير تحوا"
     if "سير تحوا" in msg_lower:
         if gender == "female":
-            await message.reply("سيري تحواي نتي نيت 😂", mention_author=False)
+            await message.reply("سيري تحواي نتي نيت", mention_author=False)
         else:
-            await message.reply("سير تحوا نتا نيت 😂", mention_author=False)
+            await message.reply("سير تحوا نتا نيت", mention_author=False)
         return
     
     # "اهيا"
@@ -322,15 +322,15 @@ async def on_message(message):
     
     # "لقلاوي" (أي سياق)
     if "لقلاوي" in msg_lower or "لقلاو" in msg_lower:
-        await message.reply("ههههه لقلاوي نتا 😂", mention_author=False)
+        await message.reply("ههههه لقلاوي هو نتا", mention_author=False)
         return
     
     # "زامل" (أي سياق)
     if "زامل" in msg_lower:
         if gender == "female":
-            await message.reply("ههههه زاملة نتي 😂", mention_author=False)
+            await message.reply("ههههه قحبة هي نتي القحبة", mention_author=False)
         else:
-            await message.reply("ههههه زامل نتا 😂", mention_author=False)
+            await message.reply(" ههههه زامل هو نتا اسي زبي", mention_author=False)
         return
     
     # ========== شتم عام ==========
@@ -346,14 +346,14 @@ async def on_message(message):
             replies = [
                 "ههههه ونتي نيت ابنت القحبة 😂",
                 "صافي صافي، ريحي مع كرك 😂",
-                "ياك اختي، هدي راسك شوية",
+                "ياك اختي، ريحي مع كرك شوية",
                 "ههههه نتي اللي جاييا تهضري معايا؟"
             ]
         else:
             replies = [
                 "ههههه ونتا نيت اولد القحبة 😂",
                 "صافي صافي، ريح مع كرك 😂",
-                "ياك خويا، هدي راسك شوية",
+                "ياك خويا، ريح مع كرك شوية",
                 "ههههه نتا اللي جاي تهضر معايا؟"
             ]
         
