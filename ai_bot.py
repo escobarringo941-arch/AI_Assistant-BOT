@@ -1,7 +1,6 @@
 import os
 import discord
 import aiohttp
-import base64
 from discord.ext import commands
 from collections import defaultdict
 
@@ -11,15 +10,13 @@ from collections import defaultdict
 
 TARGET_CHANNEL_ID = 1526358328190566420
 
-# ====== MODELS ======
-# "anthropic/claude-3.5-sonnet" - أقوى + تصاور ⭐
-# "openai/gpt-4o" - أقوى + تصاور
-# "meta-llama/llama-3.2-11b-vision-instruct" - مجاني + تصاور
-# "qwen/qwen-2-vl-72b-instruct" - مجاني + تصاور
-AI_MODEL = "anthropic/claude-3.5-sonnet"
+# ====== GEMINI من OpenRouter ======
+# "google/gemini-2.0-flash-exp:free" - مجاني + سريع ⭐
+# "google/gemini-2.0-flash-lite-preview-02-05:free" - أخف
+# "google/gemini-1.5-flash" - قوي
+AI_MODEL = "google/gemini-2.0-flash-exp:free"
 
 # ====== API ======
-# سجل فـ openrouter.ai وخد API Key مجاني
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
@@ -35,6 +32,7 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
+# ========== ذاكرة ==========
 user_memory = defaultdict(list)
 server_memory = []
 MAX_SERVER_MEMORY = 100
@@ -72,19 +70,8 @@ def get_system_prompt(user_gender="unknown"):
 
 6. **الدعابة**: خفيفة وناضجة
 
-7. **الشتائم - فهم ورد**:
-   - تفهم **كاع الشتائم** المغربية:
-     * بالعربية: "حمار"، "غبي"، "بوليس"، "زامل"، قحبة"...
-     * باللاتينية: "wld l9ahba"، "nik mok"، "tabon"، "zamel"، "7mar"...
-   - ترد بـ **ذكاء وسلاسة**:
-     * ما تعصبش ازبي
-     * رد بـ تهكم خفيف
-     * "ههههه ونتا؟"
-     * "صافي صافي، ريح مع كرك ازبي"
-   - تقدر تسب **بسلاسة** إلا الزبون بدا:
-     * "ياك ازبي، ريح مع كرك شوية"
-     * "ههههه نتا اللي..." (رد ذكي)
-     
+7. **الشتائم**: تفهمها بس رد بـ ذكاء ونضج
+
 8. **الذاكرة**: تتذكر المحادثات السابقة مع كل شخص ومع السيرفر كامل
 
 9. **المصادر**: إلا عندك معلومة مؤكدة → ذكر المصدر
@@ -134,7 +121,7 @@ async def ask_ai(user_id: str, username: str, display_name: str, prompt: str, im
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "Content-Type": "application/json",
-        "HTTP-Referer": "https://discord.com",  # OpenRouter يحتاج هادا
+        "HTTP-Referer": "https://discord.com",
         "X-Title": "AI Assistant BOT"
     }
     
@@ -142,25 +129,23 @@ async def ask_ai(user_id: str, username: str, display_name: str, prompt: str, im
     
     messages = [{"role": "system", "content": get_system_prompt(gender)}]
     
-    # ذاكرة المستخدم
+    # نزيد ذاكرة المستخدم
     for msg in user_memory[user_id]:
         messages.append(msg)
     
-    # سياق السيرفر
+    # نزيد سياق السيرفر (آخر 5 رسائل)
     for msg in server_memory[-10:]:
         messages.append(msg)
     
-    # بناء الرسالة (مع تصويرة ولا بلا)
+    # بناء الرسالة
     user_message = {"role": "user", "content": []}
     
     if image_url:
-        # فيه تصويرة
         user_message["content"] = [
             {"type": "text", "text": prompt},
             {"type": "image_url", "image_url": {"url": image_url}}
         ]
     else:
-        # غير نص
         user_message["content"] = prompt
     
     messages.append(user_message)
@@ -265,7 +250,6 @@ async def on_message(message):
     # نشوف واش فيه تصاور
     image_url = None
     if message.attachments:
-        # آخر تصويرة فـ الرسالة
         for att in message.attachments:
             if att.content_type and att.content_type.startswith("image/"):
                 image_url = att.url
