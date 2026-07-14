@@ -73,7 +73,7 @@ def get_system_prompt(user_gender="unknown"):
 5. **الشتائم المغربية - فهم ورد**:
    - تفهم **كاع الشتائم**:
      * عربية: "لي حواك"، "قواد"، "قحبة"، "زامل"، "طبون مك"، "ولد القحبة"...
-     * لاتينية: "wld l9ahba"، "nik mok"، "tabon"، "zamel"، "7mar"، "9a7ba"...
+     * لاتينية: "wld l9ahba"، "zbi"، "tabon"، "zamel"، "7mar"، "9a7ba"...
    - ترد بـ **ذكاء وسلاسة**:
      * "ههههه ونتا؟"
      * "صافي صافي، ريح مع كرك"
@@ -225,10 +225,10 @@ async def on_member_join(member):
         await welcome_channel.send(welcome_msg)
 
 
-# ========== معلومات تلقائية كل 20 دقيقة ==========
-@tasks.loop(minutes=20)
+# ========== معلومات تلقائية كل 10 دقائق ==========
+@tasks.loop(minutes=10)
 async def auto_info():
-    """يبعث معلومة جديدة كل 20 دقيقة فـ channel الترحيب"""
+    """يبعث معلومة جديدة كل 10 دقائق فـ channel الترحيب"""
     welcome_channel = bot.get_channel(WELCOME_CHANNEL_ID)
     
     if not welcome_channel:
@@ -237,6 +237,8 @@ async def auto_info():
     topics = [
         "أخبار الألعاب الفيديو",
         "معلومة ثقافية على كل دول العالم",
+        "أخبار الموسيقى",
+        "أخبار الأفلام",
         "آخر الأخبار التقنية",
         "نصيحة من الحياة",
         "معلومة علمية",
