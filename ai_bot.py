@@ -32,34 +32,29 @@ API_TIMEOUT = 15
 # ║              MODERATION & VERIFICATION CONFIG          ║
 # ═══════════════════════════════════════════════════════
 
-# IDs ديال القنوات والأدوار — بدلهم حسب السيرفر ديالك
-MOD_LOGS_CHANNEL_ID = 1524957892925456545  # قناة سجل الموديراتورز (بدلوها)
-VERIFY_CHANNEL_ID = 1526481352264781854    # قناة التفعيل (بدلوها)
-RULES_CHANNEL_ID = 1526474691789721700     # قناة القوانين (بدلوها)
+MOD_LOGS_CHANNEL_ID = 1524957892925456545
+VERIFY_CHANNEL_ID = 1526481352264781854
+RULES_CHANNEL_ID = 1526474691789721700
 
-# الأدوار
-UNVERIFIED_ROLE_ID = 1526452828267085915   # @Unverified — غير مفعل (بدلوها)
-MEMBER_ROLE_ID = 1526451890399739934       # @Member — مفعل (بدلوها)
-MUTED_ROLE_ID = 1526468718534590574        # @Muted — عقوبة (بدلوها)
+UNVERIFIED_ROLE_ID = 1526452828267085915
+MEMBER_ROLE_ID = 1526451890399739934
+MUTED_ROLE_ID = 1526468718534590574
 
-# كلمات ممنوعة (Auto-Mod)
 BANNED_WORDS = [
     'سبام', 'spam', 'naked.', 'discord.gg', 'العزية', 'عزي',
     'nude', 'porn', 'xxx', 'sex', 'fuck', 'shit', 'bitch'
 ]
 
-SPAM_THRESHOLD = 5      # عدد الرسائل فوقاش يتحسب سبام
-SPAM_INTERVAL = 5       # ثواني
-WARN_LIMIT = 3          # عدد التحذيرات قبل auto-kick
-
-# ═══════════════════════════════════════════════════════
+SPAM_THRESHOLD = 5
+SPAM_INTERVAL = 5
+WARN_LIMIT = 3
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
-intents.reactions = True  # خاص باش يشوف reactions
+intents.reactions = True
 bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
 # ========== ذاكرة AI ==========
@@ -71,9 +66,38 @@ MAX_SERVER_MEMORY = 100
 learned_knowledge = []
 
 # ========== MODERATION DATA ==========
-warns_db = {}           # {user_id: {"count": int, "reasons": [str], "dates": [str]}}
-spam_tracker = {}       # {user_id: [timestamps]}
-mute_tasks = {}         # {user_id: asyncio.Task}
+warns_db = {}
+spam_tracker = {}
+mute_tasks = {}
+
+
+# ═══════════════════════════════════════════════════════
+# ║           فنكشن التحقق من الرتب المحمية                ║
+# ═══════════════════════════════════════════════════════
+
+def is_staff(member: discord.Member) -> bool:
+    """تحقق: واش العضو من الـ Staff (Owner, Admin, Mod)"""
+    # Owner ديال السيرفر
+    if member.id == member.guild.owner_id:
+        return True
+    
+    # صلاحيات الإدارة
+    if member.guild_permissions.administrator:
+        return True
+    
+    # Moderator permissions
+    if member.guild_permissions.manage_messages:
+        return True
+    if member.guild_permissions.manage_guild:
+        return True
+    if member.guild_permissions.kick_members:
+        return True
+    if member.guild_permissions.ban_members:
+        return True
+    if member.guild_permissions.moderate_members:
+        return True
+    
+    return False
 
 
 def get_system_prompt(user_gender="unknown"):
@@ -289,7 +313,7 @@ async def auto_unmute(member: discord.Member, duration_minutes: int, guild: disc
 
 
 # ═══════════════════════════════════════════════════════
-# ║              VERIFICATION SYSTEM (جديد)                 ║
+# ║              VERIFICATION SYSTEM                      ║
 # ═══════════════════════════════════════════════════════
 
 async def setup_verify_message(guild: discord.Guild):
@@ -298,12 +322,10 @@ async def setup_verify_message(guild: discord.Guild):
     if not verify_channel:
         return
 
-    # شوف إلا رسالة التفعيل موجودة
     async for message in verify_channel.history(limit=10):
         if message.author == bot.user and "✅" in message.content:
-            return  # موجودة
+            return
 
-    # صاوب رسالة جديدة
     embed = discord.Embed(
         title="✅ تفعيل العضوية",
         description=(
@@ -332,7 +354,6 @@ async def setup_verify_message(guild: discord.Guild):
 async def on_member_join(member):
     """ترحيب + Auto-Role (@Unverified)"""
 
-    # 1. يعطي @Unverified تلقائياً
     unverified_role = member.guild.get_role(UNVERIFIED_ROLE_ID)
     if unverified_role:
         try:
@@ -340,7 +361,6 @@ async def on_member_join(member):
         except discord.Forbidden:
             pass
 
-    # 2. يرحبو فـ welcome channel
     welcome_channel = bot.get_channel(WELCOME_CHANNEL_ID)
     if welcome_channel:
         embed = discord.Embed(
@@ -359,7 +379,6 @@ async def on_member_join(member):
         embed.set_footer(text="سيمو | Verification System")
         await welcome_channel.send(embed=embed)
 
-    # 3. يرسلو DM
     try:
         await member.send(
             f"👋 مرحبا بيك فـ **{SERVER_NAME}**!\n\n"
@@ -370,7 +389,6 @@ async def on_member_join(member):
     except discord.Forbidden:
         pass
 
-    # 4. Log
     await log_action(
         member.guild,
         "👤 عضو جديد (Unverified)",
@@ -397,11 +415,9 @@ async def on_member_remove(member):
 async def on_raw_reaction_add(payload):
     """Verification: ملي يكليك ✅"""
 
-    # غير فـ verify channel
     if payload.channel_id != VERIFY_CHANNEL_ID:
         return
 
-    # غير ✅ emoji
     if str(payload.emoji) != "✅":
         return
 
@@ -413,7 +429,6 @@ async def on_raw_reaction_add(payload):
     if not member or member.bot:
         return
 
-    # شيل @Unverified
     unverified_role = guild.get_role(UNVERIFIED_ROLE_ID)
     if unverified_role and unverified_role in member.roles:
         try:
@@ -421,7 +436,6 @@ async def on_raw_reaction_add(payload):
         except discord.Forbidden:
             pass
 
-    # زيد @Member
     member_role = guild.get_role(MEMBER_ROLE_ID)
     if member_role:
         try:
@@ -429,7 +443,6 @@ async def on_raw_reaction_add(payload):
         except discord.Forbidden:
             pass
 
-    # Log
     await log_action(
         guild,
         "✅ تفعيل",
@@ -439,7 +452,6 @@ async def on_raw_reaction_add(payload):
         discord.Color.green()
     )
 
-    # DM
     try:
         await member.send(f"✅ تم تفعيلك فـ **{SERVER_NAME}**! مرحبا بيك! 🎉")
     except:
@@ -493,104 +505,111 @@ async def on_message(message):
         return
 
     # ═══════════════════════════════════════════════════
-    # ║         AUTO-MOD SYSTEM                           ║
+    # ║         AUTO-MOD SYSTEM - محمي للـ Staff          ║
+    # ═══════════════════════════════════════════════════
+
+    # ✅ ما نطبقش Auto-Mod على الـ Staff
+    if is_staff(message.author):
+        pass  # Staff محميين من Auto-Mod
+    else:
+        msg_lower = message.content.lower()
+        gender = detect_gender(message.author.name, message.author.display_name)
+
+        # فحص الكلمات الممنوعة
+        for word in BANNED_WORDS:
+            if word.lower() in msg_lower:
+                try:
+                    await message.delete()
+
+                    warn_msg = await message.channel.send(
+                        f"🚫 {message.author.mention} ممنوع السبام والروابط!",
+                        delete_after=5
+                    )
+
+                    count = await add_warn(message.author, f"رسالة محذوفة (Auto-Mod): {word}")
+
+                    await log_action(
+                        message.guild,
+                        "🚨 Auto-Mod | رسالة محذوفة",
+                        f"**المستخدم:** {message.author.mention}\n"
+                        f"**القناة:** {message.channel.mention}\n"
+                        f"**الكلمة الممنوعة:** `{word}`\n"
+                        f"**المحتوى:** {message.content[:500]}\n"
+                        f"**التحذيرات:** {count}/{WARN_LIMIT}",
+                        discord.Color.red()
+                    )
+
+                    if count >= WARN_LIMIT:
+                        try:
+                            await message.author.kick(reason=f"3 تحذيرات (Auto-Mod)")
+                            await message.channel.send(
+                                f"🚫 {message.author.mention} تم طرده تلقائياً (3 تحذيرات)!",
+                                delete_after=10
+                            )
+                            await log_action(
+                                message.guild,
+                                "🚫 Auto-Kick",
+                                f"**المستخدم:** {message.author.mention}\n"
+                                f"**السبب:** 3 تحذيرات (Auto-Mod)",
+                                discord.Color.dark_red()
+                            )
+                            clear_warns(str(message.author.id))
+                        except discord.Forbidden:
+                            pass
+
+                    return
+                except discord.Forbidden:
+                    pass
+
+        # فحص السبام
+        user_id = str(message.author.id)
+        now = datetime.now()
+
+        if user_id not in spam_tracker:
+            spam_tracker[user_id] = []
+
+        spam_tracker[user_id].append(now)
+        spam_tracker[user_id] = [
+            t for t in spam_tracker[user_id]
+            if now - t < timedelta(seconds=SPAM_INTERVAL)
+        ]
+
+        if len(spam_tracker[user_id]) >= SPAM_THRESHOLD:
+            try:
+                await message.channel.send(
+                    f"🛑 {message.author.mention} توقف عن السبام!",
+                    delete_after=5
+                )
+
+                muted_role = message.guild.get_role(MUTED_ROLE_ID)
+                if muted_role:
+                    await message.author.add_roles(muted_role)
+
+                    if user_id in mute_tasks and not mute_tasks[user_id].done():
+                        mute_tasks[user_id].cancel()
+
+                    task = asyncio.create_task(auto_unmute(message.author, 5, message.guild))
+                    mute_tasks[user_id] = task
+
+                    await log_action(
+                        message.guild,
+                        "🛑 Auto-Mod | سبام مكتشف",
+                        f"**المستخدم:** {message.author.mention}\n"
+                        f"**الإجراء:** Mute 5 دقائق (تلقائي)\n"
+                        f"**الرسائل:** {len(spam_tracker[user_id])} فـ {SPAM_INTERVAL} ثواني",
+                        discord.Color.orange()
+                    )
+
+                    spam_tracker[user_id] = []
+            except discord.Forbidden:
+                pass
+
+    # ═══════════════════════════════════════════════════
+    # ║         ردود تلقائية (لكل)                        ║
     # ═══════════════════════════════════════════════════
 
     msg_lower = message.content.lower()
     gender = detect_gender(message.author.name, message.author.display_name)
-
-    # فحص الكلمات الممنوعة
-    for word in BANNED_WORDS:
-        if word.lower() in msg_lower:
-            try:
-                await message.delete()
-
-                warn_msg = await message.channel.send(
-                    f"🚫 {message.author.mention} ممنوع السبام والروابط!",
-                    delete_after=5
-                )
-
-                count = await add_warn(message.author, f"رسالة محذوفة (Auto-Mod): {word}")
-
-                await log_action(
-                    message.guild,
-                    "🚨 Auto-Mod | رسالة محذوفة",
-                    f"**المستخدم:** {message.author.mention}\n"
-                    f"**القناة:** {message.channel.mention}\n"
-                    f"**الكلمة الممنوعة:** `{word}`\n"
-                    f"**المحتوى:** {message.content[:500]}\n"
-                    f"**التحذيرات:** {count}/{WARN_LIMIT}",
-                    discord.Color.red()
-                )
-
-                if count >= WARN_LIMIT:
-                    try:
-                        await message.author.kick(reason=f"3 تحذيرات (Auto-Mod)")
-                        await message.channel.send(
-                            f"🚫 {message.author.mention} تم طرده تلقائياً (3 تحذيرات)!",
-                            delete_after=10
-                        )
-                        await log_action(
-                            message.guild,
-                            "🚫 Auto-Kick",
-                            f"**المستخدم:** {message.author.mention}\n"
-                            f"**السبب:** 3 تحذيرات (Auto-Mod)",
-                            discord.Color.dark_red()
-                        )
-                        clear_warns(str(message.author.id))
-                    except discord.Forbidden:
-                        pass
-
-                return
-            except discord.Forbidden:
-                pass
-
-    # فحص السبام
-    user_id = str(message.author.id)
-    now = datetime.now()
-
-    if user_id not in spam_tracker:
-        spam_tracker[user_id] = []
-
-    spam_tracker[user_id].append(now)
-    spam_tracker[user_id] = [
-        t for t in spam_tracker[user_id]
-        if now - t < timedelta(seconds=SPAM_INTERVAL)
-    ]
-
-    if len(spam_tracker[user_id]) >= SPAM_THRESHOLD:
-        try:
-            await message.channel.send(
-                f"🛑 {message.author.mention} توقف عن السبام!",
-                delete_after=5
-            )
-
-            muted_role = message.guild.get_role(MUTED_ROLE_ID)
-            if muted_role:
-                await message.author.add_roles(muted_role)
-
-                if user_id in mute_tasks and not mute_tasks[user_id].done():
-                    mute_tasks[user_id].cancel()
-
-                task = asyncio.create_task(auto_unmute(message.author, 5, message.guild))
-                mute_tasks[user_id] = task
-
-                await log_action(
-                    message.guild,
-                    "🛑 Auto-Mod | سبام مكتشف",
-                    f"**المستخدم:** {message.author.mention}\n"
-                    f"**الإجراء:** Mute 5 دقائق (تلقائي)\n"
-                    f"**الرسائل:** {len(spam_tracker[user_id])} فـ {SPAM_INTERVAL} ثواني",
-                    discord.Color.orange()
-                )
-
-                spam_tracker[user_id] = []
-        except discord.Forbidden:
-            pass
-
-    # ═══════════════════════════════════════════════════
-    # ║         ردود تلقائية (قديم)                     ║
-    # ═══════════════════════════════════════════════════
 
     if "سيمو" in msg_lower or "simo" in msg_lower:
         await message.reply("نعام! 😂 واش بغيتي؟", mention_author=False)
@@ -694,13 +713,24 @@ async def on_message(message):
 
 
 # ═══════════════════════════════════════════════════════
-# ║              MODERATION COMMANDS                        ║
+# ║              MODERATION COMMANDS - محمية للـ Staff      ║
 # ═══════════════════════════════════════════════════════
 
 @bot.command()
 @commands.has_permissions(kick_members=True)
 async def kick(ctx, member: discord.Member, *, reason="ما ذكرش سبب"):
     """!kick @user [سبب] — طرد عضو"""
+    
+    # ✅ ما نقدرش نطرد Staff
+    if is_staff(member):
+        embed = discord.Embed(
+            title="🛡️ محمي!",
+            description=f"**{member.mention}** من الـ Staff! ما نقدرش نطردو.",
+            color=discord.Color.red()
+        )
+        await ctx.send(embed=embed, delete_after=5)
+        return
+    
     try:
         await member.kick(reason=reason)
 
@@ -733,6 +763,17 @@ async def kick(ctx, member: discord.Member, *, reason="ما ذكرش سبب"):
 @commands.has_permissions(ban_members=True)
 async def ban(ctx, member: discord.Member, *, reason="ما ذكرش سبب"):
     """!ban @user [سبب] — حظر عضو"""
+    
+    # ✅ ما نقدرش نحظر Staff
+    if is_staff(member):
+        embed = discord.Embed(
+            title="🛡️ محمي!",
+            description=f"**{member.mention}** من الـ Staff! ما نقدرش نحظرو.",
+            color=discord.Color.red()
+        )
+        await ctx.send(embed=embed, delete_after=5)
+        return
+    
     try:
         await member.ban(reason=reason)
 
@@ -800,9 +841,13 @@ async def clear(ctx, amount: int = 10):
         return
 
     try:
-        deleted = await ctx.channel.purge(limit=amount + 1)
+        # ✅ ما نحذفش رسائل Staff
+        def not_staff(m):
+            return not is_staff(m.author) if m.author != bot.user else True
 
-        msg = await ctx.send(f"🗑️ تم حذف {len(deleted) - 1} رسالة")
+        deleted = await ctx.channel.purge(limit=amount + 1, check=not_staff)
+
+        msg = await ctx.send(f"🗑️ تم حذف {len(deleted) - 1} رسالة (ما فيهاش Staff)")
         await asyncio.sleep(3)
         await msg.delete()
 
@@ -822,6 +867,17 @@ async def clear(ctx, amount: int = 10):
 @commands.has_permissions(moderate_members=True)
 async def mute(ctx, member: discord.Member, duration: int = 5, *, reason="ما ذكرش سبب"):
     """!mute @user <دقائق> [سبب] — كتم عضو"""
+    
+    # ✅ ما نقدرش نكتم Staff
+    if is_staff(member):
+        embed = discord.Embed(
+            title="🛡️ محمي!",
+            description=f"**{member.mention}** من الـ Staff! ما نقدرش نكتم صوتو.",
+            color=discord.Color.red()
+        )
+        await ctx.send(embed=embed, delete_after=5)
+        return
+    
     muted_role = ctx.guild.get_role(MUTED_ROLE_ID)
     if not muted_role:
         await ctx.send("❌ ما لقيتش دور Mute! حط ID صحيح فـ MUTED_ROLE_ID.")
@@ -902,6 +958,17 @@ async def unmute(ctx, member: discord.Member):
 @commands.has_permissions(kick_members=True)
 async def warn(ctx, member: discord.Member, *, reason):
     """!warn @user <سبب> — تحذير عضو"""
+    
+    # ✅ ما نقدرش نحذر Staff
+    if is_staff(member):
+        embed = discord.Embed(
+            title="🛡️ محمي!",
+            description=f"**{member.mention}** من الـ Staff! ما نقدرش نحذرو.",
+            color=discord.Color.red()
+        )
+        await ctx.send(embed=embed, delete_after=5)
+        return
+    
     count = await add_warn(member, reason)
 
     embed = discord.Embed(
@@ -977,6 +1044,17 @@ async def warns(ctx, member: discord.Member = None):
 @commands.has_permissions(kick_members=True)
 async def unwarn(ctx, member: discord.Member):
     """!unwarn @user — مسح تحذيرات عضو"""
+    
+    # ✅ ما نقدرش نمسح تحذيرات Staff
+    if is_staff(member):
+        embed = discord.Embed(
+            title="🛡️ محمي!",
+            description=f"**{member.mention}** من الـ Staff! ما نقدرش نمسح تحذيراتو.",
+            color=discord.Color.red()
+        )
+        await ctx.send(embed=embed, delete_after=5)
+        return
+    
     clear_warns(str(member.id))
 
     embed = discord.Embed(
@@ -998,7 +1076,7 @@ async def unwarn(ctx, member: discord.Member):
 
 
 # ═══════════════════════════════════════════════════════
-# ║              VERIFICATION COMMANDS (جديد)               ║
+# ║              VERIFICATION COMMANDS                      ║
 # ═══════════════════════════════════════════════════════
 
 @bot.command()
@@ -1014,12 +1092,10 @@ async def setupverify(ctx):
 async def verify(ctx, member: discord.Member):
     """!verify @user — يفعّل عضو يدوياً (Admin فقط)"""
 
-    # شيل @Unverified
     unverified_role = ctx.guild.get_role(UNVERIFIED_ROLE_ID)
     if unverified_role and unverified_role in member.roles:
         await member.remove_roles(unverified_role)
 
-    # زيد @Member
     member_role = ctx.guild.get_role(MEMBER_ROLE_ID)
     if member_role:
         await member.add_roles(member_role)
@@ -1053,12 +1129,10 @@ async def verify(ctx, member: discord.Member):
 async def unverify(ctx, member: discord.Member):
     """!unverify @user — يرجعو @Unverified (Admin فقط)"""
 
-    # شيل @Member
     member_role = ctx.guild.get_role(MEMBER_ROLE_ID)
     if member_role and member_role in member.roles:
         await member.remove_roles(member_role)
 
-    # زيد @Unverified
     unverified_role = ctx.guild.get_role(UNVERIFIED_ROLE_ID)
     if unverified_role:
         await member.add_roles(unverified_role)
@@ -1083,7 +1157,7 @@ async def unverify(ctx, member: discord.Member):
 
 
 # ═══════════════════════════════════════════════════════
-# ║              UTILITY COMMANDS                           ║
+# ║              UTILITY COMMANDS                         ║
 # ═══════════════════════════════════════════════════════
 
 @bot.command()
@@ -1133,7 +1207,6 @@ async def help(ctx):
         timestamp=datetime.now()
     )
 
-    # AI Commands
     ai_cmds = (
         "`!chat <رسالة>` — هضر مع سيمو\n"
         "`!نسيني` — امسح ذاكرتك\n"
@@ -1142,7 +1215,6 @@ async def help(ctx):
     )
     embed.add_field(name="🤖 AI & ذاكرة", value=ai_cmds, inline=False)
 
-    # Moderation Commands
     mod_cmds = (
         "`!kick @user [سبب]` — طرد عضو\n"
         "`!ban @user [سبب]` — حظر عضو\n"
@@ -1156,7 +1228,6 @@ async def help(ctx):
     )
     embed.add_field(name="🛡️ موديراتورز", value=mod_cmds, inline=False)
 
-    # Verification Commands
     verif_cmds = (
         "`!setupverify` — صاوب رسالة التفعيل (Admin)\n"
         "`!verify @user` — يفعّل عضو يدوياً (Admin)\n"
@@ -1164,7 +1235,6 @@ async def help(ctx):
     )
     embed.add_field(name="✅ تفعيل", value=verif_cmds, inline=False)
 
-    # Utility
     util_cmds = (
         "`!ping` — سرعة البوت\n"
         "`!info` — معلومات البوت\n"
@@ -1172,7 +1242,6 @@ async def help(ctx):
     )
     embed.add_field(name="🔧 أدوات", value=util_cmds, inline=False)
 
-    # Auto-Mod
     auto_mod = (
         "✅ كلمات ممنوعة\n"
         "✅ كشف السبام (5 msg/5s)\n"
@@ -1182,7 +1251,6 @@ async def help(ctx):
     )
     embed.add_field(name="🤖 Auto-Mod", value=auto_mod, inline=False)
 
-    # Verification Info
     verif_info = (
         "🔒 @Unverified — جديد (ما يهضرش)\n"
         "✅ @Member — مفعل (يهضر)\n"
@@ -1195,7 +1263,7 @@ async def help(ctx):
 
 
 # ═══════════════════════════════════════════════════════
-# ║              AI COMMANDS (قديم)                       ║
+# ║              AI COMMANDS                                ║
 # ═══════════════════════════════════════════════════════
 
 @bot.command()
@@ -1242,7 +1310,7 @@ async def انعلمك_شي_حاجة_جديدة(ctx, *, knowledge: str):
 
 
 # ═══════════════════════════════════════════════════════
-# ║              AUTO-INFO TASK (قديم)                    ║
+# ║              AUTO-INFO TASK                           ║
 # ═══════════════════════════════════════════════════════
 
 @tasks.loop(minutes=30)
@@ -1366,7 +1434,7 @@ async def on_ready():
     print(f"✅ Verify: {VERIFY_CHANNEL_ID}")
     print(f"🛡️ Mod Logs: {MOD_LOGS_CHANNEL_ID}")
     print(f"⏱️ Timeout: {API_TIMEOUT}s")
-    print(f"🛡️ Moderation: نشط")
+    print(f"🛡️ Moderation: نشط (Staff محمي)")
     print(f"✅ Verification: نشط")
     print(f"⚠️ Warn Limit: {WARN_LIMIT}")
 
@@ -1380,7 +1448,6 @@ async def on_ready():
     if not auto_info.is_running():
         auto_info.start()
 
-    # صاوب رسالة التفعيل فـ كل سيرفر
     for guild in bot.guilds:
         await setup_verify_message(guild)
 
