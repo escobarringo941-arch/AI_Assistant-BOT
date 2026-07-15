@@ -616,7 +616,8 @@ async def get_track_artwork(artist: str, track_name: str) -> str:
         data = await fetch_json(url, params)
         results = data.get("data", []) if data else []
         if results:
-            cover = results[0].get("album", {}).get("cover_big", "") or results[0].get("album", {}).get("cover_medium", "")
+            album = results[0].get("album", {})
+            cover = album.get("cover_xl", "") or album.get("cover_big", "") or album.get("cover_medium", "")
             if cover:
                 return cover
         else:
@@ -1883,7 +1884,7 @@ async def auto_info():
             embed.add_field(name="🎤 Artist", value=music['artist'], inline=True)
             embed.add_field(name="👥 Listeners", value=f"{music['listeners']:,}", inline=True)
             if music['poster']:
-                embed.set_thumbnail(url=music['poster'])
+                embed.set_image(url=music['poster'])
             embed.set_footer(text="سيمو | Last.fm")
             await music_channel.send(embed=embed)
 
