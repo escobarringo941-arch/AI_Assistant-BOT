@@ -201,7 +201,6 @@ async def fetch_json(url: str, params: dict = None) -> dict:
 async def get_movie_from_omdb() -> dict:
     """جيب فيلم عشوائي من IMDB عبر OMDb API"""
     if not OMDB_API_KEY:
-        print("[OMDb] ❌ OMDB_API_KEY ما كاينش!")
         return {}
     
     # قائمة أفلام معروفة (IMDB IDs)
@@ -215,285 +214,80 @@ async def get_movie_from_omdb() -> dict:
         "tt0209144", "tt0169547", "tt0180093", "tt0120586", "tt0108052"
     ]
     
-    # نجرب 5 مرات باش نلقى فيلم صحيح
-    for attempt in range(5):
-        movie_id = random.choice(popular_movies)
-        url = f"http://www.omdbapi.com/"
-        params = {
-            "i": movie_id,
-            "apikey": OMDB_API_KEY,
-            "plot": "full"
-        }
-        
-        data = await fetch_json(url, params)
-        
-        if data.get("Response") == "True":
-            rating = data.get("imdbRating", "0")
-            try:
-                if float(rating) >= 6.0:
-                    print(f"[OMDb] ✅ لقينا فيلم: {data.get('Title')} ({rating})")
-                    return {
-                        "title": data.get("Title", "Unknown"),
-                        "year": data.get("Year", "N/A"),
-                        "genre": data.get("Genre", "N/A"),
-                        "plot": data.get("Plot", "No plot available."),
-                        "rating": rating,
-                        "poster": data.get("Poster", ""),
-                        "imdb": f"https://www.imdb.com/title/{movie_id}/"
-                    }
-            except:
-                pass
-        else:
-            print(f"[OMDb] ⚠️ محاولة {attempt+1}: {data.get('Error', 'Unknown error')}")
+    movie_id = random.choice(popular_movies)
+    url = f"http://www.omdbapi.com/"
+    params = {
+        "i": movie_id,
+        "apikey": OMDB_API_KEY,
+        "plot": "full"
+    }
     
-    print("[OMDb] ❌ ما لقيناش فيلم بعد 5 محاولات")
+    data = await fetch_json(url, params)
+    
+    if data.get("Response") == "True":
+        rating = data.get("imdbRating", "0")
+        try:
+            if float(rating) >= 6.0:
+                return {
+                    "title": data.get("Title", "Unknown"),
+                    "year": data.get("Year", "N/A"),
+                    "genre": data.get("Genre", "N/A"),
+                    "plot": data.get("Plot", "No plot available."),
+                    "rating": rating,
+                    "poster": data.get("Poster", ""),
+                    "imdb": f"https://www.imdb.com/title/{movie_id}/"
+                }
+        except:
+            pass
     return {}
 
 
 async def get_anime_from_jikan() -> dict:
     """جيب أنمي عشوائي من MyAnimeList عبر Jikan API"""
-    # IDs ديال أنميات مشهورة ومجربة
+    # IDs ديال أنميات مشهورة
     popular_anime = [
-        1,    # Cowboy Bebop
-        5,    # Cowboy Bebop: Tengoku no Tobira
-        6,    # Trigun
-        15,   # Eyeshield 21
-        20,   # Naruto
-        21,   # One Piece
-        24,   # School Rumble
-        25,   # Desert Punk
-        26,   # Wolf's Rain
-        30,   # Neon Genesis Evangelion
-        32,   # Neon Genesis Evangelion: Death & Rebirth
-        43,   # Ghost in the Shell
-        45,   # Rurouni Kenshin
-        47,   # Akira
-        50,   # Azumanga Daioh
-        51,   # Love Hina
-        52,   # Juuni Kokuki
-        53,   # Ai Yori Aoshi
-        57,   # Beck
-        59,   # Chobits
-        60,   # Chrno Crusade
-        61,   # D.N.Angel
-        62,   # D.C.: Da Capo
-        64,   # Full Metal Panic!
-        65,   # Full Metal Panic? Fumoffu
-        66,   # Full Metal Panic! The Second Raid
-        67,   # Galaxy Angel
-        68,   # Gankutsuou
-        69,   # GetBackers
-        71,   # Full Metal Alchemist
-        72,   # Full Metal Alchemist: Brotherhood
-        73,   # Gintama
-        74,   # Gintama'
-        75,   # Gintama' Enchousen
-        76,   # Gintama°
-        77,   # Gintama.
-        79,   # Shuffle!
-        80,   # Air
-        81,   # Air Movie
-        82,   # Aishiteruze Baby
-        83,   # Air Gear
-        85,   # Mobile Suit Zeta Gundam
-        86,   # Mobile Suit Gundam ZZ
-        87,   # Mobile Suit Gundam: Char's Counterattack
-        88,   # Mobile Suit Gundam F91
-        89,   # Mobile Suit Gundam 0080: War in the Pocket
-        90,   # Mobile Suit Gundam 0083: Stardust Memory
-        91,   # Mobile Suit Gundam 0083: The Afterglow of Zeon
-        92,   # Mobile Suit Gundam 0080: War in the Pocket
-        93,   # Mobile Suit Gundam 0083: Stardust Memory
-        94,   # Mobile Suit Gundam 0083: The Afterglow of Zeon
-        95,   # Mobile Suit Gundam 0080: War in the Pocket
-        96,   # Mobile Suit Gundam 0083: Stardust Memory
-        97,   # Mobile Suit Gundam 0083: The Afterglow of Zeon
-        98,   # Mobile Suit Gundam 0080: War in the Pocket
-        99,   # Mobile Suit Gundam 0083: Stardust Memory
-        100,  # Mobile Suit Gundam 0083: The Afterglow of Zeon
-        101,  # Mobile Suit Gundam 0080: War in the Pocket
-        102,  # Mobile Suit Gundam 0083: Stardust Memory
-        103,  # Mobile Suit Gundam 0083: The Afterglow of Zeon
-        110,  # Mobile Suit Gundam 0080: War in the Pocket
-        111,  # Mobile Suit Gundam 0083: Stardust Memory
-        112,  # Mobile Suit Gundam 0083: The Afterglow of Zeon
-        113,  # Mobile Suit Gundam 0080: War in the Pocket
-        114,  # Mobile Suit Gundam 0083: Stardust Memory
-        115,  # Mobile Suit Gundam 0083: The Afterglow of Zeon
-        116,  # Mobile Suit Gundam 0080: War in the Pocket
-        117,  # Mobile Suit Gundam 0083: Stardust Memory
-        118,  # Mobile Suit Gundam 0083: The Afterglow of Zeon
-        119,  # Mobile Suit Gundam 0080: War in the Pocket
-        120,  # Mobile Suit Gundam 0083: Stardust Memory
-        121,  # Mobile Suit Gundam 0083: The Afterglow of Zeon
-        122,  # Mobile Suit Gundam 0080: War in the Pocket
-        123,  # Mobile Suit Gundam 0083: Stardust Memory
-        124,  # Mobile Suit Gundam 0083: The Afterglow of Zeon
-        125,  # Mobile Suit Gundam 0080: War in the Pocket
-        126,  # Mobile Suit Gundam 0083: Stardust Memory
-        127,  # Mobile Suit Gundam 0083: The Afterglow of Zeon
-        128,  # Mobile Suit Gundam 0080: War in the Pocket
-        129,  # Mobile Suit Gundam 0083: Stardust Memory
-        130,  # Mobile Suit Gundam 0083: The Afterglow of Zeon
-        131,  # Mobile Suit Gundam 0080: War in the Pocket
-        132,  # Mobile Suit Gundam 0083: Stardust Memory
-        133,  # Mobile Suit Gundam 0083: The Afterglow of Zeon
-        134,  # Mobile Suit Gundam 0080: War in the Pocket
-        135,  # Mobile Suit Gundam 0083: Stardust Memory
-        136,  # Mobile Suit Gundam 0083: The Afterglow of Zeon
-        137,  # Mobile Suit Gundam 0080: War in the Pocket
-        138,  # Mobile Suit Gundam 0083: Stardust Memory
-        139,  # Mobile Suit Gundam 0083: The Afterglow of Zeon
-        140,  # Mobile Suit Gundam 0080: War in the Pocket
-        141,  # Mobile Suit Gundam 0083: Stardust Memory
-        142,  # Mobile Suit Gundam 0083: The Afterglow of Zeon
-        143,  # Mobile Suit Gundam 0080: War in the Pocket
-        144,  # Mobile Suit Gundam 0083: Stardust Memory
-        145,  # Mobile Suit Gundam 0083: The Afterglow of Zeon
-        146,  # Mobile Suit Gundam 0080: War in the Pocket
-        147,  # Mobile Suit Gundam 0083: Stardust Memory
-        148,  # Mobile Suit Gundam 0083: The Afterglow of Zeon
-        149,  # Mobile Suit Gundam 0080: War in the Pocket
-        150,  # Mobile Suit Gundam 0083: Stardust Memory
-        151,  # Mobile Suit Gundam 0083: The Afterglow of Zeon
-        152,  # Mobile Suit Gundam 0080: War in the Pocket
-        153,  # Mobile Suit Gundam 0083: Stardust Memory
-        154,  # Mobile Suit Gundam 0083: The Afterglow of Zeon
-        155,  # Mobile Suit Gundam 0080: War in the Pocket
-        156,  # Mobile Suit Gundam 0083: Stardust Memory
-        157,  # Mobile Suit Gundam 0083: The Afterglow of Zeon
-        158,  # Mobile Suit Gundam 0080: War in the Pocket
-        159,  # Mobile Suit Gundam 0083: Stardust Memory
-        160,  # Mobile Suit Gundam 0083: The Afterglow of Zeon
-        161,  # Mobile Suit Gundam 0080: War in the Pocket
-        162,  # Mobile Suit Gundam 0083: Stardust Memory
-        163,  # Mobile Suit Gundam 0083: The Afterglow of Zeon
-        164,  # Mobile Suit Gundam 0080: War in the Pocket
-        165,  # Mobile Suit Gundam 0083: Stardust Memory
-        166,  # Mobile Suit Gundam 0083: The Afterglow of Zeon
-        167,  # Mobile Suit Gundam 0080: War in the Pocket
-        168,  # Mobile Suit Gundam 0083: Stardust Memory
-        169,  # Mobile Suit Gundam 0083: The Afterglow of Zeon
-        170,  # Mobile Suit Gundam 0080: War in the Pocket
-        171,  # Mobile Suit Gundam 0083: Stardust Memory
-        172,  # Mobile Suit Gundam 0083: The Afterglow of Zeon
-        173,  # Mobile Suit Gundam 0080: War in the Pocket
-        174,  # Mobile Suit Gundam 0083: Stardust Memory
-        175,  # Mobile Suit Gundam 0083: The Afterglow of Zeon
-        176,  # Mobile Suit Gundam 0080: War in the Pocket
-        177,  # Mobile Suit Gundam 0083: Stardust Memory
-        178,  # Mobile Suit Gundam 0083: The Afterglow of Zeon
-        179,  # Mobile Suit Gundam 0080: War in the Pocket
-        180,  # Mobile Suit Gundam 0083: Stardust Memory
-        181,  # Mobile Suit Gundam 0083: The Afterglow of Zeon
-        182,  # Mobile Suit Gundam 0080: War in the Pocket
-        183,  # Mobile Suit Gundam 0083: Stardust Memory
-        184,  # Mobile Suit Gundam 0083: The Afterglow of Zeon
-        185,  # Mobile Suit Gundam 0080: War in the Pocket
-        186,  # Mobile Suit Gundam 0083: Stardust Memory
-        187,  # Mobile Suit Gundam 0083: The Afterglow of Zeon
-        188,  # Mobile Suit Gundam 0080: War in the Pocket
-        189,  # Mobile Suit Gundam 0083: Stardust Memory
-        190,  # Mobile Suit Gundam 0083: The Afterglow of Zeon
-        191,  # Mobile Suit Gundam 0080: War in the Pocket
-        192,  # Mobile Suit Gundam 0083: Stardust Memory
-        193,  # Mobile Suit Gundam 0083: The Afterglow of Zeon
-        194,  # Mobile Suit Gundam 0080: War in the Pocket
-        195,  # Mobile Suit Gundam 0083: Stardust Memory
-        196,  # Mobile Suit Gundam 0083: The Afterglow of Zeon
-        197,  # Mobile Suit Gundam 0080: War in the Pocket
-        198,  # Mobile Suit Gundam 0083: Stardust Memory
-        199,  # Mobile Suit Gundam 0083: The Afterglow of Zeon
-        200,  # Mobile Suit Gundam 0080: War in the Pocket
-        205,  # Mobile Suit Gundam 0083: Stardust Memory
-        210,  # Mobile Suit Gundam 0083: The Afterglow of Zeon
-        220,  # Mobile Suit Gundam 0080: War in the Pocket
-        225,  # Mobile Suit Gundam 0083: Stardust Memory
-        230,  # Mobile Suit Gundam 0083: The Afterglow of Zeon
-        235,  # Mobile Suit Gundam 0080: War in the Pocket
-        240,  # Mobile Suit Gundam 0083: Stardust Memory
-        245,  # Mobile Suit Gundam 0083: The Afterglow of Zeon
-        250,  # Mobile Suit Gundam 0080: War in the Pocket
-        255,  # Mobile Suit Gundam 0083: Stardust Memory
-        260,  # Mobile Suit Gundam 0083: The Afterglow of Zeon
-        265,  # Mobile Suit Gundam 0080: War in the Pocket
-        270,  # Mobile Suit Gundam 0083: Stardust Memory
-        280,  # Mobile Suit Gundam 0083: The Afterglow of Zeon
-        290,  # Mobile Suit Gundam 0080: War in the Pocket
-        300,  # Mobile Suit Gundam 0083: Stardust Memory
-        310,  # Mobile Suit Gundam 0083: The Afterglow of Zeon
-        320,  # Mobile Suit Gundam 0080: War in the Pocket
-        330,  # Mobile Suit Gundam 0083: Stardust Memory
-        340,  # Mobile Suit Gundam 0083: The Afterglow of Zeon
-        350,  # Mobile Suit Gundam 0080: War in the Pocket
-        360,  # Mobile Suit Gundam 0083: Stardust Memory
-        370,  # Mobile Suit Gundam 0083: The Afterglow of Zeon
-        380,  # Mobile Suit Gundam 0080: War in the Pocket
-        390,  # Mobile Suit Gundam 0083: Stardust Memory
-        400,  # Mobile Suit Gundam 0083: The Afterglow of Zeon
-        410,  # Mobile Suit Gundam 0080: War in the Pocket
-        420,  # Mobile Suit Gundam 0083: Stardust Memory
-        430,  # Mobile Suit Gundam 0083: The Afterglow of Zeon
-        440,  # Mobile Suit Gundam 0080: War in the Pocket
-        450,  # Mobile Suit Gundam 0083: Stardust Memory
-        460,  # Mobile Suit Gundam 0083: The Afterglow of Zeon
-        470,  # Mobile Suit Gundam 0080: War in the Pocket
-        480,  # Mobile Suit Gundam 0083: Stardust Memory
-        490,  # Mobile Suit Gundam 0083: The Afterglow of Zeon
-        500,  # Mobile Suit Gundam 0080: War in the Pocket
-        5114, # Attack on Titan
-        9253, # Steins;Gate
-        16498, # Shingeki no Kyojin
-        1535, # Death Note
-        30276, # One Punch Man
-        11757, # Sword Art Online
-        31964, # Boku no Hero Academia
-        38000, # Kimetsu no Yaiba
-        39535, # Jujutsu Kaisen
-        40748, # Shingeki no Kyojin: The Final Season
-        43608, # Kimetsu no Yaiba: Mugen Train
-        48583, # Shingeki no Kyojin: The Final Season Part 2
-        49596, # Blue Lock
-        50265, # Spy x Family
-        51009, # Chainsaw Man
-        51535, # Bocchi the Rock!
-        52034  # Oshi no Ko
+        1, 5, 6, 15, 20, 21, 24, 25, 26, 30, 32, 43, 45, 47, 50,
+        51, 52, 53, 57, 59, 60, 61, 62, 64, 65, 66, 67, 68, 69, 71,
+        72, 73, 74, 75, 76, 77, 79, 80, 81, 82, 83, 85, 86, 87, 88,
+        89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103,
+        110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124,
+        125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139,
+        140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154,
+        155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169,
+        170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184,
+        185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199,
+        200, 205, 210, 220, 225, 230, 235, 240, 245, 250, 255, 260, 265, 270, 280,
+        290, 300, 310, 320, 330, 340, 350, 360, 370, 380, 390, 400, 410, 420, 430,
+        440, 450, 460, 470, 480, 490, 500, 5114, 9253, 16498, 1535, 30276, 11757,
+        31964, 38000, 39535, 40748, 43608, 48583, 49596, 50265, 51009, 51535, 52034
     ]
     
-    # نجرب 10 مرات باش نلقى أنمي صحيح
-    for attempt in range(10):
-        anime_id = random.choice(popular_anime)
-        url = f"https://api.jikan.moe/v4/anime/{anime_id}"
-        
-        data = await fetch_json(url)
-        
-        if data and "data" in data:
-            anime = data["data"]
-            score = anime.get("score", 0)
-            if score and score >= 6.0:
-                print(f"[Jikan] ✅ لقينا أنمي: {anime.get('title')} ({score})")
-                return {
-                    "title": anime.get("title", "Unknown"),
-                    "title_jp": anime.get("title_japanese", ""),
-                    "type": anime.get("type", "TV"),
-                    "episodes": anime.get("episodes", "N/A"),
-                    "genres": ", ".join([g["name"] for g in anime.get("genres", [])]),
-                    "synopsis": anime.get("synopsis", "No synopsis available."),
-                    "score": score,
-                    "poster": anime.get("images", {}).get("jpg", {}).get("large_image_url", ""),
-                    "url": anime.get("url", "")
-                }
-        else:
-            print(f"[Jikan] ⚠️ محاولة {attempt+1}: ID {anime_id} ما خدمش")
+    anime_id = random.choice(popular_anime)
+    url = f"https://api.jikan.moe/v4/anime/{anime_id}"
     
-    print("[Jikan] ❌ ما لقيناش أنمي بعد 10 محاولات")
+    data = await fetch_json(url)
+    
+    if data and "data" in data:
+        anime = data["data"]
+        score = anime.get("score", 0)
+        if score and score >= 6.0:
+            return {
+                "title": anime.get("title", "Unknown"),
+                "title_jp": anime.get("title_japanese", ""),
+                "type": anime.get("type", "TV"),
+                "episodes": anime.get("episodes", "N/A"),
+                "genres": ", ".join([g["name"] for g in anime.get("genres", [])]),
+                "synopsis": anime.get("synopsis", "No synopsis available."),
+                "score": score,
+                "poster": anime.get("images", {}).get("jpg", {}).get("large_image_url", ""),
+                "url": anime.get("url", "")
+            }
     return {}
 
 
 async def get_game_from_rawg() -> dict:
     """جيب لعبة عشوائية من RAWG API"""
     if not RAWG_API_KEY:
-        print("[RAWG] ❌ RAWG_API_KEY ما كاينش!")
         return {}
     
     popular_games = [
@@ -516,7 +310,6 @@ async def get_game_from_rawg() -> dict:
     if data and data.get("name"):
         rating = data.get("rating", 0)
         if rating >= 3.0:  # RAWG rating out of 5
-            print(f"[RAWG] ✅ لقينا لعبة: {data.get('name')} ({rating})")
             return {
                 "name": data.get("name", "Unknown"),
                 "released": data.get("released", "N/A"),
@@ -526,15 +319,12 @@ async def get_game_from_rawg() -> dict:
                 "poster": data.get("background_image", ""),
                 "url": f"https://rawg.io/games/{game_slug}"
             }
-    
-    print("[RAWG] ❌ ما لقيناش لعبة")
     return {}
 
 
 async def get_music_from_lastfm() -> dict:
     """جيب أغنية عشوائية من Last.fm API"""
     if not LASTFM_API_KEY:
-        print("[Last.fm] ❌ LASTFM_API_KEY ما كاينش!")
         return {}
     
     popular_artists = [
@@ -569,7 +359,6 @@ async def get_music_from_lastfm() -> dict:
             except (ValueError, TypeError):
                 listeners = 0
             
-            print(f"[Last.fm] ✅ لقينا أغنية: {track.get('name')} - {artist}")
             return {
                 "name": track.get("name", "Unknown"),
                 "artist": artist,
@@ -577,15 +366,12 @@ async def get_music_from_lastfm() -> dict:
                 "url": track.get("url", ""),
                 "poster": ""  # Last.fm ما كيعطيش posters مباشرة
             }
-    
-    print("[Last.fm] ❌ ما لقيناش أغنية")
     return {}
 
 
 async def get_news_from_api() -> dict:
     """جيب خبر من NewsAPI"""
     if not NEWS_API_KEY:
-        print("[NewsAPI] ❌ NEWS_API_KEY ما كاينش!")
         return {}
     
     url = "https://newsapi.org/v2/top-headlines"
@@ -600,7 +386,6 @@ async def get_news_from_api() -> dict:
     
     if data and "articles" in data and data["articles"]:
         article = random.choice(data["articles"])
-        print(f"[NewsAPI] ✅ لقينا خبر: {article.get('title', 'Unknown')[:50]}...")
         return {
             "title": article.get("title", "Unknown"),
             "description": article.get("description", "No description."),
@@ -608,8 +393,6 @@ async def get_news_from_api() -> dict:
             "source": article.get("source", {}).get("name", "Unknown"),
             "image": article.get("urlToImage", "")
         }
-    
-    print("[NewsAPI] ❌ ما لقيناش خبر")
     return {}
 
 
@@ -1380,7 +1163,7 @@ async def help(ctx):
         "`!ping` — سرعة البوت\n"
         "`!info` — معلومات البوت\n"
         "`!help` — هاد القائمة\n"
-        "`!testinfo` — جرب Auto-Info فوراُ (Admin)"
+        "`!testinfo` — جرب Auto-Info فوراً (Admin)"
     )
     embed.add_field(name="🔧 أدوات", value=util_cmds, inline=False)
     auto_mod = (
@@ -1390,8 +1173,8 @@ async def help(ctx):
         "✅ Auto-kick (3 warns)\n"
         "✅ Logs كاملة فـ #mod-logs"
     )
-    embed.add_field(name="🤖 Auto-Mod", value=auto_mod, inline=False) 
-       auto_info_cmds = (
+    embed.add_field(name="🤖 Auto-Mod", value=auto_mod, inline=False)
+    auto_info_cmds = (
         "📰 #news — أخبار عامة (NewsAPI)\n"
         "🎮 #games — أخبار ألعاب (RAWG)\n"
         "🎬 #movies — أفلام + ملخصات (IMDB/OMDb)\n"
@@ -1694,4 +1477,3 @@ if __name__ == "__main__":
         print("❌ Missing tokens! Check Railway Variables.")
     else:
         bot.run(DISCORD_TOKEN)
-
