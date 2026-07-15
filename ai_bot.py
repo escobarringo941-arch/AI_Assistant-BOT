@@ -516,55 +516,42 @@ async def get_movie_from_omdb() -> dict:
 
 async def get_anime_from_jikan() -> dict:
     """
-    اكتشاف عشوائي حقيقي للأنمي عبر Jikan /random/anime (بلا لائحة ثابتة).
-    /random/anime كيرجع عشوائي من كامل قاعدة بيانات MAL (بما فيها OVA/specials
-    مغمورة)، فكنعطيو عدد محاولات مرتفع + فلتر معقول، ومنبعد fallback مخفف
-    إلا الفلتر الأساسي ما نجحش يلقى حاجة.
+    اكتشاف عشوائي للأنمي عبر Jikan /top/anime بصفحة عشوائية (بلا لائحة ثابتة).
+    بدلنا /random/anime (كان كيرجع من كامل قاعدة بيانات MAL بما فيها آلاف
+    الحوايج المغمورة، فمعدل النجاح كان ضعيف بزاف وكيحتاج بزاف طلبات) بـ
+    /top/anime اللي معاها كل نتيجة مضمونة الجودة من البداية (مرتبة بالـ score)،
+    فطلب واحد فـ الغالب كافي.
     """
     jikan_headers = {"User-Agent": "Mozilla/5.0 (compatible; GGMW9Bot/1.0)"}
-    candidate_pool = []  # كنخزنو كل أنمي جديد (ماشي posted) شفناه، حتى لو ما جاوبش الفلتر القوي
-    empty_responses = 0
+    list_url = "https://api.jikan.moe/v4/top/anime"
 
-    for attempt in range(15):  # يجرب حتى 15 مرة قبل ما يستسلم
-        if attempt > 0:
-            await asyncio.sleep(1.2)  # نحترمو rate-limit ديال Jikan
+    for page_attempt in range(6):  # يجرب حتى 6 صفحات عشوائية قبل ما يستسلم
+        if page_attempt > 0:
+            await asyncio.sleep(1.5)  # نحترمو rate-limit ديال Jikan
 
-        data = await fetch_json("https://api.jikan.moe/v4/random/anime", headers=jikan_headers)
-        anime = data.get("data") if data else None
-        if not anime:
-            empty_responses += 1
-            print(f"[JIKAN] محاولة {attempt+1}: ما رجعش داتا (data={data})")
+        params = {"page": random.randint(1, 50), "limit": 25}  # top 1250 أنمي تقريبا
+        data = await fetch_json(list_url, params, headers=jikan_headers)
+        results = data.get("data", []) if data else []
+
+        if not results:
+            print(f"[JIKAN] محاولة {page_attempt+1}: الصفحة رجعت فارغة (data={bool(data)})")
             continue
 
-        mal_id = anime.get("mal_id")
-        if not mal_id or is_posted("anime", str(mal_id)):
-            print(f"[JIKAN] محاولة {attempt+1}: mal_id={mal_id} مبعوث من قبل، كنخطاوه")
-            continue
+        random.shuffle(results)
 
-        score = anime.get("score") or 0
-        members = anime.get("members") or 0
+        for anime in results:
+            mal_id = anime.get("mal_id")
+            if not mal_id or is_posted("anime", str(mal_id)):
+                continue
+            if not anime.get("synopsis"):
+                continue
 
-        if not anime.get("synopsis"):
-            print(f"[JIKAN] محاولة {attempt+1}: '{anime.get('title')}' بلا synopsis")
-            continue  # بلا ملخص، ماشي مفيد فـ embed
+            print(f"[JIKAN] ✅ اختار: {anime.get('title')} (score={anime.get('score')})")
+            return await _build_anime_embed_data(anime)
 
-        candidate_pool.append(anime)  # نحتفظو بيه فـ حالة خاصنا fallback
-        print(f"[JIKAN] محاولة {attempt+1}: '{anime.get('title')}' score={score} members={members}")
+        print(f"[JIKAN] محاولة {page_attempt+1}: كاع نتائج الصفحة مبعوتين من قبل ولا بلا synopsis")
 
-        if score < 6.0 or members < 15000:  # فلتر معقول (خفّفناه شوية)
-            continue
-
-        print(f"[JIKAN] ✅ اختار: {anime.get('title')}")
-        return await _build_anime_embed_data(anime)
-
-    # ═══ Fallback: الفلتر القوي ما لقاش حتى حاجة، نختارو أحسن واحد من اللي شفناهم ═══
-    print(f"[JIKAN] كملات 15 محاولة. empty_responses={empty_responses}, candidates={len(candidate_pool)}")
-    if candidate_pool:
-        best = max(candidate_pool, key=lambda a: a.get("score") or 0)
-        print(f"[JIKAN] ⚠️ Fallback اختار: {best.get('title')}")
-        return await _build_anime_embed_data(best)
-
-    print("[JIKAN] ❌ ماكاينش حتى نتيجة، رجعنا فارغين")
+    print("[JIKAN] ❌ ماكاينش نتيجة بعد كل المحاولات")
     return {}
 
 
