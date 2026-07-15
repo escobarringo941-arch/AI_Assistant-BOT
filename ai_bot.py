@@ -69,10 +69,10 @@ WARN_LIMIT = 3
 # حط هنا الإيموجي ↔ ID ديال الرول (كليك يمين على الرول فـ Discord → Copy ID)
 # خاصك تفعّل "Developer Mode" فـ Discord Settings > Advanced باش يبان ليك Copy ID
 REACTION_ROLES = {
-    "🎮": 0,  # ← حط ID دور Gamer
-    "📺": 0,  # ← حط ID دور Anime Fan
-    "🎬": 0,  # ← حط ID دور Movie Fan
-    "🎧": 0,  # ← حط ID دور Music Fan
+    "🎮": 1526800480007880845,  # ← حط ID دور Gamer
+    "📺": 1526800623419523072,  # ← حط ID دور Anime Fan
+    "🎬": 1526801019458158642,  # ← حط ID دور Movie Fan
+    "🎧": 1526801165692702842,  # ← حط ID دور Music Fan
 }
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
