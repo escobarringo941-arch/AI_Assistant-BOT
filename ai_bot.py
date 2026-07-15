@@ -4,6 +4,7 @@ import aiohttp
 import random
 import asyncio
 import json
+import re
 from datetime import datetime, timedelta
 from discord.ext import commands, tasks
 from collections import defaultdict
@@ -300,6 +301,50 @@ async def fetch_json(url: str, params: dict = None, headers: dict = None) -> dic
         return {}
 
 
+async def fetch_html(url: str, headers: dict = None) -> str:
+    """جيب HTML خام من أي رابط (باش نقدرو نقرأو og:image مثلا)"""
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
+            async with session.get(url, headers=headers) as resp:
+                if resp.status == 200:
+                    return await resp.text(errors="ignore")
+                return ""
+    except Exception as e:
+        print(f"[FETCH_HTML] Exception فـ {url}: {e}")
+        return ""
+
+
+async def get_wikipedia_image(title: str) -> str:
+    """صورة احتياطية (fallback) من Wikipedia REST API — مجاني وبلا API key"""
+    try:
+        url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{title}"
+        data = await fetch_json(url)
+        if not data:
+            return ""
+        original = data.get("originalimage", {}).get("source", "")
+        if original:
+            return original
+        return data.get("thumbnail", {}).get("source", "")
+    except Exception as e:
+        print(f"[WIKI] خطأ فـ جلب الصورة لـ '{title}': {e}")
+        return ""
+
+
+async def get_og_image(page_url: str) -> str:
+    """صورة احتياطية من og:image meta tag ديال صفحة الويب نفسها (مثلا صفحة الخبر) — بلا API key"""
+    try:
+        html = await fetch_html(page_url, headers={"User-Agent": "Mozilla/5.0 (compatible; SimoBot/1.0)"})
+        if not html:
+            return ""
+        match = re.search(r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']', html, re.IGNORECASE)
+        if not match:
+            match = re.search(r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']', html, re.IGNORECASE)
+        return match.group(1) if match else ""
+    except Exception as e:
+        print(f"[OG_IMAGE] خطأ فـ جلب الصورة من {page_url}: {e}")
+        return ""
+
+
 async def translate_to_darija(text: str) -> str:
     """يترجم نص من الانجليزية للدارجة المغربية عبر نفس الـ AI (DeepSeek)"""
     if not text or not OPENROUTER_API_KEY:
@@ -421,13 +466,17 @@ async def get_movie_from_omdb() -> dict:
 
         mark_posted("movies", movie_id)
 
+        poster = data.get("Poster", "")
+        if not poster or poster == "N/A":
+            poster = await get_wikipedia_image(f"{data.get('Title', '')} (film)")
+
         return {
             "title": data.get("Title", "Unknown"),
             "year": data.get("Year", "N/A"),
             "genre": data.get("Genre", "N/A"),
             "plot": plot_ar,
             "rating": rating,
-            "poster": data.get("Poster", ""),
+            "poster": poster,
             "imdb": f"https://www.imdb.com/title/{movie_id}/"
         }
 
@@ -504,6 +553,10 @@ async def get_anime_from_jikan() -> dict:
 
         mark_posted("anime", str(mal_id))
 
+        poster = anime.get("images", {}).get("jpg", {}).get("large_image_url", "")
+        if not poster:
+            poster = await get_wikipedia_image(f"{anime.get('title', '')} (anime)")
+
         return {
             "title": anime.get("title", "Unknown"),
             "title_jp": anime.get("title_japanese", ""),
@@ -512,7 +565,7 @@ async def get_anime_from_jikan() -> dict:
             "genres": ", ".join([g["name"] for g in anime.get("genres", [])]),
             "synopsis": synopsis_ar,
             "score": anime.get("score", 0),
-            "poster": anime.get("images", {}).get("jpg", {}).get("large_image_url", ""),
+            "poster": poster,
             "url": anime.get("url", "")
         }
 
@@ -573,13 +626,17 @@ async def get_game_from_rawg() -> dict:
 
         mark_posted("games", game_slug)
 
+        poster = data.get("background_image", "")
+        if not poster:
+            poster = await get_wikipedia_image(f"{data.get('name', '')} (video game)")
+
         return {
             "name": data.get("name", "Unknown"),
             "released": data.get("released", "N/A"),
             "genres": ", ".join([g["name"] for g in data.get("genres", [])]),
             "description": description_ar,
             "rating": f"{rating}/5",
-            "poster": data.get("background_image", ""),
+            "poster": poster,
             "url": f"https://rawg.io/games/{game_slug}"
         }
 
@@ -726,12 +783,16 @@ async def get_news_from_api() -> dict:
 
         mark_posted("news", article["url"])
 
+        image = article.get("urlToImage", "")
+        if not image:
+            image = await get_og_image(article.get("url", ""))
+
         return {
             "title": title_ar,
             "description": desc_ar,
             "url": article.get("url", ""),
             "source": article.get("source", {}).get("name", "Unknown"),
-            "image": article.get("urlToImage", "")
+            "image": image
         }
 
     # ماكاينش خبر جديد دابا فـ كاع الفئات، غادي نعاودو نجربو فـ الدورة الجاية
