@@ -186,23 +186,76 @@ async def ask_ai(user_id: str, username: str, display_name: str, prompt: str) ->
 # ║              APIs حقيقية (جديد)                        ║
 # ═══════════════════════════════════════════════════════
 
-async def fetch_json(url: str, params: dict = None) -> dict:
-    """جيب JSON من أي API"""
+async def fetch_json(url: str, params: dict = None, headers: dict = None) -> dict:
+    """جيب JSON من أي API (مع logging باش نعرفو شنو وقع بالضبط)"""
     try:
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
-            async with session.get(url, params=params) as resp:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as session:
+            async with session.get(url, params=params, headers=headers) as resp:
                 if resp.status == 200:
-                    return await resp.json()
-                return {}
-    except:
+                    try:
+                        return await resp.json()
+                    except Exception as e:
+                        print(f"[FETCH_JSON] JSON decode error من {url}: {e}")
+                        return {}
+                else:
+                    body = await resp.text()
+                    print(f"[FETCH_JSON] {url} رجع status {resp.status}: {body[:200]}")
+                    return {}
+    except asyncio.TimeoutError:
+        print(f"[FETCH_JSON] Timeout فـ {url}")
         return {}
+    except Exception as e:
+        print(f"[FETCH_JSON] Exception فـ {url}: {e}")
+        return {}
+
+
+async def translate_to_darija(text: str) -> str:
+    """يترجم نص من الانجليزية للدارجة المغربية عبر نفس الـ AI (DeepSeek)"""
+    if not text or not OPENROUTER_API_KEY:
+        return text
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://discord.com",
+        "X-Title": "AI Assistant BOT"
+    }
+    payload = {
+        "model": AI_MODEL,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "نتا مترجم محترف. ترجم النص التالي من الانجليزية للدارجة المغربية "
+                    "بطريقة طبيعية وسلسة ومفهومة. غير الترجمة، بلا مقدمات، بلا تعليقات، "
+                    "بلا علامات تنصيص."
+                )
+            },
+            {"role": "user", "content": text}
+        ],
+        "max_tokens": 700,
+        "temperature": 0.3
+    }
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as session:
+            async with session.post(OPENROUTER_URL, headers=headers, json=payload) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    translated = data["choices"][0]["message"]["content"].strip()
+                    return translated if translated else text
+                else:
+                    print(f"[TRANSLATE] status {resp.status}")
+                    return text
+    except Exception as e:
+        print(f"[TRANSLATE] Exception: {e}")
+        return text
 
 
 async def get_movie_from_omdb() -> dict:
-    """جيب فيلم عشوائي من IMDB عبر OMDb API"""
+    """جيب فيلم عشوائي من IMDB عبر OMDb API (مع retry + ترجمة للدارجة)"""
     if not OMDB_API_KEY:
+        print("[OMDB] OMDB_API_KEY ماكاينش! خاصك تزيدو فـ Railway Variables.")
         return {}
-    
+
     # قائمة أفلام معروفة (IMDB IDs)
     popular_movies = [
         "tt0111161", "tt0068646", "tt0468569", "tt0071562", "tt0167260",
@@ -213,32 +266,42 @@ async def get_movie_from_omdb() -> dict:
         "tt0120338", "tt0102926", "tt0080684", "tt0076759", "tt0120689",
         "tt0209144", "tt0169547", "tt0180093", "tt0120586", "tt0108052"
     ]
-    
-    movie_id = random.choice(popular_movies)
-    url = f"http://www.omdbapi.com/"
-    params = {
-        "i": movie_id,
-        "apikey": OMDB_API_KEY,
-        "plot": "full"
-    }
-    
-    data = await fetch_json(url, params)
-    
-    if data.get("Response") == "True":
+
+    candidates = random.sample(popular_movies, len(popular_movies))
+    url = "https://www.omdbapi.com/"
+
+    for movie_id in candidates[:6]:  # يجرب حتى 6 أفلام قبل ما يستسلم
+        params = {
+            "i": movie_id,
+            "apikey": OMDB_API_KEY,
+            "plot": "full"
+        }
+        data = await fetch_json(url, params)
+
+        if data.get("Response") != "True":
+            print(f"[OMDB] {movie_id} فشل: {data.get('Error', 'unknown error')}")
+            continue
+
         rating = data.get("imdbRating", "0")
         try:
-            if float(rating) >= 6.0:
-                return {
-                    "title": data.get("Title", "Unknown"),
-                    "year": data.get("Year", "N/A"),
-                    "genre": data.get("Genre", "N/A"),
-                    "plot": data.get("Plot", "No plot available."),
-                    "rating": rating,
-                    "poster": data.get("Poster", ""),
-                    "imdb": f"https://www.imdb.com/title/{movie_id}/"
-                }
-        except:
-            pass
+            if rating in ("N/A", None) or float(rating) < 6.0:
+                continue
+        except ValueError:
+            continue
+
+        plot = data.get("Plot", "No plot available.")
+        plot_ar = await translate_to_darija(plot)
+
+        return {
+            "title": data.get("Title", "Unknown"),
+            "year": data.get("Year", "N/A"),
+            "genre": data.get("Genre", "N/A"),
+            "plot": plot_ar,
+            "rating": rating,
+            "poster": data.get("Poster", ""),
+            "imdb": f"https://www.imdb.com/title/{movie_id}/"
+        }
+
     return {}
 
 
@@ -262,26 +325,41 @@ async def get_anime_from_jikan() -> dict:
         31964, 38000, 39535, 40748, 43608, 48583, 49596, 50265, 51009, 51535, 52034
     ]
     
-    anime_id = random.choice(popular_anime)
-    url = f"https://api.jikan.moe/v4/anime/{anime_id}"
-    
-    data = await fetch_json(url)
-    
-    if data and "data" in data:
+    candidates = random.sample(popular_anime, min(6, len(popular_anime)))
+    jikan_headers = {"User-Agent": "Mozilla/5.0 (compatible; SimoBot/1.0)"}
+
+    for i, anime_id in enumerate(candidates):
+        if i > 0:
+            # Jikan rate-limit: ~3 طلبات/ثانية، خاصنا نستنى شوية بين المحاولات
+            await asyncio.sleep(1.0)
+
+        url = f"https://api.jikan.moe/v4/anime/{anime_id}"
+        data = await fetch_json(url, headers=jikan_headers)
+
+        if not data or "data" not in data:
+            print(f"[JIKAN] id {anime_id} ما رجعش داتا صحيحة")
+            continue
+
         anime = data["data"]
         score = anime.get("score", 0)
-        if score and score >= 6.0:
-            return {
-                "title": anime.get("title", "Unknown"),
-                "title_jp": anime.get("title_japanese", ""),
-                "type": anime.get("type", "TV"),
-                "episodes": anime.get("episodes", "N/A"),
-                "genres": ", ".join([g["name"] for g in anime.get("genres", [])]),
-                "synopsis": anime.get("synopsis", "No synopsis available."),
-                "score": score,
-                "poster": anime.get("images", {}).get("jpg", {}).get("large_image_url", ""),
-                "url": anime.get("url", "")
-            }
+        if not score or score < 6.0:
+            continue
+
+        synopsis = anime.get("synopsis", "No synopsis available.")
+        synopsis_ar = await translate_to_darija(synopsis)
+
+        return {
+            "title": anime.get("title", "Unknown"),
+            "title_jp": anime.get("title_japanese", ""),
+            "type": anime.get("type", "TV"),
+            "episodes": anime.get("episodes", "N/A"),
+            "genres": ", ".join([g["name"] for g in anime.get("genres", [])]),
+            "synopsis": synopsis_ar,
+            "score": score,
+            "poster": anime.get("images", {}).get("jpg", {}).get("large_image_url", ""),
+            "url": anime.get("url", "")
+        }
+
     return {}
 
 
@@ -385,10 +463,19 @@ async def get_news_from_api() -> dict:
     data = await fetch_json(url, params)
     
     if data and "articles" in data and data["articles"]:
-        article = random.choice(data["articles"])
+        # يفلتر المقالات اللي عندها عنوان ووصف حقيقيين (NewsAPI كترجع بزاف [Removed])
+        valid_articles = [
+            a for a in data["articles"]
+            if a.get("title") and a.get("title") != "[Removed]"
+        ]
+        if not valid_articles:
+            return {}
+        article = random.choice(valid_articles)
+        title_ar = await translate_to_darija(article.get("title", "Unknown"))
+        desc_ar = await translate_to_darija(article.get("description", "No description."))
         return {
-            "title": article.get("title", "Unknown"),
-            "description": article.get("description", "No description."),
+            "title": title_ar,
+            "description": desc_ar,
             "url": article.get("url", ""),
             "source": article.get("source", {}).get("name", "Unknown"),
             "image": article.get("urlToImage", "")
