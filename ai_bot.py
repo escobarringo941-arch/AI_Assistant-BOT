@@ -50,11 +50,13 @@ MUSIC_CHANNEL_ID = 1524957892925456547
 MOD_LOGS_CHANNEL_ID = 1526470164235681832
 VERIFY_CHANNEL_ID = 1526481352264781854
 RULES_CHANNEL_ID = 1526474691789721700
-BLACKLIST_CHANNEL_ID = 1526858911477661786  # ← حط هنا ID ديال channel "Blacklist things"
+BLACKLIST_CHANNEL_ID = 0  # ← حط هنا ID ديال channel "Blacklist things"
 
 UNVERIFIED_ROLE_ID = 1526452828267085915
 MEMBER_ROLE_ID = 1526451890399739934
 MUTED_ROLE_ID = 1526468718534590574
+BOYS_ROLE_ID = 1526407092813037588   # ← حط هنا ID ديال role "Boys"
+GIRLS_ROLE_ID = 1526337114164301824  # ← حط هنا ID ديال role "Girls"
 
 # ═══════ القوانين ديال السيرفر (بدلها بالقوانين الحقيقية ديالك) ═══════
 SERVER_RULES = (
@@ -971,6 +973,74 @@ async def setup_verify_message(guild: discord.Guild):
 # ║   (كيبان مباشرة تحت القوانين، بحال المواقع)              ║
 # ═══════════════════════════════════════════════════════
 
+class GenderSelectView(discord.ui.View):
+    """View كتبان بعد التفعيل مباشرة، فيها زوج أزرار: ولد / بنت"""
+
+    def __init__(self, target_user_id: int, guild_id: int):
+        super().__init__(timeout=300)  # 5 دقايق باش يختار، من بعد كتسالا
+        self.target_user_id = target_user_id
+        self.guild_id = guild_id
+
+    async def _assign_gender_role(self, interaction: discord.Interaction, role_id: int, other_role_id: int, label: str):
+        if interaction.user.id != self.target_user_id:
+            await interaction.response.send_message("❌ هاد الاختيار ماشي ديالك!", ephemeral=True)
+            return
+
+        guild = bot.get_guild(self.guild_id)
+        if not guild:
+            await interaction.response.send_message("❌ وقع مشكل، عاود من جديد.", ephemeral=True)
+            return
+        member = guild.get_member(interaction.user.id)
+        if not member:
+            await interaction.response.send_message("❌ ما لقيتكش فالسيرفر.", ephemeral=True)
+            return
+
+        if not role_id:
+            await interaction.response.send_message(
+                "❌ ماكاينش role ديال هاد الاختيار، بلغ الإدارة (خاص `BOYS_ROLE_ID`/`GIRLS_ROLE_ID` يتعمرو فـ CONFIG).",
+                ephemeral=True
+            )
+            return
+
+        role = guild.get_role(role_id)
+        other_role = guild.get_role(other_role_id) if other_role_id else None
+
+        try:
+            if other_role and other_role in member.roles:
+                await member.remove_roles(other_role)
+            if role:
+                await member.add_roles(role)
+        except discord.Forbidden:
+            await interaction.response.send_message(
+                "❌ ما قدرتش نعطيك الرول، بلغ الإدارة (البوت ماعندوش صلاحية — تحقق من ترتيب الرولات بـ `!checkroles`).",
+                ephemeral=True
+            )
+            return
+
+        for child in self.children:
+            child.disabled = True
+        try:
+            await interaction.response.edit_message(content=f"✅ تم اختيارك: **{label}**", embed=None, view=self)
+        except Exception:
+            await interaction.response.send_message(f"✅ تم اختيارك: **{label}**", ephemeral=True)
+
+        await log_action(
+            guild,
+            "🚻 اختيار الجنس",
+            f"**المستخدم:** {member.mention} ({member.name})\n"
+            f"**الاختيار:** {label}",
+            discord.Color.blurple()
+        )
+
+    @discord.ui.button(label="ولد", emoji="👦", style=discord.ButtonStyle.primary)
+    async def boy_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._assign_gender_role(interaction, BOYS_ROLE_ID, GIRLS_ROLE_ID, "ولد 👦")
+
+    @discord.ui.button(label="بنت", emoji="👧", style=discord.ButtonStyle.secondary)
+    async def girl_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._assign_gender_role(interaction, GIRLS_ROLE_ID, BOYS_ROLE_ID, "بنت 👧")
+
+
 class RulesVerifyView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)  # باش يبقى خدام للأبد (persistent view)
@@ -1029,6 +1099,17 @@ class RulesVerifyView(discord.ui.View):
             f"**المستخدم:** {member.mention} ({member.name})\n"
             f"**الحالة:** وافق على القوانين وتفعل",
             discord.Color.green()
+        )
+
+        gender_embed = discord.Embed(
+            title="🚻 واش نتا/نتي ولد ولا بنت؟",
+            description="ضغط/ي على الزر المناسب باش نعطيوك الرول الصحيح.",
+            color=discord.Color.blurple()
+        )
+        await interaction.followup.send(
+            embed=gender_embed,
+            view=GenderSelectView(target_user_id=member.id, guild_id=guild.id),
+            ephemeral=True
         )
 
     @discord.ui.button(label="كنرفض", style=discord.ButtonStyle.danger, emoji="❌", custom_id="rules_refuse_button")
@@ -1255,8 +1336,17 @@ async def on_raw_reaction_add(payload):
         discord.Color.green()
     )
     try:
-        await member.send(f"✅ تم تفعيلك فـ **{SERVER_NAME}**! مرحبا بيك! 🎉")
-    except:
+        gender_embed = discord.Embed(
+            title="🚻 واش نتا/نتي ولد ولا بنت؟",
+            description="ضغط/ي على الزر المناسب باش نعطيوك الرول الصحيح.",
+            color=discord.Color.blurple()
+        )
+        await member.send(
+            f"✅ تم تفعيلك فـ **{SERVER_NAME}**! مرحبا بيك! 🎉",
+            embed=gender_embed,
+            view=GenderSelectView(target_user_id=member.id, guild_id=guild.id)
+        )
+    except Exception:
         pass
 
 
@@ -1902,8 +1992,17 @@ async def verify(ctx, member: discord.Member):
         discord.Color.green()
     )
     try:
-        await member.send(f"✅ تم تفعيلك فـ **{SERVER_NAME}**! مرحبا بيك! 🎉")
-    except:
+        gender_embed = discord.Embed(
+            title="🚻 واش نتا/نتي ولد ولا بنت؟",
+            description="ضغط/ي على الزر المناسب باش نعطيوك الرول الصحيح.",
+            color=discord.Color.blurple()
+        )
+        await member.send(
+            f"✅ تم تفعيلك فـ **{SERVER_NAME}**! مرحبا بيك! 🎉",
+            embed=gender_embed,
+            view=GenderSelectView(target_user_id=member.id, guild_id=ctx.guild.id)
+        )
+    except Exception:
         pass
 
 
