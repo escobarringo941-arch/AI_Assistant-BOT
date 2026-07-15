@@ -48,7 +48,7 @@ MUSIC_CHANNEL_ID = 1524957892925456547
 # ═══════════════════════════════════════════════════════
 
 MOD_LOGS_CHANNEL_ID = 1526470164235681832
-VERIFY_CHANNEL_ID = 1526474691789721700
+VERIFY_CHANNEL_ID = 1526481352264781854
 RULES_CHANNEL_ID = 1526474691789721700
 
 UNVERIFIED_ROLE_ID = 1526452828267085915
@@ -181,6 +181,35 @@ def reset_category_history(category: str):
 
 
 load_posted_history()
+
+REACTION_ROLES_FILE = "reaction_roles.json"
+
+
+def load_reaction_role_messages():
+    """يقرا رسائل Reaction Roles المحفوظة من ملف JSON (باش ما تتمسحش عند restart)"""
+    global reaction_role_messages
+    try:
+        with open(REACTION_ROLES_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        # الـ keys فـ JSON دايما strings، خاصنا نرجعوهم int (message_id)
+        reaction_role_messages = {int(msg_id): roles_map for msg_id, roles_map in data.items()}
+        print(f"[REACTION ROLES] تحمل {len(reaction_role_messages)} رسالة محفوظة")
+    except FileNotFoundError:
+        print("[REACTION ROLES] ماكاينش سجل سابق، غادي نبداو من الصفر")
+    except Exception as e:
+        print(f"[REACTION ROLES] خطأ فـ التحميل: {e}")
+
+
+def save_reaction_role_messages():
+    """يحفظ رسائل Reaction Roles فـ ملف JSON"""
+    try:
+        with open(REACTION_ROLES_FILE, "w", encoding="utf-8") as f:
+            json.dump({str(k): v for k, v in reaction_role_messages.items()}, f, ensure_ascii=False)
+    except Exception as e:
+        print(f"[REACTION ROLES] خطأ فـ الحفظ: {e}")
+
+
+load_reaction_role_messages()
 
 
 def get_system_prompt(user_gender="unknown"):
@@ -1767,6 +1796,7 @@ async def setuproles(ctx):
             pass
 
     reaction_role_messages[msg.id] = valid_roles
+    save_reaction_role_messages()
     await ctx.send("✅ تصاوبات رسالة الأدوار!", delete_after=5)
 
 
