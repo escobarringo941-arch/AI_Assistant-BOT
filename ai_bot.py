@@ -50,6 +50,7 @@ MUSIC_CHANNEL_ID = 1524957892925456547
 MOD_LOGS_CHANNEL_ID = 1526470164235681832
 VERIFY_CHANNEL_ID = 1526481352264781854
 RULES_CHANNEL_ID = 1526474691789721700
+BLACKLIST_CHANNEL_ID = 1526858911477661786  # ← حط هنا ID ديال channel "Blacklist things"
 
 UNVERIFIED_ROLE_ID = 1526452828267085915
 MEMBER_ROLE_ID = 1526451890399739934
@@ -1099,6 +1100,50 @@ async def setup_rules_message(guild: discord.Guild):
     await rules_channel.send(embed=embed, view=RulesVerifyView())
 
 
+async def setup_blacklist_message(guild: discord.Guild):
+    """كيبعث embed فـ channel 'Blacklist things' فيه الممنوعات والعقوبات المتدرجة"""
+    channel = bot.get_channel(BLACKLIST_CHANNEL_ID)
+    if not channel:
+        return
+    async for message in channel.history(limit=10):
+        if message.author == bot.user and "Blacklist" in (message.embeds[0].title if message.embeds else ""):
+            return
+
+    embed = discord.Embed(
+        title="🚫 Blacklist Things — الممنوعات والعقوبات",
+        description=(
+            "هادي لائحة بالحوايج الممنوعة فالسيرفر، والعقوبة المرتبطة بكل وحدة. "
+            "البوت كيراقب هاد النقاط **أوتوماتيكياً 24/24**، فراك محذر."
+        ),
+        color=discord.Color.dark_red(),
+        timestamp=datetime.now()
+    )
+    embed.add_field(
+        name="⛔ الممنوعات",
+        value=(
+            "• السبام والرسائل المتكررة\n"
+            "• روابط الديسكورد الدعائية بلا إذن\n"
+            "• الشتم، العنصرية، والتنمر\n"
+            "• محتوى +18 / جنسي / عنيف / صادم\n"
+            "• Doxxing (نشر معلومات شخصية ديال الآخرين)\n"
+            "• أي كلمة/رابط محظور مسجل عند الإدارة"
+        ),
+        inline=False
+    )
+    embed.add_field(
+        name="⚖️ العقوبات المتدرجة",
+        value=(
+            f"1️⃣ **تحذير** — كل مخالفة كتبان تحذير أوتوماتيكي ({WARN_LIMIT} تحذيرات = طرد)\n"
+            f"2️⃣ **كتم (Mute)** — إلا بعتي {SPAM_THRESHOLD} رسايل فـ {SPAM_INTERVAL} ثواني (سبام)، كتتكتم أوتوماتيك\n"
+            f"3️⃣ **طرد (Kick)** — عند الوصول لـ {WARN_LIMIT}/{WARN_LIMIT} تحذيرات\n"
+            f"4️⃣ **حظر (Ban)** — فحالة مخالفة خطيرة (Doxxing، تهديد، محتوى ممنوع بشدة) أو تكرار الطرد"
+        ),
+        inline=False
+    )
+    embed.set_footer(text="سيمو | Auto-Moderation System")
+    await channel.send(embed=embed)
+
+
 @bot.event
 async def on_member_join(member):
     unverified_role = member.guild.get_role(UNVERIFIED_ROLE_ID)
@@ -1749,6 +1794,17 @@ async def setupverify(ctx):
 
 @bot.command()
 @commands.has_permissions(administrator=True)
+async def setupblacklist(ctx):
+    """يصاوب رسالة الممنوعات والعقوبات فـ Blacklist channel"""
+    if not BLACKLIST_CHANNEL_ID:
+        await ctx.send("❌ خاصك تحط `BLACKLIST_CHANNEL_ID` فالـ CONFIG أولاً!")
+        return
+    await setup_blacklist_message(ctx.guild)
+    await ctx.send("✅ تم صاوب رسالة Blacklist!", delete_after=5)
+
+
+@bot.command()
+@commands.has_permissions(administrator=True)
 async def setuprules(ctx):
     """يصاوب رسالة القوانين + زرارات كنوافق/كنرفض فـ rules channel"""
     await setup_rules_message(ctx.guild)
@@ -2292,6 +2348,8 @@ async def on_ready():
         # ملاحظة: ماعادش كنبعثو رسالة "تفعيل العضوية" القديمة (بالريأكشن ✅)
         # باش ما تبقاش مكررة مع رسالة القوانين الجديدة بالأزرار (setup_rules_message)
         await setup_rules_message(guild)
+        if BLACKLIST_CHANNEL_ID:
+            await setup_blacklist_message(guild)
 
         problems = check_role_hierarchy(guild)
         if problems:
