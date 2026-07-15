@@ -57,7 +57,7 @@ MUTED_ROLE_ID = 1526468718534590574
 
 # ═══════ القوانين ديال السيرفر (بدلها بالقوانين الحقيقية ديالك) ═══════
 SERVER_RULES = (
-    "1️⃣ الاحترام واجب بين كاع الأعضاء — ممنوع السب خارج نطاق المزاح، العنصرية، او التنمر.\n"
+    "1️⃣ الاحترام واجب بين كاع الأعضاء — ممنوع السب، العنصرية، والتنمر.\n"
     "2️⃣ ممنوع السبام والإعلانات بلا إذن من الإدارة.\n"
     "3️⃣ ممنوع المحتوى ديال +18 ولا العنيف ولا الصادم.\n"
     "4️⃣ هضر فـ الشات المخصص ليه (بحال #games للألعاب).\n"
@@ -827,6 +827,41 @@ async def log_action(guild, title: str, description: str, color: discord.Color):
         await channel.send(embed=embed)
 
 
+def check_role_hierarchy(guild: discord.Guild) -> list:
+    """
+    كيتأكد أن role ديال البوت فوق فالترتيب من الرولات اللي خاصو يعطي/يهزها
+    (Member, Unverified, Muted). كيرجع لائحة ديال المشاكل (فاضية = كلشي مزيان).
+    """
+    problems = []
+    bot_member = guild.me
+    if not bot_member:
+        return ["❌ ما قدرتش نلقى البوت فالسيرفر."]
+
+    bot_top_role = bot_member.top_role
+
+    roles_to_check = {
+        "Member": MEMBER_ROLE_ID,
+        "Unverified": UNVERIFIED_ROLE_ID,
+        "Muted": MUTED_ROLE_ID,
+    }
+
+    for role_name, role_id in roles_to_check.items():
+        role = guild.get_role(role_id)
+        if not role:
+            problems.append(f"⚠️ role ديال **{role_name}** (ID: `{role_id}`) ماكاينش فالسيرفر — تأكد من الـ ID فالـ CONFIG.")
+            continue
+        if role >= bot_top_role:
+            problems.append(
+                f"❌ role ديال **{role_name}** (`{role.name}`) فوق ولا مساوي لـ role ديال البوت (`{bot_top_role.name}`) "
+                f"فالترتيب — خاصك تسحب role ديال البوت فوق منو فـ **Server Settings → Roles**."
+            )
+
+    if not bot_member.guild_permissions.manage_roles:
+        problems.append("❌ role ديال البوت ماعندوش صلاحية **Manage Roles** — خاصك تفعلها.")
+
+    return problems
+
+
 async def add_warn(member: discord.Member, reason: str) -> int:
     user_id = str(member.id)
     if user_id not in warns_db:
@@ -940,7 +975,17 @@ class RulesVerifyView(discord.ui.View):
                 await member.add_roles(member_role)
             except discord.Forbidden:
                 await interaction.response.send_message(
-                    "❌ ما قدرتش نفعلك، بلغ الإدارة (البوت ماعندوش صلاحية كافية).", ephemeral=True
+                    "❌ ما قدرتش نفعلك، بلغ الإدارة (البوت ماعندوش صلاحية كافية — "
+                    "غالبا role ديال البوت تحت فـ ترتيب الرولات، خاصو يكون فوق role ديال Member).",
+                    ephemeral=True
+                )
+                await log_action(
+                    guild,
+                    "⚠️ فشل التفعيل (صلاحية)",
+                    f"**المستخدم:** {member.mention} ({member.name})\n"
+                    f"**السبب:** role ديال البوت ماعندوش صلاحية يعطي role ديال Member.\n"
+                    f"**الحل:** استعمل `!checkroles` باش تشوف المشكل بالضبط.",
+                    discord.Color.orange()
                 )
                 return
 
@@ -1118,7 +1163,15 @@ async def on_raw_reaction_add(payload):
         try:
             await member.add_roles(member_role)
         except discord.Forbidden:
-            pass
+            await log_action(
+                guild,
+                "⚠️ فشل التفعيل (صلاحية)",
+                f"**المستخدم:** {member.mention} ({member.name})\n"
+                f"**السبب:** role ديال البوت ماعندوش صلاحية يعطي role ديال Member.\n"
+                f"**الحل:** استعمل `!checkroles` باش تشوف المشكل بالضبط.",
+                discord.Color.orange()
+            )
+            return
     await log_action(
         guild,
         "✅ تفعيل",
@@ -1750,6 +1803,27 @@ async def verify(ctx, member: discord.Member):
 
 @bot.command()
 @commands.has_permissions(administrator=True)
+async def checkroles(ctx):
+    """كيتأكد أن role ديال البوت قادر يعطي Member/Unverified/Muted"""
+    problems = check_role_hierarchy(ctx.guild)
+    if not problems:
+        embed = discord.Embed(
+            title="✅ كلشي مزيان",
+            description="role ديال البوت فوق فالترتيب وعندو الصلاحيات اللازمة. نظام التفعيل خاصو يخدم عادي.",
+            color=discord.Color.green()
+        )
+    else:
+        embed = discord.Embed(
+            title="⚠️ لقيت مشاكل فترتيب الرولات",
+            description="\n\n".join(problems),
+            color=discord.Color.red()
+        )
+    embed.set_footer(text="سيمو | Role Hierarchy Check")
+    await ctx.send(embed=embed)
+
+
+@bot.command()
+@commands.has_permissions(administrator=True)
 async def unverify(ctx, member: discord.Member):
     member_role = ctx.guild.get_role(MEMBER_ROLE_ID)
     if member_role and member_role in member.roles:
@@ -2167,6 +2241,19 @@ async def on_ready():
     for guild in bot.guilds:
         await setup_verify_message(guild)
         await setup_rules_message(guild)
+
+        problems = check_role_hierarchy(guild)
+        if problems:
+            print(f"[ROLE CHECK] ⚠️ {guild.name}: مشاكل فترتيب الرولات:")
+            for p in problems:
+                print(f"  - {p}")
+            await log_action(
+                guild,
+                "⚠️ مشكل فترتيب الرولات",
+                "نظام التفعيل ممكن ما يخدمش مزيان:\n\n" + "\n\n".join(problems) +
+                "\n\nاستعمل `!checkroles` بعد ما تصلح باش تتأكد.",
+                discord.Color.orange()
+            )
 
 
 if __name__ == "__main__":
