@@ -48,7 +48,7 @@ MUSIC_CHANNEL_ID = 1524957892925456547
 # ═══════════════════════════════════════════════════════
 
 MOD_LOGS_CHANNEL_ID = 1526470164235681832
-VERIFY_CHANNEL_ID = 1526474691789721700
+VERIFY_CHANNEL_ID = 1526481352264781854
 RULES_CHANNEL_ID = 1526474691789721700
 
 UNVERIFIED_ROLE_ID = 1526452828267085915
@@ -1693,6 +1693,26 @@ async def unwarn(ctx, member: discord.Member):
 
 @bot.command()
 @commands.has_permissions(administrator=True)
+async def clearoldverify(ctx):
+    """كيمسح رسالة/رسائل 'تفعيل العضوية' القديمة (بالريأكشن ✅) من verify channel"""
+    verify_channel = bot.get_channel(VERIFY_CHANNEL_ID)
+    rules_channel = bot.get_channel(RULES_CHANNEL_ID)
+    deleted = 0
+    for channel in {verify_channel, rules_channel}:
+        if not channel:
+            continue
+        async for message in channel.history(limit=50):
+            if message.author == bot.user and "تفعيل العضوية" in (message.embeds[0].title if message.embeds else ""):
+                try:
+                    await message.delete()
+                    deleted += 1
+                except Exception:
+                    pass
+    await ctx.send(f"✅ تمسحو {deleted} رسالة/رسائل قديمة." if deleted else "ماكاينش شي رسالة قديمة باش تتمسح.", delete_after=8)
+
+
+@bot.command()
+@commands.has_permissions(administrator=True)
 async def setupverify(ctx):
     await setup_verify_message(ctx.guild)
     await ctx.send("✅ تم صاوب رسالة التفعيل!", delete_after=5)
@@ -2239,7 +2259,8 @@ async def on_ready():
     bot.add_view(RulesVerifyView())  # باش الأزرار يبقاو خدامين حتى بعد ريستارت البوت
 
     for guild in bot.guilds:
-        await setup_verify_message(guild)
+        # ملاحظة: ماعادش كنبعثو رسالة "تفعيل العضوية" القديمة (بالريأكشن ✅)
+        # باش ما تبقاش مكررة مع رسالة القوانين الجديدة بالأزرار (setup_rules_message)
         await setup_rules_message(guild)
 
         problems = check_role_hierarchy(guild)
