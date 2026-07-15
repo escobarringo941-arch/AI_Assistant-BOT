@@ -63,6 +63,18 @@ SPAM_THRESHOLD = 5
 SPAM_INTERVAL = 5
 WARN_LIMIT = 3
 
+# ═══════════════════════════════════════════════════════
+# ║              REACTION ROLES CONFIG                     ║
+# ═══════════════════════════════════════════════════════
+# حط هنا الإيموجي ↔ ID ديال الرول (كليك يمين على الرول فـ Discord → Copy ID)
+# خاصك تفعّل "Developer Mode" فـ Discord Settings > Advanced باش يبان ليك Copy ID
+REACTION_ROLES = {
+    "🎮": 0,  # ← حط ID دور Gamer
+    "📺": 0,  # ← حط ID دور Anime Fan
+    "🎬": 0,  # ← حط ID دور Movie Fan
+    "🎧": 0,  # ← حط ID دور Music Fan
+}
+
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 
 intents = discord.Intents.default()
@@ -78,6 +90,7 @@ learned_knowledge = []
 warns_db = {}
 spam_tracker = {}
 mute_tasks = {}
+reaction_role_messages = {}  # {message_id: {emoji: role_id}}
 
 
 def get_system_prompt(user_gender="unknown"):
@@ -650,15 +663,30 @@ async def on_member_remove(member):
 
 @bot.event
 async def on_raw_reaction_add(payload):
-    if payload.channel_id != VERIFY_CHANNEL_ID:
-        return
-    if str(payload.emoji) != "✅":
-        return
     guild = bot.get_guild(payload.guild_id)
     if not guild:
         return
     member = guild.get_member(payload.user_id)
     if not member or member.bot:
+        return
+
+    # ═══════ Reaction Roles ═══════
+    if payload.message_id in reaction_role_messages:
+        emoji = str(payload.emoji)
+        role_id = reaction_role_messages[payload.message_id].get(emoji)
+        if role_id:
+            role = guild.get_role(role_id)
+            if role:
+                try:
+                    await member.add_roles(role)
+                except discord.Forbidden:
+                    pass
+        return
+
+    # ═══════ Verification ═══════
+    if payload.channel_id != VERIFY_CHANNEL_ID:
+        return
+    if str(payload.emoji) != "✅":
         return
     unverified_role = guild.get_role(UNVERIFIED_ROLE_ID)
     if unverified_role and unverified_role in member.roles:
@@ -684,6 +712,28 @@ async def on_raw_reaction_add(payload):
         await member.send(f"✅ تم تفعيلك فـ **{SERVER_NAME}**! مرحبا بيك! 🎉")
     except:
         pass
+
+
+@bot.event
+async def on_raw_reaction_remove(payload):
+    """كينزع الرول إلا نزع العضو الـ reaction ديالو"""
+    if payload.message_id not in reaction_role_messages:
+        return
+    guild = bot.get_guild(payload.guild_id)
+    if not guild:
+        return
+    member = guild.get_member(payload.user_id)
+    if not member or member.bot:
+        return
+    emoji = str(payload.emoji)
+    role_id = reaction_role_messages[payload.message_id].get(emoji)
+    if role_id:
+        role = guild.get_role(role_id)
+        if role:
+            try:
+                await member.remove_roles(role)
+            except discord.Forbidden:
+                pass
 
 
 @bot.event
@@ -1151,6 +1201,70 @@ async def setupverify(ctx):
 
 @bot.command()
 @commands.has_permissions(administrator=True)
+async def setuproles(ctx):
+    """يصاوب رسالة اختيار الأدوار بالـ Reactions (خاصك تعمر REACTION_ROLES فـ config أولاً)"""
+    valid_roles = {}
+    for emoji, role_id in REACTION_ROLES.items():
+        if not role_id:
+            continue
+        role = ctx.guild.get_role(role_id)
+        if role:
+            valid_roles[emoji] = role_id
+
+    if not valid_roles:
+        await ctx.send(
+            "❌ ماكاين حتى رول صالح فـ `REACTION_ROLES`!\n"
+            "خاصك تحط IDs ديال الأدوار فـ config (فعّل Developer Mode فـ Discord، "
+            "بعدها كليك يمين على الرول → Copy ID)."
+        )
+        return
+
+    description = "كليك على الإيموجي باش تاخد الرول، وكليك عليه مرة أخرى باش تنزعو 🔄\n\n"
+    description += "\n".join([
+        f"{emoji} — <@&{role_id}>" for emoji, role_id in valid_roles.items()
+    ])
+
+    embed = discord.Embed(
+        title="🎭 اختار الأدوار ديالك",
+        description=description,
+        color=discord.Color.blue(),
+        timestamp=datetime.now()
+    )
+    embed.set_footer(text="سيمو | Reaction Roles")
+
+    msg = await ctx.send(embed=embed)
+    for emoji in valid_roles:
+        try:
+            await msg.add_reaction(emoji)
+        except discord.HTTPException:
+            pass
+
+    reaction_role_messages[msg.id] = valid_roles
+    await ctx.send("✅ تصاوبات رسالة الأدوار!", delete_after=5)
+
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def listroles(ctx):
+    """يبين شحال من رسالة Reaction Roles فعّالة دابا"""
+    if not reaction_role_messages:
+        await ctx.send("ماكاين حتى رسالة Reaction Roles فعّالة دابا. استعمل `!setuproles`.")
+        return
+    lines = []
+    for msg_id, roles_map in reaction_role_messages.items():
+        roles_text = ", ".join([f"{e} → <@&{r}>" for e, r in roles_map.items()])
+        lines.append(f"**Message ID:** `{msg_id}`\n{roles_text}")
+    embed = discord.Embed(
+        title="🎭 رسائل Reaction Roles الفعّالة",
+        description="\n\n".join(lines),
+        color=discord.Color.blue()
+    )
+    embed.set_footer(text="سيمو | Reaction Roles")
+    await ctx.send(embed=embed)
+
+
+@bot.command()
+@commands.has_permissions(administrator=True)
 async def verify(ctx, member: discord.Member):
     unverified_role = ctx.guild.get_role(UNVERIFIED_ROLE_ID)
     if unverified_role and unverified_role in member.roles:
@@ -1276,6 +1390,11 @@ async def help(ctx):
         "`!unverify @user` — يرجعو @Unverified (Admin)"
     )
     embed.add_field(name="✅ تفعيل", value=verif_cmds, inline=False)
+    roles_cmds = (
+        "`!setuproles` — صاوب رسالة اختيار الأدوار (Admin)\n"
+        "`!listroles` — بين رسائل Reaction Roles الفعّالة (Admin)"
+    )
+    embed.add_field(name="🎭 Reaction Roles", value=roles_cmds, inline=False)
     util_cmds = (
         "`!ping` — سرعة البوت\n"
         "`!info` — معلومات البوت\n"
