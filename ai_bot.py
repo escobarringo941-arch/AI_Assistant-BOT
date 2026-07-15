@@ -136,7 +136,7 @@ MAX_HISTORY = {
     "news": 500,
     "games": 250,
     "movies": 250,
-    "anime": 800,
+    "anime": 250,
     "music": 500,
 }
 
