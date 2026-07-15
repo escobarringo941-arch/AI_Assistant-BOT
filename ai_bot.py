@@ -1162,7 +1162,8 @@ async def help(ctx):
     util_cmds = (
         "`!ping` — سرعة البوت\n"
         "`!info` — معلومات البوت\n"
-        "`!help` — هاد القائمة"
+        "`!help` — هاد القائمة\n"
+        "`!testinfo` — جرب Auto-Info فوراً (Admin)"
     )
     embed.add_field(name="🔧 أدوات", value=util_cmds, inline=False)
     auto_mod = (
@@ -1229,6 +1230,60 @@ async def انعلمك(ctx, *, knowledge: str):
 @bot.command()
 async def انعلمك_شي_حاجة_جديدة(ctx, *, knowledge: str):
     await انعلمك(ctx, knowledge=knowledge)
+
+
+# ═══════════════════════════════════════════════════════
+# ║        COMMAND TEST INFO (جديد!)                      ║
+# ═══════════════════════════════════════════════════════
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def testinfo(ctx, category: str = "all"):
+    """
+    جرب Auto-Info فوراً!
+    الاستخدام: !testinfo [news|games|movies|anime|music|all]
+    """
+    categories = {
+        "news": ("📰 News", NEWS_CHANNEL_ID, get_news_from_api, "NewsAPI"),
+        "games": ("🎮 Games", GAMES_CHANNEL_ID, get_game_from_rawg, "RAWG.io"),
+        "movies": ("🎬 Movies", MOVIES_CHANNEL_ID, get_movie_from_omdb, "OMDb"),
+        "anime": ("📺 Anime", ANIME_CHANNEL_ID, get_anime_from_jikan, "Jikan"),
+        "music": ("🎧 Music", MUSIC_CHANNEL_ID, get_music_from_lastfm, "Last.fm")
+    }
+    
+    if category == "all":
+        cats_to_test = list(categories.keys())
+    elif category in categories:
+        cats_to_test = [category]
+    else:
+        await ctx.send("❌ الاستخدام: `!testinfo [news|games|movies|anime|music|all]`")
+        return
+    
+    await ctx.send(f"🧪 جاري اختبار {len(cats_to_test)} APIs...")
+    
+    for cat in cats_to_test:
+        name, channel_id, func, api_name = categories[cat]
+        channel = bot.get_channel(channel_id)
+        
+        if not channel:
+            await ctx.send(f"❌ {name}: ما لقيتش القناة!")
+            continue
+        
+        try:
+            data = await func()
+            if data:
+                status = "✅ نجح"
+                preview = str(data)[:100]
+            else:
+                status = "⚠️ ما جاب والو (API فاضي ولا مفتاح غالط)"
+                preview = "ما كاينش داتا"
+        except Exception as e:
+            status = f"❌ خطأ: {str(e)[:100]}"
+            preview = "Exception"
+        
+        await ctx.send(f"**{name}** ({api_name}): {status}\n```\n{preview}\n```")
+    
+    await ctx.send("✅ تم الاختبار!")
 
 
 # ═══════════════════════════════════════════════════════
