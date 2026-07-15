@@ -55,6 +55,17 @@ UNVERIFIED_ROLE_ID = 1526452828267085915
 MEMBER_ROLE_ID = 1526451890399739934
 MUTED_ROLE_ID = 1526468718534590574
 
+# ═══════ القوانين ديال السيرفر (بدلها بالقوانين الحقيقية ديالك) ═══════
+SERVER_RULES = (
+    "1️⃣ الاحترام واجب بين كاع الأعضاء — ممنوع السب، العنصرية، والتنمر.\n"
+    "2️⃣ ممنوع السبام والإعلانات بلا إذن من الإدارة.\n"
+    "3️⃣ ممنوع المحتوى ديال +18 ولا العنيف ولا الصادم.\n"
+    "4️⃣ هضر فـ الشات المخصص ليه (بحال #games للألعاب).\n"
+    "5️⃣ احترم القرارات ديال الأدمن والمشرفين.\n"
+    "6️⃣ ممنوع مشاركة معلومات شخصية ديال الآخرين (Doxxing).\n"
+    "7️⃣ عدم الالتزام بالقوانين غادي يأدي لعقوبة (تحذير، كتم، طرد)."
+)
+
 # ═══════ الاستثناءات ديال Auto-Mod (Owner + أدوار معفيين) ═══════
 OWNER_ID = 1260089246216097832  # صاحب السيرفر
 EXEMPT_ROLE_IDS = [
@@ -890,6 +901,130 @@ async def setup_verify_message(guild: discord.Guild):
     await msg.add_reaction("✅")
 
 
+# ═══════════════════════════════════════════════════════
+# ║   نظام القوانين + التفعيل بالأزرار (Buttons)           ║
+# ║   (كيبان مباشرة تحت القوانين، بحال المواقع)              ║
+# ═══════════════════════════════════════════════════════
+
+class RulesVerifyView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)  # باش يبقى خدام للأبد (persistent view)
+
+    def _is_exempt(self, member: discord.Member) -> bool:
+        if member.id == OWNER_ID:
+            return True
+        return any(role.id in EXEMPT_ROLE_IDS for role in member.roles)
+
+    @discord.ui.button(label="كنوافق", style=discord.ButtonStyle.success, emoji="✅", custom_id="rules_agree_button")
+    async def agree_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        member = interaction.user
+        guild = interaction.guild
+        if not guild or not isinstance(member, discord.Member):
+            await interaction.response.send_message("❌ وقع مشكل، عاود من جديد.", ephemeral=True)
+            return
+
+        member_role = guild.get_role(MEMBER_ROLE_ID)
+        unverified_role = guild.get_role(UNVERIFIED_ROLE_ID)
+
+        if member_role and member_role in member.roles:
+            await interaction.response.send_message("✅ راك مفعل من قبل، مرحبا بيك!", ephemeral=True)
+            return
+
+        if unverified_role and unverified_role in member.roles:
+            try:
+                await member.remove_roles(unverified_role)
+            except discord.Forbidden:
+                pass
+        if member_role:
+            try:
+                await member.add_roles(member_role)
+            except discord.Forbidden:
+                await interaction.response.send_message(
+                    "❌ ما قدرتش نفعلك، بلغ الإدارة (البوت ماعندوش صلاحية كافية).", ephemeral=True
+                )
+                return
+
+        await interaction.response.send_message(
+            f"✅ تم تفعيلك فـ **{SERVER_NAME}**! مرحبا بيك، استمتع/ي 🎉", ephemeral=True
+        )
+
+        await log_action(
+            guild,
+            "✅ تفعيل (زر القوانين)",
+            f"**المستخدم:** {member.mention} ({member.name})\n"
+            f"**الحالة:** وافق على القوانين وتفعل",
+            discord.Color.green()
+        )
+
+    @discord.ui.button(label="كنرفض", style=discord.ButtonStyle.danger, emoji="❌", custom_id="rules_refuse_button")
+    async def refuse_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        member = interaction.user
+        guild = interaction.guild
+        if not guild or not isinstance(member, discord.Member):
+            await interaction.response.send_message("❌ وقع مشكل، عاود من جديد.", ephemeral=True)
+            return
+
+        if self._is_exempt(member):
+            await interaction.response.send_message(
+                "⚠️ راك أدمن/مشرف، ماغاديش نطردك، ولكن هاد الزر معناه رفض القوانين للأعضاء العاديين.",
+                ephemeral=True
+            )
+            return
+
+        try:
+            await interaction.response.send_message(
+                "❌ رفضتي القوانين، غادي تتطرد من السيرفر...", ephemeral=True
+            )
+        except Exception:
+            pass
+
+        try:
+            await member.send(f"❌ رفضتي القوانين ديال **{SERVER_NAME}**، تم طردك من السيرفر تلقائياً.")
+        except Exception:
+            pass
+
+        await log_action(
+            guild,
+            "🚫 رفض القوانين + طرد تلقائي",
+            f"**المستخدم:** {member.mention} ({member.name})\n"
+            f"**ID:** `{member.id}`\n"
+            f"**السبب:** رفض الموافقة على القوانين (زر ❌)",
+            discord.Color.red()
+        )
+
+        try:
+            await guild.kick(member, reason="رفض الموافقة على قوانين السيرفر")
+        except discord.Forbidden:
+            await log_action(
+                guild,
+                "⚠️ فشل الطرد",
+                f"ماقدرتش نطرد {member.mention} — البوت ماعندوش صلاحية كافية.",
+                discord.Color.orange()
+            )
+
+
+async def setup_rules_message(guild: discord.Guild):
+    rules_channel = bot.get_channel(RULES_CHANNEL_ID)
+    if not rules_channel:
+        return
+    async for message in rules_channel.history(limit=10):
+        if message.author == bot.user and message.components:
+            return
+    embed = discord.Embed(
+        title="📜 قوانين السيرفر",
+        description=(
+            f"{SERVER_RULES}\n\n"
+            f"⚠️ **باش تقدر/ي تهضر/ي وتفاعل/ي فالسيرفر، خاصك توافق/ي على هاد القوانين بالضغط على ✅ تحت.**\n"
+            f"إلا ضغطتي على ❌ (رفض)، غادي تتطرد من السيرفر تلقائياً."
+        ),
+        color=discord.Color.blue(),
+        timestamp=datetime.now()
+    )
+    embed.set_thumbnail(url=guild.icon.url if guild.icon else None)
+    embed.set_footer(text="سيمو | Rules & Verification")
+    await rules_channel.send(embed=embed, view=RulesVerifyView())
+
+
 @bot.event
 async def on_member_join(member):
     unverified_role = member.guild.get_role(UNVERIFIED_ROLE_ID)
@@ -1512,6 +1647,14 @@ async def setupverify(ctx):
 
 @bot.command()
 @commands.has_permissions(administrator=True)
+async def setuprules(ctx):
+    """يصاوب رسالة القوانين + زرارات كنوافق/كنرفض فـ rules channel"""
+    await setup_rules_message(ctx.guild)
+    await ctx.send("✅ تم صاوب رسالة القوانين بالأزرار!", delete_after=5)
+
+
+@bot.command()
+@commands.has_permissions(administrator=True)
 async def setuproles(ctx):
     """يصاوب رسالة اختيار الأدوار بالـ Reactions (خاصك تعمر REACTION_ROLES فـ config أولاً)"""
     valid_roles = {}
@@ -1696,7 +1839,8 @@ async def help(ctx):
     )
     embed.add_field(name="🛡️ موديراتورز", value=mod_cmds, inline=False)
     verif_cmds = (
-        "`!setupverify` — صاوب رسالة التفعيل (Admin)\n"
+        "`!setupverify` — صاوب رسالة التفعيل بـ ✅ (Admin)\n"
+        "`!setuprules` — صاوب رسالة القوانين بـ أزرار كنوافق/كنرفض (Admin)\n"
         "`!verify @user` — يفعّل عضو يدوياً (Admin)\n"
         "`!unverify @user` — يرجعو @Unverified (Admin)"
     )
@@ -1733,7 +1877,7 @@ async def help(ctx):
     verif_info = (
         "🔒 @Unverified — جديد (ما يهضرش)\n"
         "✅ @Member — مفعل (يهضر)\n"
-        "🔄 كليك ✅ فـ verify channel"
+        "🔄 كليك ✅ فـ verify channel، ولا الأزرار (كنوافق/كنرفض) فـ rules channel"
     )
     embed.add_field(name="🔐 نظام التفعيل", value=verif_info, inline=False)
     embed.set_footer(text="سيمو | GGMW9 | Prefix: !")
@@ -2018,8 +2162,11 @@ async def on_ready():
     if not auto_info.is_running():
         auto_info.start()
 
+    bot.add_view(RulesVerifyView())  # باش الأزرار يبقاو خدامين حتى بعد ريستارت البوت
+
     for guild in bot.guilds:
         await setup_verify_message(guild)
+        await setup_rules_message(guild)
 
 
 if __name__ == "__main__":
