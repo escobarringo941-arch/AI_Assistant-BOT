@@ -24,10 +24,13 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 # ═══════ APIs جداد ═══════
-OMDB_API_KEY = os.getenv("OMDB_API_KEY")           # ← سجل فـ omdbapi.com
+OMDB_API_KEY = os.getenv("OMDB_API_KEY")           # ← سجل فـ omdbapi.com (تفاصيل الفيلم + rating)
+TMDB_API_KEY = os.getenv("TMDB_API_KEY")           # ← سجل فـ themoviedb.org/settings/api (اكتشاف عشوائي)
 NEWS_API_KEY = os.getenv("NEWS_API_KEY")           # ← سجل فـ newsapi.org
 LASTFM_API_KEY = os.getenv("LASTFM_API_KEY")       # ← سجل فـ last.fm/api
 RAWG_API_KEY = os.getenv("RAWG_API_KEY")           # ← سجل فـ rawg.io/apidocs
+
+TMDB_URL = "https://api.themoviedb.org/3"
 
 MEMORY_SIZE = 100
 CREATIVITY = 0.85
@@ -432,165 +435,109 @@ async def translate_to_darija(text: str) -> str:
 
 
 async def get_movie_from_omdb() -> dict:
-    """جيب فيلم عشوائي من IMDB عبر OMDb API (مع retry + ترجمة للدارجة)"""
-    if not OMDB_API_KEY:
-        print("[OMDB] OMDB_API_KEY ماكاينش! خاصك تزيدو فـ Railway Variables.")
+    """
+    اكتشاف عشوائي حقيقي للأفلام (بلا لائحة ثابتة):
+    1) TMDb /discover/movie بصفحة عشوائية → لائحة أفلام معروفة (مفلترة بعدد الأصوات)
+    2) نجيبو imdb_id ديال كل واحد عبر TMDb external_ids
+    3) نستعملو OMDb (i=imdb_id) باش نجيبو التفاصيل الكاملة + rating (نفس الفورمات ديال قبل)
+    """
+    if not TMDB_API_KEY or not OMDB_API_KEY:
+        print("[MOVIE] TMDB_API_KEY أو OMDB_API_KEY ماكاينين! خاصك تزيدهم فـ Railway Variables.")
         return {}
 
-    # أفلام كلاسيكية معروفة (قدام)
-    classic_movies = [
-        "tt0111161", "tt0068646", "tt0468569", "tt0071562", "tt0167260",
-        "tt0110912", "tt0050083", "tt0137523", "tt0109830", "tt1375666",
-        "tt0816692", "tt1853728", "tt1345836", "tt0482571", "tt0407887",
-        "tt0172495", "tt0364569", "tt0253474", "tt0910970", "tt0435761",
-        "tt0268978", "tt0120338", "tt0102926", "tt0080684", "tt0076759",
-        "tt0120689", "tt0209144", "tt0169547", "tt0180093", "tt0120586",
-        "tt0108052", "tt0088763", "tt0095016", "tt0086190", "tt0119217",
-        "tt0114369", "tt0087843", "tt0099685", "tt0113277", "tt0112573"
-    ]
-    # أفلام جداد وواعرين (2019-2025)
-    recent_movies = [
-        "tt1160419",  # Dune (2021)
-        "tt15239678", # Dune: Part Two (2024)
-        "tt15398776", # Oppenheimer (2023)
-        "tt1517268",  # Barbie (2023)
-        "tt1745960",  # Top Gun: Maverick (2022)
-        "tt6710474",  # Everything Everywhere All at Once (2022)
-        "tt1877830",  # The Batman (2022)
-        "tt10872600", # Spider-Man: No Way Home (2021)
-        "tt9362722",  # Spider-Man: Across the Spider-Verse (2023)
-        "tt5537002",  # Killers of the Flower Moon (2023)
-        "tt6791350",  # Guardians of the Galaxy Vol. 3 (2023)
-        "tt10366206", # John Wick: Chapter 4 (2023)
-        "tt6263850",  # Deadpool & Wolverine (2024)
-        "tt22022452", # Inside Out 2 (2024)
-        "tt8946378",  # Knives Out (2019)
-        "tt11564570", # Glass Onion (2022)
-        "tt2382320",  # No Time to Die (2021)
-        "tt10954600", # Nope (2022)
-        "tt7286456",  # Joker (2019)
-        "tt4154796",  # Avengers: Endgame (2019)
-        "tt17351924", # A Quiet Place: Day One (2024)
-        "tt14539740", # Furiosa (2024)
-        "tt26743210", # Wicked (2024)
-        "tt13238346", # Gladiator II (2024)
-        "tt1630029",  # Avatar: The Way of Water (2022)
-    ]
+    discover_url = f"{TMDB_URL}/discover/movie"
+    omdb_url = "https://www.omdbapi.com/"
 
-    # نخلطو قديم وجديد باش يبانو الاثنين، ونفلترو الحوايج اللي تبعثات
-    pool = classic_movies + recent_movies
-    fresh = [m for m in pool if not is_posted("movies", m)]
-    if not fresh:
-        reset_category_history("movies")
-        fresh = pool
-
-    candidates = random.sample(fresh, len(fresh))
-    url = "https://www.omdbapi.com/"
-
-    for movie_id in candidates[:10]:  # يجرب حتى 10 أفلام (قديم وجديد مخلوطين) قبل ما يستسلم
+    for page_attempt in range(5):  # يجرب حتى 5 صفحات عشوائية ديال TMDb قبل ما يستسلم
         params = {
-            "i": movie_id,
-            "apikey": OMDB_API_KEY,
-            "plot": "full"
+            "api_key": TMDB_API_KEY,
+            "language": "en-US",
+            "sort_by": random.choice(["vote_average.desc", "popularity.desc"]),
+            "vote_count.gte": 300,   # نتفاداو الأفلام المغمورة اللي عندها صوت ولا صوتين
+            "include_adult": "false",
+            "page": random.randint(1, 40),
         }
-        data = await fetch_json(url, params)
-
-        if data.get("Response") != "True":
-            print(f"[OMDB] {movie_id} فشل: {data.get('Error', 'unknown error')}")
+        data = await fetch_json(discover_url, params)
+        results = data.get("results", []) if data else []
+        if not results:
             continue
 
-        rating = data.get("imdbRating", "0")
-        try:
-            if rating in ("N/A", None) or float(rating) < 6.0:
+        random.shuffle(results)
+
+        for movie in results[:12]:  # يجرب حتى 12 فيلم من نفس الصفحة
+            tmdb_id = movie.get("id")
+            if not tmdb_id:
                 continue
-        except ValueError:
-            continue
 
-        plot = data.get("Plot", "No plot available.")
-        plot_ar = await translate_to_darija(plot)
+            ext_data = await fetch_json(
+                f"{TMDB_URL}/movie/{tmdb_id}/external_ids",
+                {"api_key": TMDB_API_KEY}
+            )
+            imdb_id = ext_data.get("imdb_id") if ext_data else None
+            if not imdb_id or is_posted("movies", imdb_id):
+                continue
 
-        mark_posted("movies", movie_id)
+            omdb_data = await fetch_json(omdb_url, {
+                "i": imdb_id,
+                "apikey": OMDB_API_KEY,
+                "plot": "full"
+            })
+            if not omdb_data or omdb_data.get("Response") != "True":
+                continue
 
-        poster = data.get("Poster", "")
-        if not poster or poster == "N/A":
-            poster = await get_wikipedia_image(f"{data.get('Title', '')} (film)")
+            rating = omdb_data.get("imdbRating", "0")
+            try:
+                if rating in ("N/A", None) or float(rating) < 6.0:
+                    continue
+            except ValueError:
+                continue
 
-        return {
-            "title": data.get("Title", "Unknown"),
-            "year": data.get("Year", "N/A"),
-            "genre": data.get("Genre", "N/A"),
-            "plot": plot_ar,
-            "rating": rating,
-            "poster": poster,
-            "imdb": f"https://www.imdb.com/title/{movie_id}/"
-        }
+            plot = omdb_data.get("Plot", "No plot available.")
+            plot_ar = await translate_to_darija(plot)
+
+            mark_posted("movies", imdb_id)
+
+            poster = omdb_data.get("Poster", "")
+            if not poster or poster == "N/A":
+                poster = await get_wikipedia_image(f"{omdb_data.get('Title', '')} (film)")
+
+            return {
+                "title": omdb_data.get("Title", "Unknown"),
+                "year": omdb_data.get("Year", "N/A"),
+                "genre": omdb_data.get("Genre", "N/A"),
+                "plot": plot_ar,
+                "rating": rating,
+                "poster": poster,
+                "imdb": f"https://www.imdb.com/title/{imdb_id}/"
+            }
 
     return {}
 
 
 async def get_anime_from_jikan() -> dict:
     """
-    جيب أنمي (قديم ولا جديد، بس واعر ومعروف) من Jikan API عبر ID مباشرة.
-    (بدلنا الطريقة القديمة اللي كانت كتعتمد على seasons/now و top/anime لأنهم
-    عرضة بزاف للـ rate-limit ديال Jikan وكيرجعو فاضيين بزاف).
+    اكتشاف عشوائي حقيقي للأنمي عبر Jikan /random/anime (بلا لائحة ثابتة).
+    كنفلتراو بـ score و members باش نضمنو أنمي معروف ومزيان، وكنحترمو rate-limit
+    ديال Jikan بـ sleep بين كل محاولة.
     """
     jikan_headers = {"User-Agent": "Mozilla/5.0 (compatible; SimoBot/1.0)"}
 
-    # أنميات كلاسيكية معروفة (قدام)
-    classic_anime = [
-        1535,   # Death Note
-        5114,   # Fullmetal Alchemist: Brotherhood
-        20,     # Naruto
-        1735,   # Naruto: Shippuden
-        21,     # One Piece
-        813,    # Dragon Ball Z
-        1,      # Cowboy Bebop
-        1575,   # Code Geass
-        9253,   # Steins;Gate
-        11061,  # Hunter x Hunter (2011)
-        269,    # Bleach
-        11757,  # Sword Art Online
-        22319,  # Tokyo Ghoul
-        6702,   # Fairy Tail
-        30,     # Neon Genesis Evangelion
-    ]
-    # أنميات جداد وواعرين
-    new_anime = [
-        16498,  # Attack on Titan
-        30276,  # One Punch Man
-        31964,  # My Hero Academia
-        38000,  # Demon Slayer: Kimetsu no Yaiba
-        40748,  # Jujutsu Kaisen
-        44511,  # Chainsaw Man
-        50265,  # Spy x Family
-        37521,  # Vinland Saga
-        32182,  # Mob Psycho 100
-        34599,  # Made in Abyss
-        37779,  # The Promised Neverland
-        42310,  # Cyberpunk: Edgerunners
-    ]
-
-    pool = classic_anime + new_anime
-    fresh = [a for a in pool if not is_posted("anime", str(a))]
-    if not fresh:
-        reset_category_history("anime")
-        fresh = pool
-
-    candidates = random.sample(fresh, len(fresh))
-
-    for i, mal_id in enumerate(candidates[:8]):  # يجرب حتى 8 أنميات قبل ما يستسلم
-        if i > 0:
+    for attempt in range(8):  # يجرب حتى 8 مرات قبل ما يستسلم
+        if attempt > 0:
             await asyncio.sleep(1.2)  # نحترمو rate-limit ديال Jikan
 
-        url = f"https://api.jikan.moe/v4/anime/{mal_id}/full"
-        data = await fetch_json(url, headers=jikan_headers)
+        data = await fetch_json("https://api.jikan.moe/v4/random/anime", headers=jikan_headers)
         anime = data.get("data") if data else None
-
         if not anime:
-            print(f"[JIKAN] mal_id={mal_id} ما رجعش داتا صحيحة")
             continue
 
-        if anime.get("score") and anime.get("score") < 6.0:
+        mal_id = anime.get("mal_id")
+        if not mal_id or is_posted("anime", str(mal_id)):
+            continue
+
+        score = anime.get("score") or 0
+        members = anime.get("members") or 0
+        if score < 6.5 or members < 30000:  # نفلترو الحوايج المغمورة بزاف
             continue
 
         synopsis = anime.get("synopsis") or "No synopsis available."
@@ -618,72 +565,59 @@ async def get_anime_from_jikan() -> dict:
 
 
 async def get_game_from_rawg() -> dict:
-    """جيب لعبة عشوائية من RAWG API (مع ترجمة الوصف للدارجة)"""
+    """
+    اكتشاف عشوائي حقيقي للألعاب عبر RAWG /games (بلا لائحة ثابتة).
+    كنختارو صفحة عشوائية من أعلى الألعاب تقييما (ordering)، ومنبعد كنجيبو
+    التفاصيل الكاملة ديال اللعبة المختارة.
+    """
     if not RAWG_API_KEY:
         print("[RAWG] RAWG_API_KEY ماكاينش!")
         return {}
 
-    # ألعاب قديمة معروفة (كلاسيكيات)
-    classic_games = [
-        "gta-v", "the-witcher-3-wild-hunt", "red-dead-redemption-2",
-        "god-of-war", "the-last-of-us-part-ii", "horizon-zero-dawn",
-        "minecraft", "league-of-legends", "counter-strike-global-offensive",
-        "among-us", "pokemon-go", "clash-of-clans", "pubg",
-        "half-life-2", "the-elder-scrolls-v-skyrim", "portal-2",
-        "grand-theft-auto-san-andreas", "dark-souls-iii",
-        "the-legend-of-zelda-breath-of-the-wild", "fifa-23",
-        "rocket-league", "dota-2", "world-of-warcraft"
-    ]
-    # ألعاب جداد وواعرين
-    new_games = [
-        "elden-ring", "ghost-of-tsushima", "spider-man",
-        "cyberpunk-2077", "assassins-creed-valhalla", "call-of-duty-warzone",
-        "fortnite", "valorant", "apex-legends", "overwatch-2",
-        "fall-guys", "genshin-impact", "free-fire",
-        "baldurs-gate-3", "helldivers-2", "black-myth-wukong",
-        "hogwarts-legacy", "starfield", "diablo-4",
-        "street-fighter-6", "ea-sports-fc-24"
-    ]
+    list_url = "https://api.rawg.io/api/games"
 
-    pool = classic_games + new_games
-    fresh = [g for g in pool if not is_posted("games", g)]
-    if not fresh:
-        reset_category_history("games")
-        fresh = pool
-
-    candidates = random.sample(fresh, len(fresh))
-
-    for game_slug in candidates[:8]:  # يجرب حتى 8 ألعاب (قديم وجديد) قبل ما يستسلم
-        url = f"https://api.rawg.io/api/games/{game_slug}"
-        params = {"key": RAWG_API_KEY}
-        data = await fetch_json(url, params)
-
-        if not data or not data.get("name"):
-            print(f"[RAWG] {game_slug} ما رجعش داتا صحيحة")
-            continue
-
-        rating = data.get("rating", 0)
-        if rating < 3.0:  # RAWG rating out of 5
-            continue
-
-        description = data.get("description_raw", "No description available.")[:500]
-        description_ar = await translate_to_darija(description)
-
-        mark_posted("games", game_slug)
-
-        poster = data.get("background_image", "")
-        if not poster:
-            poster = await get_wikipedia_image(f"{data.get('name', '')} (video game)")
-
-        return {
-            "name": data.get("name", "Unknown"),
-            "released": data.get("released", "N/A"),
-            "genres": ", ".join([g["name"] for g in data.get("genres", [])]),
-            "description": description_ar,
-            "rating": f"{rating}/5",
-            "poster": poster,
-            "url": f"https://rawg.io/games/{game_slug}"
+    for page_attempt in range(5):  # يجرب حتى 5 صفحات عشوائية قبل ما يستسلم
+        params = {
+            "key": RAWG_API_KEY,
+            "ordering": random.choice(["-rating", "-metacritic", "-added"]),
+            "page_size": 40,
+            "page": random.randint(1, 150),  # كنبقاو فـ نطاق الألعاب المعروفة بزاف
         }
+        data = await fetch_json(list_url, params)
+        results = data.get("results", []) if data else []
+        if not results:
+            continue
+
+        random.shuffle(results)
+
+        for game in results[:10]:  # يجرب حتى 10 ألعاب من نفس الصفحة
+            slug = game.get("slug")
+            rating = game.get("rating", 0)
+            if not slug or is_posted("games", slug) or rating < 3.2:
+                continue
+
+            detail = await fetch_json(f"{list_url}/{slug}", {"key": RAWG_API_KEY})
+            if not detail or not detail.get("name"):
+                continue
+
+            description = detail.get("description_raw", "No description available.")[:500]
+            description_ar = await translate_to_darija(description)
+
+            mark_posted("games", slug)
+
+            poster = detail.get("background_image", "")
+            if not poster:
+                poster = await get_wikipedia_image(f"{detail.get('name', '')} (video game)")
+
+            return {
+                "name": detail.get("name", "Unknown"),
+                "released": detail.get("released", "N/A"),
+                "genres": ", ".join([g["name"] for g in detail.get("genres", [])]),
+                "description": description_ar,
+                "rating": f"{rating}/5",
+                "poster": poster,
+                "url": f"https://rawg.io/games/{slug}"
+            }
 
     return {}
 
@@ -731,23 +665,36 @@ async def get_track_artwork(artist: str, track_name: str) -> str:
 
 
 async def get_music_from_lastfm() -> dict:
-    """جيب أغنية عشوائية من Last.fm API"""
+    """
+    جيب أغنية عشوائية من Last.fm. لائحة الفنانين ماشي ثابتة —
+    كنجيبوها ديناميكيا من chart.getTopArtists (top chart عالمي محين)
+    باش يتوسع الاختيار وميبقاش محدود فـ 30 فنان.
+    """
     if not LASTFM_API_KEY:
         return {}
-    
-    popular_artists = [
-        "The Weeknd", "Drake", "Taylor Swift", "Ed Sheeran", "Ariana Grande",
-        "Billie Eilish", "Post Malone", "Dua Lipa", "Bruno Mars", "Rihanna",
-        "Kendrick Lamar", "Travis Scott", "Eminem", "Jay-Z", "Beyoncé",
-        "Coldplay", "Maroon 5", "Imagine Dragons", "OneRepublic", "Shawn Mendes",
-        "Justin Bieber", "Selena Gomez", "Miley Cyrus", "Doja Cat", "Lil Nas X",
-        "Olivia Rodrigo", "Harry Styles", "Bad Bunny", "J Balvin", "Karol G"
-    ]
-    
-    url = "http://ws.audioscrobbler.com/2.0/"
-    artists_to_try = random.sample(popular_artists, len(popular_artists))
 
-    for artist in artists_to_try[:6]:  # يجرب حتى 6 فنانين قبل ما يستسلم
+    url = "http://ws.audioscrobbler.com/2.0/"
+
+    chart_data = await fetch_json(url, {
+        "method": "chart.getTopArtists",
+        "api_key": LASTFM_API_KEY,
+        "format": "json",
+        "limit": 200,
+    })
+    popular_artists = [
+        a.get("name") for a in chart_data.get("artists", {}).get("artist", [])
+        if a.get("name")
+    ] if chart_data else []
+
+    if not popular_artists:
+        # fallback بسيط إلا chart API طاح مؤقتا
+        popular_artists = [
+            "The Weeknd", "Drake", "Taylor Swift", "Dua Lipa", "Bad Bunny"
+        ]
+
+    artists_to_try = random.sample(popular_artists, min(len(popular_artists), 15))
+
+    for artist in artists_to_try:  # يجرب حتى 15 فنان (من التشارت الديناميكي) قبل ما يستسلم
         params = {
             "method": "artist.gettoptracks",
             "artist": artist,
@@ -2341,7 +2288,7 @@ async def testinfo(ctx, category: str = "all"):
     categories = {
         "news": ("📰 News", NEWS_CHANNEL_ID, get_news_from_api, "NewsAPI"),
         "games": ("🎮 Games", GAMES_CHANNEL_ID, get_game_from_rawg, "RAWG.io"),
-        "movies": ("🎬 Movies", MOVIES_CHANNEL_ID, get_movie_from_omdb, "OMDb"),
+        "movies": ("🎬 Movies", MOVIES_CHANNEL_ID, get_movie_from_omdb, "TMDb+OMDb"),
         "anime": ("📺 Anime", ANIME_CHANNEL_ID, get_anime_from_jikan, "Jikan"),
         "music": ("🎧 Music", MUSIC_CHANNEL_ID, get_music_from_lastfm, "Last.fm")
     }
