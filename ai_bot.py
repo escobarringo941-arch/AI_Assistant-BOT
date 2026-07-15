@@ -621,7 +621,7 @@ async def on_member_join(member):
             description=(
                 f"واخا أخويا/أختي! **{SERVER_NAME}** هو السيرفر ديالك.\n\n"
                 f"**قبل ما تبدأ:**\n"
-                f"1️⃣ اقرأ القوانين فـ <#{RULES_CHANNEL_ID}>\n"
+                f"1️⃣ اقرأ/ي القوانين فـ <#{RULES_CHANNEL_ID}>\n"
                 f"2️⃣ وافق فـ <#{VERIFY_CHANNEL_ID}>\n"
                 f"3️⃣ استمتع! 🎉"
             ),
