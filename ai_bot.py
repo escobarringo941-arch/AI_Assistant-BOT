@@ -1391,6 +1391,7 @@ async def help(ctx):
         "✅ Logs كاملة فـ #mod-logs"
     )
     embed.add_field(name="🤖 Auto-Mod", value=auto_mod, inline=False)
+    
        auto_info_cmds = (
         "📰 #news — أخبار عامة (NewsAPI)\n"
         "🎮 #games — أخبار ألعاب (RAWG)\n"
