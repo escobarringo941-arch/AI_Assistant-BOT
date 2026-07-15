@@ -523,6 +523,7 @@ async def get_anime_from_jikan() -> dict:
     """
     jikan_headers = {"User-Agent": "Mozilla/5.0 (compatible; GGMW9Bot/1.0)"}
     candidate_pool = []  # كنخزنو كل أنمي جديد (ماشي posted) شفناه، حتى لو ما جاوبش الفلتر القوي
+    empty_responses = 0
 
     for attempt in range(15):  # يجرب حتى 15 مرة قبل ما يستسلم
         if attempt > 0:
@@ -531,30 +532,39 @@ async def get_anime_from_jikan() -> dict:
         data = await fetch_json("https://api.jikan.moe/v4/random/anime", headers=jikan_headers)
         anime = data.get("data") if data else None
         if not anime:
+            empty_responses += 1
+            print(f"[JIKAN] محاولة {attempt+1}: ما رجعش داتا (data={data})")
             continue
 
         mal_id = anime.get("mal_id")
         if not mal_id or is_posted("anime", str(mal_id)):
+            print(f"[JIKAN] محاولة {attempt+1}: mal_id={mal_id} مبعوث من قبل، كنخطاوه")
             continue
 
         score = anime.get("score") or 0
         members = anime.get("members") or 0
 
         if not anime.get("synopsis"):
+            print(f"[JIKAN] محاولة {attempt+1}: '{anime.get('title')}' بلا synopsis")
             continue  # بلا ملخص، ماشي مفيد فـ embed
 
         candidate_pool.append(anime)  # نحتفظو بيه فـ حالة خاصنا fallback
+        print(f"[JIKAN] محاولة {attempt+1}: '{anime.get('title')}' score={score} members={members}")
 
         if score < 6.0 or members < 15000:  # فلتر معقول (خفّفناه شوية)
             continue
 
+        print(f"[JIKAN] ✅ اختار: {anime.get('title')}")
         return await _build_anime_embed_data(anime)
 
     # ═══ Fallback: الفلتر القوي ما لقاش حتى حاجة، نختارو أحسن واحد من اللي شفناهم ═══
+    print(f"[JIKAN] كملات 15 محاولة. empty_responses={empty_responses}, candidates={len(candidate_pool)}")
     if candidate_pool:
         best = max(candidate_pool, key=lambda a: a.get("score") or 0)
+        print(f"[JIKAN] ⚠️ Fallback اختار: {best.get('title')}")
         return await _build_anime_embed_data(best)
 
+    print("[JIKAN] ❌ ماكاينش حتى نتيجة، رجعنا فارغين")
     return {}
 
 
@@ -2354,119 +2364,148 @@ async def testinfo(ctx, category: str = "all"):
 
 @tasks.loop(minutes=30)
 async def auto_info():
-    """يبعث معلومات من APIs حقيقية — كل 30 دقيقة"""
+    """يبعث معلومات من APIs حقيقية — كل 30 دقيقة. كل فئة معزولة (try/except)
+    باش خطأ فـ فئة وحدة ما يوقفش اللي بعدها."""
 
     # ═══════ 📰 NEWS — أخبار عامة ═══════
-    news_channel = bot.get_channel(NEWS_CHANNEL_ID)
-    if news_channel:
-        news = await get_news_from_api()
-        if news:
-            embed = discord.Embed(
-                title=f"📰 {news['title']}",
-                description=news['description'],
-                color=discord.Color.blue(),
-                url=news['url'],
-                timestamp=datetime.now()
-            )
-            embed.set_author(name=f"📡 {news['source']}")
-            if news['image']:
-                embed.set_image(url=news['image'])
-            embed.set_footer(text="GGMW9 | NewsAPI")
-            await news_channel.send(embed=embed)
+    try:
+        news_channel = bot.get_channel(NEWS_CHANNEL_ID)
+        if news_channel:
+            news = await get_news_from_api()
+            if news:
+                embed = discord.Embed(
+                    title=f"📰 {news['title']}",
+                    description=news['description'],
+                    color=discord.Color.blue(),
+                    url=news['url'],
+                    timestamp=datetime.now()
+                )
+                embed.set_author(name=f"📡 {news['source']}")
+                if news['image']:
+                    embed.set_image(url=news['image'])
+                embed.set_footer(text="GGMW9 | NewsAPI")
+                await news_channel.send(embed=embed)
+    except Exception as e:
+        print(f"[AUTO_INFO] ❌ خطأ فـ NEWS: {e}")
 
     await asyncio.sleep(2)
 
     # ═══════ 🎮 GAMES — أخبار ألعاب ═══════
-    games_channel = bot.get_channel(GAMES_CHANNEL_ID)
-    if games_channel:
-        game = await get_game_from_rawg()
-        if game:
-            embed = discord.Embed(
-                title=f"🎮 {game['name']}",
-                description=game['description'][:400] + "...",
-                color=discord.Color.green(),
-                url=game['url'],
-                timestamp=datetime.now()
-            )
-            embed.add_field(name="📅 Release", value=game['released'], inline=True)
-            embed.add_field(name="⭐ Rating", value=game['rating'], inline=True)
-            embed.add_field(name="🎭 Genre", value=game['genres'], inline=False)
-            if game['poster']:
-                embed.set_image(url=game['poster'])
-            embed.set_footer(text="GGMW9 | RAWG.io")
-            await games_channel.send(embed=embed)
+    try:
+        games_channel = bot.get_channel(GAMES_CHANNEL_ID)
+        if games_channel:
+            game = await get_game_from_rawg()
+            if game:
+                embed = discord.Embed(
+                    title=f"🎮 {game['name']}",
+                    description=game['description'][:400] + "...",
+                    color=discord.Color.green(),
+                    url=game['url'],
+                    timestamp=datetime.now()
+                )
+                embed.add_field(name="📅 Release", value=game['released'], inline=True)
+                embed.add_field(name="⭐ Rating", value=game['rating'], inline=True)
+                embed.add_field(name="🎭 Genre", value=game['genres'], inline=False)
+                if game['poster']:
+                    embed.set_image(url=game['poster'])
+                embed.set_footer(text="GGMW9 | RAWG.io")
+                await games_channel.send(embed=embed)
+    except Exception as e:
+        print(f"[AUTO_INFO] ❌ خطأ فـ GAMES: {e}")
 
     await asyncio.sleep(2)
 
     # ═══════ 🎬 MOVIES — أفلام + ملخص ═══════
-    movies_channel = bot.get_channel(MOVIES_CHANNEL_ID)
-    if movies_channel:
-        movie = await get_movie_from_omdb()
-        if movie:
-            embed = discord.Embed(
-                title=f"🎬 {movie['title']} ({movie['year']})",
-                description=movie['plot'][:500] + "...",
-                color=discord.Color.gold(),
-                url=movie['imdb'],
-                timestamp=datetime.now()
-            )
-            embed.add_field(name="🎭 Genre", value=movie['genre'], inline=True)
-            embed.add_field(name="⭐ IMDB Rating", value=f"{movie['rating']}/10", inline=True)
-            if movie['poster'] and movie['poster'] != "N/A":
-                embed.set_image(url=movie['poster'])
-            embed.set_footer(text="GGMW9 | IMDB via OMDb")
-            await movies_channel.send(embed=embed)
+    try:
+        movies_channel = bot.get_channel(MOVIES_CHANNEL_ID)
+        if movies_channel:
+            movie = await get_movie_from_omdb()
+            if movie:
+                embed = discord.Embed(
+                    title=f"🎬 {movie['title']} ({movie['year']})",
+                    description=movie['plot'][:500] + "...",
+                    color=discord.Color.gold(),
+                    url=movie['imdb'],
+                    timestamp=datetime.now()
+                )
+                embed.add_field(name="🎭 Genre", value=movie['genre'], inline=True)
+                embed.add_field(name="⭐ IMDB Rating", value=f"{movie['rating']}/10", inline=True)
+                if movie['poster'] and movie['poster'] != "N/A":
+                    embed.set_image(url=movie['poster'])
+                embed.set_footer(text="GGMW9 | IMDB via OMDb")
+                await movies_channel.send(embed=embed)
+    except Exception as e:
+        print(f"[AUTO_INFO] ❌ خطأ فـ MOVIES: {e}")
 
     await asyncio.sleep(2)
 
     # ═══════ 📺 ANIME — أنمي + ملخص ═══════
-    anime_channel = bot.get_channel(ANIME_CHANNEL_ID)
-    if anime_channel:
-        anime = await get_anime_from_jikan()
-        if anime:
-            embed = discord.Embed(
-                title=f"📺 {anime['title']}",
-                description=anime['synopsis'][:500] + "...",
-                color=discord.Color.purple(),
-                url=anime['url'],
-                timestamp=datetime.now()
-            )
-            if anime['title_jp']:
-                embed.add_field(name="🇯🇵 Japanese", value=anime['title_jp'], inline=False)
-            embed.add_field(name="📺 Type", value=anime['type'], inline=True)
-            embed.add_field(name="📊 Episodes", value=str(anime['episodes']), inline=True)
-            embed.add_field(name="⭐ MAL Score", value=f"{anime['score']}/10", inline=True)
-            embed.add_field(name="🎭 Genres", value=anime['genres'], inline=False)
-            if anime['poster']:
-                embed.set_image(url=anime['poster'])
-            embed.set_footer(text="GGMW9 | MyAnimeList via Jikan")
-            await anime_channel.send(embed=embed)
+    try:
+        anime_channel = bot.get_channel(ANIME_CHANNEL_ID)
+        print(f"[AUTO_INFO] ANIME channel lookup ({ANIME_CHANNEL_ID}): {anime_channel}")
+        if anime_channel:
+            anime = await get_anime_from_jikan()
+            print(f"[AUTO_INFO] get_anime_from_jikan رجع: {'فيها داتا' if anime else 'فارغة'}")
+            if anime:
+                embed = discord.Embed(
+                    title=f"📺 {anime['title']}",
+                    description=anime['synopsis'][:500] + "...",
+                    color=discord.Color.purple(),
+                    url=anime['url'],
+                    timestamp=datetime.now()
+                )
+                if anime['title_jp']:
+                    embed.add_field(name="🇯🇵 Japanese", value=anime['title_jp'], inline=False)
+                embed.add_field(name="📺 Type", value=anime['type'], inline=True)
+                embed.add_field(name="📊 Episodes", value=str(anime['episodes']), inline=True)
+                embed.add_field(name="⭐ MAL Score", value=f"{anime['score']}/10", inline=True)
+                embed.add_field(name="🎭 Genres", value=anime['genres'], inline=False)
+                if anime['poster']:
+                    embed.set_image(url=anime['poster'])
+                embed.set_footer(text="GGMW9 | MyAnimeList via Jikan")
+                await anime_channel.send(embed=embed)
+                print("[AUTO_INFO] ✅ تبعث embed ديال الأنمي")
+    except Exception as e:
+        print(f"[AUTO_INFO] ❌ خطأ فـ ANIME: {e}")
 
     await asyncio.sleep(2)
 
     # ═══════ 🎧 MUSIC — موسيقى + أغاني ═══════
-    music_channel = bot.get_channel(MUSIC_CHANNEL_ID)
-    if music_channel:
-        music = await get_music_from_lastfm()
-        if music:
-            embed = discord.Embed(
-                title=f"🎵 {music['name']}",
-                description=f"أغنية جديدة من **{music['artist']}**",
-                color=discord.Color.red(),
-                url=music['url'],
-                timestamp=datetime.now()
-            )
-            embed.add_field(name="🎤 Artist", value=music['artist'], inline=True)
-            embed.add_field(name="👥 Listeners", value=f"{music['listeners']:,}", inline=True)
-            if music['poster']:
-                embed.set_image(url=music['poster'])
-            embed.set_footer(text="GGMW9 | Last.fm")
-            await music_channel.send(embed=embed)
+    try:
+        music_channel = bot.get_channel(MUSIC_CHANNEL_ID)
+        if music_channel:
+            music = await get_music_from_lastfm()
+            if music:
+                embed = discord.Embed(
+                    title=f"🎵 {music['name']}",
+                    description=f"أغنية جديدة من **{music['artist']}**",
+                    color=discord.Color.red(),
+                    url=music['url'],
+                    timestamp=datetime.now()
+                )
+                embed.add_field(name="🎤 Artist", value=music['artist'], inline=True)
+                embed.add_field(name="👥 Listeners", value=f"{music['listeners']:,}", inline=True)
+                if music['poster']:
+                    embed.set_image(url=music['poster'])
+                embed.set_footer(text="GGMW9 | Last.fm")
+                await music_channel.send(embed=embed)
+    except Exception as e:
+        print(f"[AUTO_INFO] ❌ خطأ فـ MUSIC: {e}")
 
 
 @auto_info.before_loop
 async def before_auto_info():
     await bot.wait_until_ready()
+
+
+@auto_info.error
+async def auto_info_error(error):
+    """إلا وقع خطأ ما تصيدوش try/except ديال الفئات، هادي كنسجلوه، وكنعاودو نشغلو
+    الـ loop (بلا هاد الشي، tasks.loop كيوقف نهائيا بصمت ملي يطيح خطأ ما تصيدش)."""
+    print(f"[AUTO_INFO] ❌❌ خطأ كبير وقف الـ loop: {error}")
+    await asyncio.sleep(5)
+    if not auto_info.is_running():
+        auto_info.restart()
 
 
 @bot.event
