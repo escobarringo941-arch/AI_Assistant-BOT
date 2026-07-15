@@ -364,10 +364,11 @@ async def get_anime_from_jikan() -> dict:
 
 
 async def get_game_from_rawg() -> dict:
-    """جيب لعبة عشوائية من RAWG API"""
+    """جيب لعبة عشوائية من RAWG API (مع ترجمة الوصف للدارجة)"""
     if not RAWG_API_KEY:
+        print("[RAWG] RAWG_API_KEY ماكاينش!")
         return {}
-    
+
     popular_games = [
         "gta-v", "the-witcher-3-wild-hunt", "red-dead-redemption-2",
         "god-of-war", "elden-ring", "the-last-of-us-part-ii",
@@ -378,25 +379,35 @@ async def get_game_from_rawg() -> dict:
         "rocket-league", "fall-guys", "among-us", "genshin-impact",
         "pokemon-go", "clash-of-clans", "pubg", "free-fire"
     ]
-    
-    game_slug = random.choice(popular_games)
-    url = f"https://api.rawg.io/api/games/{game_slug}"
-    params = {"key": RAWG_API_KEY}
-    
-    data = await fetch_json(url, params)
-    
-    if data and data.get("name"):
+
+    candidates = random.sample(popular_games, len(popular_games))
+
+    for game_slug in candidates[:6]:  # يجرب حتى 6 ألعاب قبل ما يستسلم
+        url = f"https://api.rawg.io/api/games/{game_slug}"
+        params = {"key": RAWG_API_KEY}
+        data = await fetch_json(url, params)
+
+        if not data or not data.get("name"):
+            print(f"[RAWG] {game_slug} ما رجعش داتا صحيحة")
+            continue
+
         rating = data.get("rating", 0)
-        if rating >= 3.0:  # RAWG rating out of 5
-            return {
-                "name": data.get("name", "Unknown"),
-                "released": data.get("released", "N/A"),
-                "genres": ", ".join([g["name"] for g in data.get("genres", [])]),
-                "description": data.get("description_raw", "No description available.")[:500],
-                "rating": f"{rating}/5",
-                "poster": data.get("background_image", ""),
-                "url": f"https://rawg.io/games/{game_slug}"
-            }
+        if rating < 3.0:  # RAWG rating out of 5
+            continue
+
+        description = data.get("description_raw", "No description available.")[:500]
+        description_ar = await translate_to_darija(description)
+
+        return {
+            "name": data.get("name", "Unknown"),
+            "released": data.get("released", "N/A"),
+            "genres": ", ".join([g["name"] for g in data.get("genres", [])]),
+            "description": description_ar,
+            "rating": f"{rating}/5",
+            "poster": data.get("background_image", ""),
+            "url": f"https://rawg.io/games/{game_slug}"
+        }
+
     return {}
 
 
