@@ -256,21 +256,45 @@ async def get_movie_from_omdb() -> dict:
         print("[OMDB] OMDB_API_KEY ماكاينش! خاصك تزيدو فـ Railway Variables.")
         return {}
 
-    # قائمة أفلام معروفة (IMDB IDs)
-    popular_movies = [
+    # أفلام كلاسيكية معروفة
+    classic_movies = [
         "tt0111161", "tt0068646", "tt0468569", "tt0071562", "tt0167260",
         "tt0110912", "tt0050083", "tt0137523", "tt0109830", "tt1375666",
-        "tt0816692", "tt1853728", "tt1345836", "tt4154796", "tt7286456",
-        "tt6751668", "tt2582802", "tt0482571", "tt0407887", "tt0172495",
-        "tt0364569", "tt0253474", "tt0910970", "tt0435761", "tt0268978",
-        "tt0120338", "tt0102926", "tt0080684", "tt0076759", "tt0120689",
-        "tt0209144", "tt0169547", "tt0180093", "tt0120586", "tt0108052"
+        "tt0816692", "tt1853728", "tt1345836", "tt0482571", "tt0407887",
+        "tt0172495", "tt0364569", "tt0253474", "tt0910970", "tt0435761",
+        "tt0268978", "tt0120338", "tt0102926", "tt0080684", "tt0076759",
+        "tt0120689", "tt0209144", "tt0169547", "tt0180093", "tt0120586",
+        "tt0108052"
+    ]
+    # أفلام جداد (2019-2024)
+    recent_movies = [
+        "tt1160419",  # Dune (2021)
+        "tt15239678", # Dune: Part Two (2024)
+        "tt15398776", # Oppenheimer (2023)
+        "tt1517268",  # Barbie (2023)
+        "tt1745960",  # Top Gun: Maverick (2022)
+        "tt6710474",  # Everything Everywhere All at Once (2022)
+        "tt1877830",  # The Batman (2022)
+        "tt10872600", # Spider-Man: No Way Home (2021)
+        "tt9362722",  # Spider-Man: Across the Spider-Verse (2023)
+        "tt5537002",  # Killers of the Flower Moon (2023)
+        "tt6791350",  # Guardians of the Galaxy Vol. 3 (2023)
+        "tt10366206", # John Wick: Chapter 4 (2023)
+        "tt6263850",  # Deadpool & Wolverine (2024)
+        "tt22022452", # Inside Out 2 (2024)
+        "tt8946378",  # Knives Out (2019)
+        "tt11564570", # Glass Onion (2022)
+        "tt2382320",  # No Time to Die (2021)
+        "tt10954600", # Nope (2022)
+        "tt7286456",  # Joker (2019)
+        "tt4154796"   # Avengers: Endgame (2019)
     ]
 
-    candidates = random.sample(popular_movies, len(popular_movies))
+    candidates = random.sample(classic_movies, len(classic_movies)) + random.sample(recent_movies, len(recent_movies))
+    random.shuffle(candidates)
     url = "https://www.omdbapi.com/"
 
-    for movie_id in candidates[:6]:  # يجرب حتى 6 أفلام قبل ما يستسلم
+    for movie_id in candidates[:8]:  # يجرب حتى 8 أفلام (قديم وجديد مخلوطين) قبل ما يستسلم
         params = {
             "i": movie_id,
             "apikey": OMDB_API_KEY,
@@ -306,46 +330,41 @@ async def get_movie_from_omdb() -> dict:
 
 
 async def get_anime_from_jikan() -> dict:
-    """جيب أنمي عشوائي من MyAnimeList عبر Jikan API"""
-    # IDs ديال أنميات مشهورة
-    popular_anime = [
-        1, 5, 6, 15, 20, 21, 24, 25, 26, 30, 32, 43, 45, 47, 50,
-        51, 52, 53, 57, 59, 60, 61, 62, 64, 65, 66, 67, 68, 69, 71,
-        72, 73, 74, 75, 76, 77, 79, 80, 81, 82, 83, 85, 86, 87, 88,
-        89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103,
-        110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124,
-        125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139,
-        140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154,
-        155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169,
-        170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184,
-        185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199,
-        200, 205, 210, 220, 225, 230, 235, 240, 245, 250, 255, 260, 265, 270, 280,
-        290, 300, 310, 320, 330, 340, 350, 360, 370, 380, 390, 400, 410, 420, 430,
-        440, 450, 460, 470, 480, 490, 500, 5114, 9253, 16498, 1535, 30276, 11757,
-        31964, 38000, 39535, 40748, 43608, 48583, 49596, 50265, 51009, 51535, 52034
-    ]
-    
-    candidates = random.sample(popular_anime, min(6, len(popular_anime)))
+    """
+    جيب أنمي (قديم ولا جديد) من Jikan API — عشوائي بين:
+    - الموسم الحالي (أنميات جداد كيخرجو دابا)
+    - توب الأنمي (خلطة قديم وجديد بتقييم عالي)
+    كل مرة كيبدل المصدر، فما كيبقاش دايما كيرجع لنفس الحوايج القديمة.
+    """
     jikan_headers = {"User-Agent": "Mozilla/5.0 (compatible; SimoBot/1.0)"}
 
-    for i, anime_id in enumerate(candidates):
+    source = random.choice(["seasonal", "top", "top", "seasonal"])  # توازن خفيف نحو top (أكثر استقرار)
+    if source == "seasonal":
+        url = "https://api.jikan.moe/v4/seasons/now"
+    else:
+        page = random.randint(1, 8)
+        url = f"https://api.jikan.moe/v4/top/anime?page={page}"
+
+    data = await fetch_json(url, headers=jikan_headers)
+    anime_list = data.get("data", []) if data else []
+
+    # فلتر: نبقاو غير على الأنميات اللي عندها score مزيان ونوعها TV/Movie
+    anime_list = [
+        a for a in anime_list
+        if a.get("score") and a.get("score") >= 6.5 and a.get("type") in ("TV", "Movie")
+    ]
+
+    if not anime_list:
+        print(f"[JIKAN] ماكاينش نتائج صالحة من {url}")
+        return {}
+
+    random.shuffle(anime_list)
+
+    for i, anime in enumerate(anime_list[:6]):
         if i > 0:
-            # Jikan rate-limit: ~3 طلبات/ثانية، خاصنا نستنى شوية بين المحاولات
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(1.0)  # نحترمو rate-limit ديال Jikan
 
-        url = f"https://api.jikan.moe/v4/anime/{anime_id}"
-        data = await fetch_json(url, headers=jikan_headers)
-
-        if not data or "data" not in data:
-            print(f"[JIKAN] id {anime_id} ما رجعش داتا صحيحة")
-            continue
-
-        anime = data["data"]
-        score = anime.get("score", 0)
-        if not score or score < 6.0:
-            continue
-
-        synopsis = anime.get("synopsis", "No synopsis available.")
+        synopsis = anime.get("synopsis") or "No synopsis available."
         synopsis_ar = await translate_to_darija(synopsis)
 
         return {
@@ -355,7 +374,7 @@ async def get_anime_from_jikan() -> dict:
             "episodes": anime.get("episodes", "N/A"),
             "genres": ", ".join([g["name"] for g in anime.get("genres", [])]),
             "synopsis": synopsis_ar,
-            "score": score,
+            "score": anime.get("score", 0),
             "poster": anime.get("images", {}).get("jpg", {}).get("large_image_url", ""),
             "url": anime.get("url", "")
         }
