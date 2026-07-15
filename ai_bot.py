@@ -1254,7 +1254,7 @@ async def on_member_join(member):
         await member.send(
             f"👋 مرحبا بيك فـ **{SERVER_NAME}**!\n\n"
             f"قبل ما تقدر/ي تهضر/ي فالسيرفر، خاصك توافق/ي على القوانين.\n"
-            f"سير/ي لـ <#{VERIFY_CHANNEL_ID}> وكليك على ✅\n\n"
+            f"سير/ي لـ <#{RULES_CHANNEL_ID}> وكليك على ✅\n\n"
             f"شكرا! 🙏"
         )
     except discord.Forbidden:
