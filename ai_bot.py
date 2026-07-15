@@ -587,11 +587,13 @@ async def get_game_from_rawg() -> dict:
 
 
 async def get_track_artwork(artist: str, track_name: str) -> str:
-    """يجيب ملصق (poster) ديال الأغنية من iTunes Search API (مجاني، ما بغاش API key)"""
+    """يجيب ملصق (poster) ديال الأغنية: يجرب iTunes أولا، ولا Deezer كـ fallback (الاثنين مجانيين بلا API key)"""
+    # ═══ المحاولة 1: iTunes Search API ═══
     try:
         url = "https://itunes.apple.com/search"
         params = {
             "term": f"{artist} {track_name}",
+            "media": "music",
             "entity": "song",
             "limit": 1
         }
@@ -600,10 +602,28 @@ async def get_track_artwork(artist: str, track_name: str) -> str:
         if results:
             artwork = results[0].get("artworkUrl100", "")
             if artwork:
-                # نكبرو الحجم من 100x100 لـ 600x600
-                return artwork.replace("100x100bb", "600x600bb")
+                # نكبرو الحجم من 100x100 لـ 600x600 (كيفما كان الفورمات ديال الرابط)
+                return artwork.replace("100x100", "600x600")
+        else:
+            print(f"[ITUNES] ماكاينش نتيجة لـ '{artist} - {track_name}'")
     except Exception as e:
         print(f"[ITUNES] خطأ فـ جلب الملصق: {e}")
+
+    # ═══ المحاولة 2: Deezer API (fallback) ═══
+    try:
+        url = "https://api.deezer.com/search"
+        params = {"q": f"artist:\"{artist}\" track:\"{track_name}\""}
+        data = await fetch_json(url, params)
+        results = data.get("data", []) if data else []
+        if results:
+            cover = results[0].get("album", {}).get("cover_big", "") or results[0].get("album", {}).get("cover_medium", "")
+            if cover:
+                return cover
+        else:
+            print(f"[DEEZER] ماكاينش نتيجة لـ '{artist} - {track_name}'")
+    except Exception as e:
+        print(f"[DEEZER] خطأ فـ جلب الملصق: {e}")
+
     return ""
 
 
