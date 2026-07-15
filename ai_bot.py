@@ -436,49 +436,73 @@ async def get_movie_from_omdb() -> dict:
 
 async def get_anime_from_jikan() -> dict:
     """
-    جيب أنمي (قديم ولا جديد) من Jikan API — عشوائي بين:
-    - الموسم الحالي (أنميات جداد كيخرجو دابا)
-    - توب الأنمي (خلطة قديم وجديد بتقييم عالي)
-    كل مرة كيبدل المصدر، فما كيبقاش دايما كيرجع لنفس الحوايج القديمة.
+    جيب أنمي (قديم ولا جديد، بس واعر ومعروف) من Jikan API عبر ID مباشرة.
+    (بدلنا الطريقة القديمة اللي كانت كتعتمد على seasons/now و top/anime لأنهم
+    عرضة بزاف للـ rate-limit ديال Jikan وكيرجعو فاضيين بزاف).
     """
     jikan_headers = {"User-Agent": "Mozilla/5.0 (compatible; SimoBot/1.0)"}
 
-    source = random.choice(["seasonal", "top", "top", "seasonal"])  # توازن خفيف نحو top (أكثر استقرار)
-    if source == "seasonal":
-        url = "https://api.jikan.moe/v4/seasons/now"
-    else:
-        page = random.randint(1, 8)
-        url = f"https://api.jikan.moe/v4/top/anime?page={page}"
-
-    data = await fetch_json(url, headers=jikan_headers)
-    anime_list = data.get("data", []) if data else []
-
-    # فلتر: نبقاو غير على الأنميات اللي عندها score مزيان ونوعها TV/Movie
-    anime_list = [
-        a for a in anime_list
-        if a.get("score") and a.get("score") >= 6.5 and a.get("type") in ("TV", "Movie")
+    # أنميات كلاسيكية معروفة (قدام)
+    classic_anime = [
+        1535,   # Death Note
+        5114,   # Fullmetal Alchemist: Brotherhood
+        20,     # Naruto
+        1735,   # Naruto: Shippuden
+        21,     # One Piece
+        813,    # Dragon Ball Z
+        1,      # Cowboy Bebop
+        1575,   # Code Geass
+        9253,   # Steins;Gate
+        11061,  # Hunter x Hunter (2011)
+        269,    # Bleach
+        11757,  # Sword Art Online
+        22319,  # Tokyo Ghoul
+        6702,   # Fairy Tail
+        30,     # Neon Genesis Evangelion
+    ]
+    # أنميات جداد وواعرين
+    new_anime = [
+        16498,  # Attack on Titan
+        30276,  # One Punch Man
+        31964,  # My Hero Academia
+        38000,  # Demon Slayer: Kimetsu no Yaiba
+        40748,  # Jujutsu Kaisen
+        44511,  # Chainsaw Man
+        50265,  # Spy x Family
+        37521,  # Vinland Saga
+        32182,  # Mob Psycho 100
+        34599,  # Made in Abyss
+        37779,  # The Promised Neverland
+        42310,  # Cyberpunk: Edgerunners
     ]
 
-    if not anime_list:
-        print(f"[JIKAN] ماكاينش نتائج صالحة من {url}")
-        return {}
-
-    # نفلترو الأنميات اللي تبعثات من قبل باش ما تتعاودش
-    fresh_list = [a for a in anime_list if not is_posted("anime", str(a.get("mal_id")))]
-    if not fresh_list:
+    pool = classic_anime + new_anime
+    fresh = [a for a in pool if not is_posted("anime", str(a))]
+    if not fresh:
         reset_category_history("anime")
-        fresh_list = anime_list
+        fresh = pool
 
-    random.shuffle(fresh_list)
+    candidates = random.sample(fresh, len(fresh))
 
-    for i, anime in enumerate(fresh_list[:6]):
+    for i, mal_id in enumerate(candidates[:8]):  # يجرب حتى 8 أنميات قبل ما يستسلم
         if i > 0:
-            await asyncio.sleep(1.0)  # نحترمو rate-limit ديال Jikan
+            await asyncio.sleep(1.2)  # نحترمو rate-limit ديال Jikan
+
+        url = f"https://api.jikan.moe/v4/anime/{mal_id}/full"
+        data = await fetch_json(url, headers=jikan_headers)
+        anime = data.get("data") if data else None
+
+        if not anime:
+            print(f"[JIKAN] mal_id={mal_id} ما رجعش داتا صحيحة")
+            continue
+
+        if anime.get("score") and anime.get("score") < 6.0:
+            continue
 
         synopsis = anime.get("synopsis") or "No synopsis available."
         synopsis_ar = await translate_to_darija(synopsis)
 
-        mark_posted("anime", str(anime.get("mal_id")))
+        mark_posted("anime", str(mal_id))
 
         return {
             "title": anime.get("title", "Unknown"),
@@ -1714,7 +1738,8 @@ async def testinfo(ctx, category: str = "all"):
             data = await func()
             if data:
                 status = "✅ نجح"
-                preview = str(data)[:100]
+                has_poster = "🖼️ فيه صورة" if data.get("poster") else "🚫 بلا صورة"
+                preview = f"{has_poster}\n{str(data)[:300]}"
             else:
                 status = "⚠️ ما جاب والو (API فاضي ولا مفتاح غالط)"
                 preview = "ما كاينش داتا"
