@@ -5,6 +5,7 @@ import random
 import asyncio
 import json
 import re
+from typing import Optional
 from datetime import datetime, timedelta
 from discord.ext import commands, tasks
 from collections import defaultdict
@@ -51,6 +52,7 @@ MOD_LOGS_CHANNEL_ID = 1526470164235681832
 VERIFY_CHANNEL_ID = 1526481352264781854
 RULES_CHANNEL_ID = 1526474691789721700
 BLACKLIST_CHANNEL_ID = 1526858911477661786  # ← حط هنا ID ديال channel "Blacklist things"
+REPORTS_CHANNEL_ID = 1526884019105431562    # ← حط هنا ID ديال channel البلاغات (فين كتوصل البلاغات ديال !report)
 
 UNVERIFIED_ROLE_ID = 1526452828267085915
 MEMBER_ROLE_ID = 1526451890399739934
@@ -1201,7 +1203,7 @@ async def setup_rules_message(guild: discord.Guild):
 
 
 async def setup_blacklist_message(guild: discord.Guild):
-    """كيبعث embed فـ channel 'Blacklist things' فيه الممنوعات والعقوبات المتدرجة"""
+    """كيبعث embed فـ channel 'Blacklist things' فيه الممنوعات والعقوبات المتدرجة بالتفصيل"""
     channel = bot.get_channel(BLACKLIST_CHANNEL_ID)
     if not channel:
         return
@@ -1212,34 +1214,84 @@ async def setup_blacklist_message(guild: discord.Guild):
     embed = discord.Embed(
         title="🚫 Blacklist Things — الممنوعات والعقوبات",
         description=(
-            "هادي لائحة بالحوايج الممنوعة فالسيرفر، والعقوبة المرتبطة بكل وحدة. "
-            "البوت كيراقب هاد النقاط **أوتوماتيكياً 24/24**، فراك محذر."
+            "قرا/ي هاد الصفحة بالكامل قبل ما تبدا/ي تهضر/ي فالسيرفر. "
+            "البوت كيراقب هاد النقاط **أوتوماتيكياً 24/24**، وكل مخالفة عندها ثمن.\n"
+            "الهدف من هاد الصفحة ماشي نخوفوك، بغينا غير تفهم/ي شنو ممنوع بالضبط باش ما تتعاقب/ي بلا وعي."
         ),
         color=discord.Color.dark_red(),
         timestamp=datetime.now()
     )
+
     embed.add_field(
-        name="⛔ الممنوعات",
+        name="1️⃣ السبام والإعلانات",
         value=(
-            "• السبام والرسائل المتكررة\n"
-            "• روابط الديسكورد الدعائية بلا إذن\n"
-            "• الشتم بعصبية او خارج نطاق المزاح، العنصرية، والتنمر\n"
-            "• محتوى +18 / جنسي / عنيف / صادم\n"
-            "• Doxxing (نشر معلومات شخصية ديال الآخرين)\n"
-            "• أي كلمة/رابط محظور مسجل عند الإدارة"
+            "**ممنوع:** تكرار نفس الرسالة، بعث رابط ديسكورد ديال سيرفر آخر بلا إذن، "
+            "الإعلان لقناة/منتوج/خدمة بلا موافقة الإدارة، Mention مفرط (@everyone/@here بلا حق).\n"
+            "**مثال:** بعثتي `discord.gg/xxxx` فـ #general باش تجيب ناس لسيرفر آخر → تحذير + مسح الرسالة."
         ),
         inline=False
     )
+    embed.add_field(
+        name="2️⃣ الاحترام بين الأعضاء",
+        value=(
+            "**ممنوع:** السب المباشر، التنمر، العنصرية، الإهانة الشخصية، التهديد بأي شكل.\n"
+            "**مثال:** كتبتي كلام عنصري ولا مهين على عضو آخر → تحذير مباشر، ومع التكرار طرد/حظر."
+        ),
+        inline=False
+    )
+    embed.add_field(
+        name="3️⃣ محتوى +18 / عنيف / صادم",
+        value=(
+            "**ممنوع:** صور/فيديوهات/روابط جنسية، محتوى عنيف صريح (دم، تعذيب...)، مشاهد صادمة.\n"
+            "**مثال:** بعثتي صورة/رابط فيه محتوى جنسي حتى بشكل 'مزحة' → **حظر مباشر بلا تحذير**."
+        ),
+        inline=False
+    )
+    embed.add_field(
+        name="4️⃣ الخصوصية (Doxxing)",
+        value=(
+            "**ممنوع:** نشر رقم تيليفون، عنوان، صور شخصية، ولا أي معلومة كتعرف بشخص آخر بلا إذنو.\n"
+            "**مثال:** نشرتي سكرين شوت فيه رقم ديال عضو آخر → **حظر مباشر**."
+        ),
+        inline=False
+    )
+    embed.add_field(
+        name="5️⃣ استعمال القنوات بطريقة غالطة",
+        value=(
+            "**ممنوع:** الهضرة خارج الموضوع فـ channel مخصص (مثلاً هضرة عادية فـ #announcements).\n"
+            "**مثال:** كتبتي ميم فـ channel ديال الأخبار الرسمية → مسح الرسالة + تنبيه."
+        ),
+        inline=False
+    )
+
     embed.add_field(
         name="⚖️ العقوبات المتدرجة",
         value=(
-            f"1️⃣ **تحذير** — كل مخالفة كتبان تحذير أوتوماتيكي ({WARN_LIMIT} تحذيرات = طرد)\n"
+            f"1️⃣ **تحذير** — كل مخالفة خفيفة كتبان تحذير أوتوماتيكي ({WARN_LIMIT} تحذيرات = طرد)\n"
             f"2️⃣ **كتم (Mute)** — إلا بعتي {SPAM_THRESHOLD} رسايل فـ {SPAM_INTERVAL} ثواني (سبام)، كتتكتم أوتوماتيك\n"
             f"3️⃣ **طرد (Kick)** — عند الوصول لـ {WARN_LIMIT}/{WARN_LIMIT} تحذيرات\n"
-            f"4️⃣ **حظر (Ban)** — فحالة مخالفة خطيرة (Doxxing، تهديد، محتوى ممنوع بشدة) أو تكرار الطرد"
+            f"4️⃣ **حظر (Ban) مباشر** — Doxxing، محتوى +18، تهديد خطير، أو تكرار الطرد"
         ),
         inline=False
     )
+
+    if REPORTS_CHANNEL_ID:
+        embed.add_field(
+            name="🚨 كيفاش تبلغ عن مخالفة (!report)",
+            value=(
+                "إلا شفتي شي مخالفة والبوت ما تدخلش أوتوماتيكياً، عندك طريقتين:\n\n"
+                "**1) بلاغ على عضو معين:**\n"
+                "`!report @العضو السبب`\n"
+                "مثال: `!report @Ahmed بعث رابط ديال سيرفر آخر فـ #general`\n\n"
+                "**2) بلاغ عام (بلا ما تحدد عضو):**\n"
+                "`!report وصف المشكل`\n"
+                "مثال: `!report كاين ناس كيهضرو بزربة فـ #announcements`\n\n"
+                "💡 **نصيحة:** إلا عندك سكرين شوت ديال المخالفة، بعثو مباشرة للمشرفين ولا فـ نفس الرسالة معاك (mention العضو بحال Ahmed)\n"
+                "⚠️ الرسالة ديالك كتمسح أوتوماتيك من الشات العام والبلاغ كيوصل مباشرة للإدارة، حتى حد ماغاديش يشوف بلي بلغتي."
+            ),
+            inline=False
+        )
+
     embed.set_footer(text="سيمو | Auto-Moderation System")
     await channel.send(embed=embed)
 
@@ -1781,6 +1833,60 @@ async def unmute(ctx, member: discord.Member):
         )
     except discord.Forbidden:
         await ctx.send("❌ ما عنديش الصلاحية!")
+
+
+@bot.command()
+@commands.cooldown(1, 60, commands.BucketType.user)
+async def report(ctx, member: Optional[discord.Member] = None, *, reason: str = "ماكاينش تفاصيل"):
+    """أي عضو يقدر يبلغ عن مخالفة (بحال البوت ما تدخلش أوتوماتيكياً)"""
+    try:
+        await ctx.message.delete()
+    except Exception:
+        pass
+
+    if not REPORTS_CHANNEL_ID:
+        await ctx.send("❌ نظام البلاغات ماعادش مفعل، بلغ الإدارة تحط `REPORTS_CHANNEL_ID`.", delete_after=8)
+        return
+
+    reports_channel = bot.get_channel(REPORTS_CHANNEL_ID)
+    if not reports_channel:
+        await ctx.send("❌ ما قدرتش نلقى channel البلاغات.", delete_after=8)
+        return
+
+    embed = discord.Embed(
+        title="🚨 بلاغ جديد",
+        color=discord.Color.orange(),
+        timestamp=datetime.now()
+    )
+    embed.add_field(name="👤 المبلّغ", value=f"{ctx.author.mention} ({ctx.author.name})", inline=False)
+    if member:
+        embed.add_field(name="🎯 العضو المبلَّغ عنه", value=f"{member.mention} ({member.name})", inline=False)
+    embed.add_field(name="📝 السبب / التفاصيل", value=reason[:1000], inline=False)
+    embed.add_field(name="📍 القناة", value=ctx.channel.mention, inline=False)
+    embed.set_footer(text="سيمو | Report System")
+
+    # ═══════ منشن للمشرفين/الأدمن ═══════
+    mention_roles = " ".join(f"<@&{rid}>" for rid in EXEMPT_ROLE_IDS)
+    await reports_channel.send(content=mention_roles or None, embed=embed)
+
+    # ═══════ DM لصاحب السيرفر ═══════
+    try:
+        owner = ctx.guild.get_member(OWNER_ID) or await bot.fetch_user(OWNER_ID)
+        if owner:
+            await owner.send(embed=embed)
+    except Exception:
+        pass
+
+    await ctx.send(f"✅ توصل البلاغ ديالك للإدارة، شكراً {ctx.author.mention} 🙏", delete_after=8)
+
+
+@report.error
+async def report_error(ctx, error):
+    if isinstance(error, commands.CommandOnCooldown):
+        await ctx.send(f"⏳ صبر شوية ({error.retry_after:.0f}s) قبل ما تبعت بلاغ آخر.", delete_after=5)
+    elif isinstance(error, commands.MemberNotFound):
+        # ممكن يكون ماكاينش mention، نديروه كـ بلاغ عام بلا عضو محدد
+        pass
 
 
 @bot.command()
