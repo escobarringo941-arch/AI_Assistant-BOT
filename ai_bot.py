@@ -638,10 +638,10 @@ async def on_member_join(member):
             title=f"👋 مرحبا بيك {member.display_name}!",
             description=(
                 f"واخا أخويا/أختي! **{SERVER_NAME}** هو السيرفر ديالك.\n\n"
-                f"**قبل ما تبدأ:**\n"
-                f"1️⃣ اقرأ القوانين فـ <#{RULES_CHANNEL_ID}>\n"
-                f"2️⃣ وافق فـ <#{VERIFY_CHANNEL_ID}>\n"
-                f"3️⃣ استمتع! 🎉"
+                f"**قبل ما تبدأ/ي:**\n"
+                f"1️⃣ قرأ/ي القوانين فـ <#{RULES_CHANNEL_ID}>\n"
+                f"2️⃣ وافق/ي فـ <#{VERIFY_CHANNEL_ID}>\n"
+                f"3️⃣ استمتع/ي! 🎉"
             ),
             color=discord.Color.orange(),
             timestamp=datetime.now()
@@ -652,7 +652,7 @@ async def on_member_join(member):
     try:
         await member.send(
             f"👋 مرحبا بيك فـ **{SERVER_NAME}**!\n\n"
-            f"قبل ما تقدر تهضر فالسيرفر، خاصك توافق على القوانين.\n"
+            f"قبل ما تقدر/ي تهضر/ي فالسيرفر، خاصك توافق/ي على القوانين.\n"
             f"روح لـ <#{VERIFY_CHANNEL_ID}> وكليك على ✅\n\n"
             f"شكرا! 🙏"
         )
