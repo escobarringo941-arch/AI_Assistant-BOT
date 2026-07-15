@@ -54,6 +54,13 @@ UNVERIFIED_ROLE_ID = 1526452828267085915
 MEMBER_ROLE_ID = 1526451890399739934
 MUTED_ROLE_ID = 1526468718534590574
 
+# ═══════ الاستثناءات ديال Auto-Mod (Owner + أدوار معفيين) ═══════
+OWNER_ID = 1260089246216097832  # صاحب السيرفر
+EXEMPT_ROLE_IDS = [
+    1525712399456272495,  # Admin
+    1526182506272133180,  # Moderator
+]
+
 BANNED_WORDS = [
     'سبام', 'spam', 'naked.', 'discord.gg', 'العزية', 'عزي',
     'nude', 'porn', 'xxx', 'sex', 'fuck', 'shit', 'bitch'
@@ -553,6 +560,17 @@ async def add_warn(member: discord.Member, reason: str) -> int:
     return warns_db[user_id]["count"]
 
 
+def is_exempt(member: discord.Member) -> bool:
+    """واش هاد العضو معفي من Auto-Mod (Owner ولا شي رول معفي)"""
+    if OWNER_ID and member.id == OWNER_ID:
+        return True
+    if EXEMPT_ROLE_IDS:
+        member_role_ids = {role.id for role in member.roles}
+        if member_role_ids.intersection(EXEMPT_ROLE_IDS):
+            return True
+    return False
+
+
 def get_warns(user_id: str) -> dict:
     return warns_db.get(user_id, {"count": 0, "reasons": [], "dates": []})
 
@@ -621,7 +639,7 @@ async def on_member_join(member):
             description=(
                 f"واخا أخويا/أختي! **{SERVER_NAME}** هو السيرفر ديالك.\n\n"
                 f"**قبل ما تبدأ:**\n"
-                f"1️⃣ اقرأ/ي القوانين فـ <#{RULES_CHANNEL_ID}>\n"
+                f"1️⃣ اقرأ القوانين فـ <#{RULES_CHANNEL_ID}>\n"
                 f"2️⃣ وافق فـ <#{VERIFY_CHANNEL_ID}>\n"
                 f"3️⃣ استمتع! 🎉"
             ),
@@ -634,8 +652,8 @@ async def on_member_join(member):
     try:
         await member.send(
             f"👋 مرحبا بيك فـ **{SERVER_NAME}**!\n\n"
-            f"قبل ما تقدر/ي تهضر فالسيرفر، خاصك توافق على القوانين.\n"
-            f"سير لـ <#{VERIFY_CHANNEL_ID}> وكليك على ✅\n\n"
+            f"قبل ما تقدر تهضر فالسيرفر، خاصك توافق على القوانين.\n"
+            f"روح لـ <#{VERIFY_CHANNEL_ID}> وكليك على ✅\n\n"
             f"شكرا! 🙏"
         )
     except discord.Forbidden:
@@ -776,78 +794,81 @@ async def on_message(message):
         return
     msg_lower = message.content.lower()
     gender = detect_gender(message.author.name, message.author.display_name)
-    for word in BANNED_WORDS:
-        if word.lower() in msg_lower:
+
+    if not is_exempt(message.author):
+        for word in BANNED_WORDS:
+            if word.lower() in msg_lower:
+                try:
+                    await message.delete()
+                    await message.channel.send(
+                        f"🚫 {message.author.mention} ممنوع السبام والروابط!",
+                        delete_after=5
+                    )
+                    count = await add_warn(message.author, f"رسالة محذوفة (Auto-Mod): {word}")
+                    await log_action(
+                        message.guild,
+                        "🚨 Auto-Mod | رسالة محذوفة",
+                        f"**المستخدم:** {message.author.mention}\n"
+                        f"**القناة:** {message.channel.mention}\n"
+                        f"**الكلمة الممنوعة:** `{word}`\n"
+                        f"**المحتوى:** {message.content[:500]}\n"
+                        f"**التحذيرات:** {count}/{WARN_LIMIT}",
+                        discord.Color.red()
+                    )
+                    if count >= WARN_LIMIT:
+                        try:
+                            await message.author.kick(reason=f"3 تحذيرات (Auto-Mod)")
+                            await message.channel.send(
+                                f"🚫 {message.author.mention} تم طرده تلقائياً (3 تحذيرات)!",
+                                delete_after=10
+                            )
+                            await log_action(
+                                message.guild,
+                                "🚫 Auto-Kick",
+                                f"**المستخدم:** {message.author.mention}\n"
+                                f"**السبب:** 3 تحذيرات (Auto-Mod)",
+                                discord.Color.dark_red()
+                            )
+                            clear_warns(str(message.author.id))
+                        except discord.Forbidden:
+                            pass
+                    return
+                except discord.Forbidden:
+                    pass
+        user_id = str(message.author.id)
+        now = datetime.now()
+        if user_id not in spam_tracker:
+            spam_tracker[user_id] = []
+        spam_tracker[user_id].append(now)
+        spam_tracker[user_id] = [
+            t for t in spam_tracker[user_id]
+            if now - t < timedelta(seconds=SPAM_INTERVAL)
+        ]
+        if len(spam_tracker[user_id]) >= SPAM_THRESHOLD:
             try:
-                await message.delete()
                 await message.channel.send(
-                    f"🚫 {message.author.mention} ممنوع السبام والروابط!",
+                    f"🛑 {message.author.mention} توقف عن السبام!",
                     delete_after=5
                 )
-                count = await add_warn(message.author, f"رسالة محذوفة (Auto-Mod): {word}")
-                await log_action(
-                    message.guild,
-                    "🚨 Auto-Mod | رسالة محذوفة",
-                    f"**المستخدم:** {message.author.mention}\n"
-                    f"**القناة:** {message.channel.mention}\n"
-                    f"**الكلمة الممنوعة:** `{word}`\n"
-                    f"**المحتوى:** {message.content[:500]}\n"
-                    f"**التحذيرات:** {count}/{WARN_LIMIT}",
-                    discord.Color.red()
-                )
-                if count >= WARN_LIMIT:
-                    try:
-                        await message.author.kick(reason=f"3 تحذيرات (Auto-Mod)")
-                        await message.channel.send(
-                            f"🚫 {message.author.mention} تم طرده تلقائياً (3 تحذيرات)!",
-                            delete_after=10
-                        )
-                        await log_action(
-                            message.guild,
-                            "🚫 Auto-Kick",
-                            f"**المستخدم:** {message.author.mention}\n"
-                            f"**السبب:** 3 تحذيرات (Auto-Mod)",
-                            discord.Color.dark_red()
-                        )
-                        clear_warns(str(message.author.id))
-                    except discord.Forbidden:
-                        pass
-                return
+                muted_role = message.guild.get_role(MUTED_ROLE_ID)
+                if muted_role:
+                    await message.author.add_roles(muted_role)
+                    if user_id in mute_tasks and not mute_tasks[user_id].done():
+                        mute_tasks[user_id].cancel()
+                    task = asyncio.create_task(auto_unmute(message.author, 5, message.guild))
+                    mute_tasks[user_id] = task
+                    await log_action(
+                        message.guild,
+                        "🛑 Auto-Mod | سبام مكتشف",
+                        f"**المستخدم:** {message.author.mention}\n"
+                        f"**الإجراء:** Mute 5 دقائق (تلقائي)\n"
+                        f"**الرسائل:** {len(spam_tracker[user_id])} فـ {SPAM_INTERVAL} ثواني",
+                        discord.Color.orange()
+                    )
+                    spam_tracker[user_id] = []
             except discord.Forbidden:
                 pass
-    user_id = str(message.author.id)
-    now = datetime.now()
-    if user_id not in spam_tracker:
-        spam_tracker[user_id] = []
-    spam_tracker[user_id].append(now)
-    spam_tracker[user_id] = [
-        t for t in spam_tracker[user_id]
-        if now - t < timedelta(seconds=SPAM_INTERVAL)
-    ]
-    if len(spam_tracker[user_id]) >= SPAM_THRESHOLD:
-        try:
-            await message.channel.send(
-                f"🛑 {message.author.mention} توقف عن السبام!",
-                delete_after=5
-            )
-            muted_role = message.guild.get_role(MUTED_ROLE_ID)
-            if muted_role:
-                await message.author.add_roles(muted_role)
-                if user_id in mute_tasks and not mute_tasks[user_id].done():
-                    mute_tasks[user_id].cancel()
-                task = asyncio.create_task(auto_unmute(message.author, 5, message.guild))
-                mute_tasks[user_id] = task
-                await log_action(
-                    message.guild,
-                    "🛑 Auto-Mod | سبام مكتشف",
-                    f"**المستخدم:** {message.author.mention}\n"
-                    f"**الإجراء:** Mute 5 دقائق (تلقائي)\n"
-                    f"**الرسائل:** {len(spam_tracker[user_id])} فـ {SPAM_INTERVAL} ثواني",
-                    discord.Color.orange()
-                )
-                spam_tracker[user_id] = []
-        except discord.Forbidden:
-            pass
+
     if "سيمو" in msg_lower or "simo" in msg_lower:
         await message.reply("نعام! 😂 واش بغيتي؟", mention_author=False)
         return
@@ -933,6 +954,12 @@ async def on_message(message):
 @bot.command()
 @commands.has_permissions(kick_members=True)
 async def kick(ctx, member: discord.Member, *, reason="ما ذكرش سبب"):
+    if OWNER_ID and member.id == OWNER_ID:
+        await ctx.send("❌ ما نقدرش نمس فـ Owner ديال السيرفر!")
+        return
+    if is_exempt(member):
+        await ctx.send("❌ هاد العضو معفي من Auto-Mod/Moderation (Admin/Mod)!")
+        return
     try:
         await member.kick(reason=reason)
         embed = discord.Embed(
@@ -962,6 +989,12 @@ async def kick(ctx, member: discord.Member, *, reason="ما ذكرش سبب"):
 @bot.command()
 @commands.has_permissions(ban_members=True)
 async def ban(ctx, member: discord.Member, *, reason="ما ذكرش سبب"):
+    if OWNER_ID and member.id == OWNER_ID:
+        await ctx.send("❌ ما نقدرش نمس فـ Owner ديال السيرفر!")
+        return
+    if is_exempt(member):
+        await ctx.send("❌ هاد العضو معفي من Auto-Mod/Moderation (Admin/Mod)!")
+        return
     try:
         await member.ban(reason=reason)
         embed = discord.Embed(
@@ -1041,6 +1074,12 @@ async def clear(ctx, amount: int = 10):
 @bot.command()
 @commands.has_permissions(moderate_members=True)
 async def mute(ctx, member: discord.Member, duration: int = 5, *, reason="ما ذكرش سبب"):
+    if OWNER_ID and member.id == OWNER_ID:
+        await ctx.send("❌ ما نقدرش نمس فـ Owner ديال السيرفر!")
+        return
+    if is_exempt(member):
+        await ctx.send("❌ هاد العضو معفي من Auto-Mod/Moderation (Admin/Mod)!")
+        return
     muted_role = ctx.guild.get_role(MUTED_ROLE_ID)
     if not muted_role:
         await ctx.send("❌ ما لقيتش دور Mute! حط ID صحيح فـ MUTED_ROLE_ID.")
@@ -1110,6 +1149,12 @@ async def unmute(ctx, member: discord.Member):
 @bot.command()
 @commands.has_permissions(kick_members=True)
 async def warn(ctx, member: discord.Member, *, reason):
+    if OWNER_ID and member.id == OWNER_ID:
+        await ctx.send("❌ ما نقدرش نمس فـ Owner ديال السيرفر!")
+        return
+    if is_exempt(member):
+        await ctx.send("❌ هاد العضو معفي من Auto-Mod/Moderation (Admin/Mod)!")
+        return
     count = await add_warn(member, reason)
     embed = discord.Embed(
         title="⚠️ تحذير",
