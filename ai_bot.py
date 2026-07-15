@@ -99,6 +99,77 @@ spam_tracker = {}
 mute_tasks = {}
 reaction_role_messages = {}  # {message_id: {emoji: role_id}}
 
+# ═══════════════════════════════════════════════════════
+# ║   سجل المحتوى المنشور (باش ما يتعاودش تا شي حاجة)      ║
+# ═══════════════════════════════════════════════════════
+POSTED_HISTORY_FILE = "posted_history.json"
+
+posted_history = {
+    "news": [],     # روابط الأخبار اللي تبعثات
+    "games": [],    # slugs ديال الألعاب اللي تبعثات
+    "movies": [],   # IMDB IDs ديال الأفلام اللي تبعثات
+    "anime": [],    # mal_id ديال الأنميات اللي تبعثات
+    "music": [],    # "artist|track" اللي تبعثات
+}
+
+MAX_HISTORY = {
+    "news": 500,
+    "games": 250,
+    "movies": 250,
+    "anime": 800,
+    "music": 500,
+}
+
+
+def load_posted_history():
+    """يقرا السجل ديال المحتوى المنشور من ملف JSON (إلا كان موجود)"""
+    global posted_history
+    try:
+        with open(POSTED_HISTORY_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        for key in posted_history:
+            if isinstance(data.get(key), list):
+                posted_history[key] = data[key]
+        print(f"[HISTORY] تحمل السجل: { {k: len(v) for k, v in posted_history.items()} }")
+    except FileNotFoundError:
+        print("[HISTORY] ماكاينش سجل سابق، غادي نبداو من الصفر")
+    except Exception as e:
+        print(f"[HISTORY] خطأ فـ التحميل: {e}")
+
+
+def save_posted_history():
+    """يحفظ السجل ديال المحتوى المنشور فـ ملف JSON"""
+    try:
+        with open(POSTED_HISTORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(posted_history, f, ensure_ascii=False)
+    except Exception as e:
+        print(f"[HISTORY] خطأ فـ الحفظ: {e}")
+
+
+def is_posted(category: str, item_id: str) -> bool:
+    return item_id in posted_history.get(category, [])
+
+
+def mark_posted(category: str, item_id: str):
+    """يسجل حاجة كـ 'تبعثات' باش ما تتعاودش، ويقلّم السجل إلا كبر بزاف"""
+    lst = posted_history.setdefault(category, [])
+    if item_id not in lst:
+        lst.append(item_id)
+    limit = MAX_HISTORY.get(category, 300)
+    if len(lst) > limit:
+        posted_history[category] = lst[-limit:]
+    save_posted_history()
+
+
+def reset_category_history(category: str):
+    """كي تسالا كاع الاختيارات ديال شي category، كنبداو من جديد"""
+    posted_history[category] = []
+    save_posted_history()
+    print(f"[HISTORY] {category}: سالات كاع الاختيارات، بدينا من جديد")
+
+
+load_posted_history()
+
 
 def get_system_prompt(user_gender="unknown"):
     base_prompt = 'أنت "سيمو"، واحد الولد ديال الدار البيضاء، عايش فـ حي شعبي. كتهضر بالدارجة المغربية 100%.'
@@ -276,7 +347,7 @@ async def get_movie_from_omdb() -> dict:
         print("[OMDB] OMDB_API_KEY ماكاينش! خاصك تزيدو فـ Railway Variables.")
         return {}
 
-    # أفلام كلاسيكية معروفة
+    # أفلام كلاسيكية معروفة (قدام)
     classic_movies = [
         "tt0111161", "tt0068646", "tt0468569", "tt0071562", "tt0167260",
         "tt0110912", "tt0050083", "tt0137523", "tt0109830", "tt1375666",
@@ -284,9 +355,10 @@ async def get_movie_from_omdb() -> dict:
         "tt0172495", "tt0364569", "tt0253474", "tt0910970", "tt0435761",
         "tt0268978", "tt0120338", "tt0102926", "tt0080684", "tt0076759",
         "tt0120689", "tt0209144", "tt0169547", "tt0180093", "tt0120586",
-        "tt0108052"
+        "tt0108052", "tt0088763", "tt0095016", "tt0086190", "tt0119217",
+        "tt0114369", "tt0087843", "tt0099685", "tt0113277", "tt0112573"
     ]
-    # أفلام جداد (2019-2024)
+    # أفلام جداد وواعرين (2019-2025)
     recent_movies = [
         "tt1160419",  # Dune (2021)
         "tt15239678", # Dune: Part Two (2024)
@@ -307,14 +379,25 @@ async def get_movie_from_omdb() -> dict:
         "tt2382320",  # No Time to Die (2021)
         "tt10954600", # Nope (2022)
         "tt7286456",  # Joker (2019)
-        "tt4154796"   # Avengers: Endgame (2019)
+        "tt4154796",  # Avengers: Endgame (2019)
+        "tt17351924", # A Quiet Place: Day One (2024)
+        "tt14539740", # Furiosa (2024)
+        "tt26743210", # Wicked (2024)
+        "tt13238346", # Gladiator II (2024)
+        "tt1630029",  # Avatar: The Way of Water (2022)
     ]
 
-    candidates = random.sample(classic_movies, len(classic_movies)) + random.sample(recent_movies, len(recent_movies))
-    random.shuffle(candidates)
+    # نخلطو قديم وجديد باش يبانو الاثنين، ونفلترو الحوايج اللي تبعثات
+    pool = classic_movies + recent_movies
+    fresh = [m for m in pool if not is_posted("movies", m)]
+    if not fresh:
+        reset_category_history("movies")
+        fresh = pool
+
+    candidates = random.sample(fresh, len(fresh))
     url = "https://www.omdbapi.com/"
 
-    for movie_id in candidates[:8]:  # يجرب حتى 8 أفلام (قديم وجديد مخلوطين) قبل ما يستسلم
+    for movie_id in candidates[:10]:  # يجرب حتى 10 أفلام (قديم وجديد مخلوطين) قبل ما يستسلم
         params = {
             "i": movie_id,
             "apikey": OMDB_API_KEY,
@@ -335,6 +418,8 @@ async def get_movie_from_omdb() -> dict:
 
         plot = data.get("Plot", "No plot available.")
         plot_ar = await translate_to_darija(plot)
+
+        mark_posted("movies", movie_id)
 
         return {
             "title": data.get("Title", "Unknown"),
@@ -378,14 +463,22 @@ async def get_anime_from_jikan() -> dict:
         print(f"[JIKAN] ماكاينش نتائج صالحة من {url}")
         return {}
 
-    random.shuffle(anime_list)
+    # نفلترو الأنميات اللي تبعثات من قبل باش ما تتعاودش
+    fresh_list = [a for a in anime_list if not is_posted("anime", str(a.get("mal_id")))]
+    if not fresh_list:
+        reset_category_history("anime")
+        fresh_list = anime_list
 
-    for i, anime in enumerate(anime_list[:6]):
+    random.shuffle(fresh_list)
+
+    for i, anime in enumerate(fresh_list[:6]):
         if i > 0:
             await asyncio.sleep(1.0)  # نحترمو rate-limit ديال Jikan
 
         synopsis = anime.get("synopsis") or "No synopsis available."
         synopsis_ar = await translate_to_darija(synopsis)
+
+        mark_posted("anime", str(anime.get("mal_id")))
 
         return {
             "title": anime.get("title", "Unknown"),
@@ -408,20 +501,37 @@ async def get_game_from_rawg() -> dict:
         print("[RAWG] RAWG_API_KEY ماكاينش!")
         return {}
 
-    popular_games = [
+    # ألعاب قديمة معروفة (كلاسيكيات)
+    classic_games = [
         "gta-v", "the-witcher-3-wild-hunt", "red-dead-redemption-2",
-        "god-of-war", "elden-ring", "the-last-of-us-part-ii",
-        "horizon-zero-dawn", "ghost-of-tsushima", "spider-man",
+        "god-of-war", "the-last-of-us-part-ii", "horizon-zero-dawn",
+        "minecraft", "league-of-legends", "counter-strike-global-offensive",
+        "among-us", "pokemon-go", "clash-of-clans", "pubg",
+        "half-life-2", "the-elder-scrolls-v-skyrim", "portal-2",
+        "grand-theft-auto-san-andreas", "dark-souls-iii",
+        "the-legend-of-zelda-breath-of-the-wild", "fifa-23",
+        "rocket-league", "dota-2", "world-of-warcraft"
+    ]
+    # ألعاب جداد وواعرين
+    new_games = [
+        "elden-ring", "ghost-of-tsushima", "spider-man",
         "cyberpunk-2077", "assassins-creed-valhalla", "call-of-duty-warzone",
-        "fortnite", "minecraft", "valorant", "league-of-legends",
-        "counter-strike-global-offensive", "apex-legends", "overwatch-2",
-        "rocket-league", "fall-guys", "among-us", "genshin-impact",
-        "pokemon-go", "clash-of-clans", "pubg", "free-fire"
+        "fortnite", "valorant", "apex-legends", "overwatch-2",
+        "fall-guys", "genshin-impact", "free-fire",
+        "baldurs-gate-3", "helldivers-2", "black-myth-wukong",
+        "hogwarts-legacy", "starfield", "diablo-4",
+        "street-fighter-6", "ea-sports-fc-24"
     ]
 
-    candidates = random.sample(popular_games, len(popular_games))
+    pool = classic_games + new_games
+    fresh = [g for g in pool if not is_posted("games", g)]
+    if not fresh:
+        reset_category_history("games")
+        fresh = pool
 
-    for game_slug in candidates[:6]:  # يجرب حتى 6 ألعاب قبل ما يستسلم
+    candidates = random.sample(fresh, len(fresh))
+
+    for game_slug in candidates[:8]:  # يجرب حتى 8 ألعاب (قديم وجديد) قبل ما يستسلم
         url = f"https://api.rawg.io/api/games/{game_slug}"
         params = {"key": RAWG_API_KEY}
         data = await fetch_json(url, params)
@@ -437,6 +547,8 @@ async def get_game_from_rawg() -> dict:
         description = data.get("description_raw", "No description available.")[:500]
         description_ar = await translate_to_darija(description)
 
+        mark_posted("games", game_slug)
+
         return {
             "name": data.get("name", "Unknown"),
             "released": data.get("released", "N/A"),
@@ -448,6 +560,27 @@ async def get_game_from_rawg() -> dict:
         }
 
     return {}
+
+
+async def get_track_artwork(artist: str, track_name: str) -> str:
+    """يجيب ملصق (poster) ديال الأغنية من iTunes Search API (مجاني، ما بغاش API key)"""
+    try:
+        url = "https://itunes.apple.com/search"
+        params = {
+            "term": f"{artist} {track_name}",
+            "entity": "song",
+            "limit": 1
+        }
+        data = await fetch_json(url, params)
+        results = data.get("results", []) if data else []
+        if results:
+            artwork = results[0].get("artworkUrl100", "")
+            if artwork:
+                # نكبرو الحجم من 100x100 لـ 600x600
+                return artwork.replace("100x100bb", "600x600bb")
+    except Exception as e:
+        print(f"[ITUNES] خطأ فـ جلب الملصق: {e}")
+    return ""
 
 
 async def get_music_from_lastfm() -> dict:
@@ -464,36 +597,50 @@ async def get_music_from_lastfm() -> dict:
         "Olivia Rodrigo", "Harry Styles", "Bad Bunny", "J Balvin", "Karol G"
     ]
     
-    artist = random.choice(popular_artists)
     url = "http://ws.audioscrobbler.com/2.0/"
-    params = {
-        "method": "artist.gettoptracks",
-        "artist": artist,
-        "api_key": LASTFM_API_KEY,
-        "format": "json",
-        "limit": 10
-    }
-    
-    data = await fetch_json(url, params)
-    
-    if data and "toptracks" in data and "track" in data["toptracks"]:
-        tracks = data["toptracks"]["track"]
-        if tracks:
-            track = random.choice(tracks)
-            # حول listeners لـ int باش نقدرو نستعملو :, format
+    artists_to_try = random.sample(popular_artists, len(popular_artists))
+
+    for artist in artists_to_try[:6]:  # يجرب حتى 6 فنانين قبل ما يستسلم
+        params = {
+            "method": "artist.gettoptracks",
+            "artist": artist,
+            "api_key": LASTFM_API_KEY,
+            "format": "json",
+            "limit": 10
+        }
+
+        data = await fetch_json(url, params)
+
+        if data and "toptracks" in data and "track" in data["toptracks"]:
+            tracks = data["toptracks"]["track"]
+            fresh_tracks = [
+                t for t in tracks
+                if not is_posted("music", f"{artist}|{t.get('name', '')}")
+            ]
+            if not fresh_tracks:
+                continue  # كاع الأغاني ديال هاد الفنان تبعثاو، نجربو فنان آخر
+
+            track = random.choice(fresh_tracks)
             listeners_str = track.get("listeners", "0")
             try:
                 listeners = int(listeners_str)
             except (ValueError, TypeError):
                 listeners = 0
-            
+
+            mark_posted("music", f"{artist}|{track.get('name', '')}")
+
+            poster = await get_track_artwork(artist, track.get("name", ""))
+
             return {
                 "name": track.get("name", "Unknown"),
                 "artist": artist,
-                "listeners": listeners,  # دابا رقم (int)
+                "listeners": listeners,
                 "url": track.get("url", ""),
-                "poster": ""  # Last.fm ما كيعطيش posters مباشرة
+                "poster": poster
             }
+
+    # إلا كاع الفنانين تسالاو، نبداو من جديد
+    reset_category_history("music")
     return {}
 
 
@@ -503,26 +650,37 @@ async def get_news_from_api() -> dict:
         return {}
     
     url = "https://newsapi.org/v2/top-headlines"
-    params = {
-        "apiKey": NEWS_API_KEY,
-        "category": random.choice(["technology", "entertainment", "science", "sports"]),
-        "language": "en",
-        "pageSize": 20
-    }
-    
-    data = await fetch_json(url, params)
-    
-    if data and "articles" in data and data["articles"]:
+    categories = random.sample(["technology", "entertainment", "science", "sports"], 4)
+
+    for category in categories:  # يجرب كاع الفئات باش يلقى خبر جديد ما تبعثش
+        params = {
+            "apiKey": NEWS_API_KEY,
+            "category": category,
+            "language": "en",
+            "pageSize": 30
+        }
+
+        data = await fetch_json(url, params)
+
+        if not data or "articles" not in data or not data["articles"]:
+            continue
+
         # يفلتر المقالات اللي عندها عنوان ووصف حقيقيين (NewsAPI كترجع بزاف [Removed])
+        # وما تبعثاتش من قبل، باش يكون دايما خبر جديد 100%
         valid_articles = [
             a for a in data["articles"]
             if a.get("title") and a.get("title") != "[Removed]"
+            and a.get("url") and not is_posted("news", a["url"])
         ]
         if not valid_articles:
-            return {}
+            continue
+
         article = random.choice(valid_articles)
         title_ar = await translate_to_darija(article.get("title", "Unknown"))
         desc_ar = await translate_to_darija(article.get("description", "No description."))
+
+        mark_posted("news", article["url"])
+
         return {
             "title": title_ar,
             "description": desc_ar,
@@ -530,6 +688,8 @@ async def get_news_from_api() -> dict:
             "source": article.get("source", {}).get("name", "Unknown"),
             "image": article.get("urlToImage", "")
         }
+
+    # ماكاينش خبر جديد دابا فـ كاع الفئات، غادي نعاودو نجربو فـ الدورة الجاية
     return {}
 
 
@@ -1677,6 +1837,8 @@ async def auto_info():
             )
             embed.add_field(name="🎤 Artist", value=music['artist'], inline=True)
             embed.add_field(name="👥 Listeners", value=f"{music['listeners']:,}", inline=True)
+            if music['poster']:
+                embed.set_thumbnail(url=music['poster'])
             embed.set_footer(text="سيمو | Last.fm")
             await music_channel.send(embed=embed)
 
