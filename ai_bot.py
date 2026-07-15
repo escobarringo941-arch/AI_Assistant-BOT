@@ -611,7 +611,7 @@ async def setup_verify_message(guild: discord.Guild):
             f"**مرحبا بيك فـ {SERVER_NAME}!**\n\n"
             f"قبل ما تقدر/ي تهضر/ي فالسيرفر، خاصك توافق/ي على القوانين.\n\n"
             f"**الخطوات:**\n"
-            f"1️⃣ اقرأ القوانين فـ <#{RULES_CHANNEL_ID}>\n"
+            f"1️⃣ قرا/ي القوانين فـ <#{RULES_CHANNEL_ID}>\n"
             f"2️⃣ كليك/ي على ✅ تحت\n\n"
             f"**ملاحظة:** إلا ما وافقتيش، ما غاديش تقدر/ي تهضر/ي ولا تفاعل/ي!"
         ),
@@ -639,7 +639,7 @@ async def on_member_join(member):
             description=(
                 f"واخا أخويا/أختي! **{SERVER_NAME}** هو السيرفر ديالك.\n\n"
                 f"**قبل ما تبدأ/ي:**\n"
-                f"1️⃣ قرأ/ي القوانين فـ <#{RULES_CHANNEL_ID}>\n"
+                f"1️⃣ قرا/ي القوانين فـ <#{RULES_CHANNEL_ID}>\n"
                 f"2️⃣ وافق/ي فـ <#{VERIFY_CHANNEL_ID}>\n"
                 f"3️⃣ استمتع/ي! 🎉"
             ),
