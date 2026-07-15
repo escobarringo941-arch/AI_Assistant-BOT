@@ -352,10 +352,17 @@ async def get_music_from_lastfm() -> dict:
         tracks = data["toptracks"]["track"]
         if tracks:
             track = random.choice(tracks)
+            # حول listeners لـ int باش نقدرو نستعملو :, format
+            listeners_str = track.get("listeners", "0")
+            try:
+                listeners = int(listeners_str)
+            except (ValueError, TypeError):
+                listeners = 0
+            
             return {
                 "name": track.get("name", "Unknown"),
                 "artist": artist,
-                "listeners": track.get("listeners", "N/A"),
+                "listeners": listeners,  # دابا رقم (int)
                 "url": track.get("url", ""),
                 "poster": ""  # Last.fm ما كيعطيش posters مباشرة
             }
@@ -499,7 +506,7 @@ async def on_member_join(member):
             f"👋 مرحبا بيك فـ **{SERVER_NAME}**!\n\n"
             f"قبل ما تقدر تهضر فالسيرفر، خاصك توافق على القوانين.\n"
             f"روح لـ <#{VERIFY_CHANNEL_ID}> وكليك على ✅\n\n"
-            f"شكراً! 🙏"
+            f"شكرا! 🙏"
         )
     except discord.Forbidden:
         pass
