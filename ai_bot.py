@@ -1019,10 +1019,17 @@ class GenderSelectView(discord.ui.View):
 
         for child in self.children:
             child.disabled = True
+
+        blacklist_note = (
+            f"\n\n📌 قبل ما تبدا/ي تهضر/ي، خاصك تقرا/ي الممنوعات والعقوبات فـ <#{BLACKLIST_CHANNEL_ID}>"
+            if BLACKLIST_CHANNEL_ID else ""
+        )
+        success_text = f"✅ تم اختيارك: **{label}**{blacklist_note}\n\n🎉 دابا تقدر/ي تدخل/ي لكاع القنوات المسموحة!"
+
         try:
-            await interaction.response.edit_message(content=f"✅ تم اختيارك: **{label}**", embed=None, view=self)
+            await interaction.response.edit_message(content=success_text, embed=None, view=self)
         except Exception:
-            await interaction.response.send_message(f"✅ تم اختيارك: **{label}**", ephemeral=True)
+            await interaction.response.send_message(success_text, ephemeral=True)
 
         await log_action(
             guild,
@@ -1039,6 +1046,18 @@ class GenderSelectView(discord.ui.View):
     @discord.ui.button(label="بنت", emoji="👧", style=discord.ButtonStyle.secondary)
     async def girl_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._assign_gender_role(interaction, GIRLS_ROLE_ID, BOYS_ROLE_ID, "بنت 👧")
+
+    async def on_error(self, interaction: discord.Interaction, error: Exception, item):
+        import traceback
+        print(f"[GENDER VIEW ERROR] {error}")
+        traceback.print_exc()
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send("❌ وقع مشكل تقني، حاول عاود من بعد شوية ولا بلغ الإدارة.", ephemeral=True)
+            else:
+                await interaction.response.send_message("❌ وقع مشكل تقني، حاول عاود من بعد شوية ولا بلغ الإدارة.", ephemeral=True)
+        except Exception:
+            pass
 
 
 class RulesVerifyView(discord.ui.View):
@@ -1204,7 +1223,7 @@ async def setup_blacklist_message(guild: discord.Guild):
         value=(
             "• السبام والرسائل المتكررة\n"
             "• روابط الديسكورد الدعائية بلا إذن\n"
-            "• الشتم، العنصرية، والتنمر\n"
+            "• الشتم بعصبية او خارج نطاق المزاح، العنصرية، والتنمر\n"
             "• محتوى +18 / جنسي / عنيف / صادم\n"
             "• Doxxing (نشر معلومات شخصية ديال الآخرين)\n"
             "• أي كلمة/رابط محظور مسجل عند الإدارة"
@@ -1254,7 +1273,7 @@ async def on_member_join(member):
         await member.send(
             f"👋 مرحبا بيك فـ **{SERVER_NAME}**!\n\n"
             f"قبل ما تقدر/ي تهضر/ي فالسيرفر، خاصك توافق/ي على القوانين.\n"
-            f"سير/ي لـ <#{RULES_CHANNEL_ID}> وكليك على ✅\n\n"
+            f"سير/ي لـ <#{VERIFY_CHANNEL_ID}> وكليك على ✅\n\n"
             f"شكرا! 🙏"
         )
     except discord.Forbidden:
