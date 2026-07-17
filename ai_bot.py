@@ -18,6 +18,11 @@ TARGET_CHANNEL_ID = 1526384339670270012
 WELCOME_CHANNEL_ID = 1524957892925456545
 SERVER_NAME = "GGMW9"
 
+# ═══════ STATUS المباشر ديال السيرفر (كل 30 دقيقة) ═══════
+STATS_CHANNEL_ID = 1527800975195377804  # ← channel "STATU"
+SERVER_INVITE_LINK = "https://discord.gg/5sWatSkSCY"  # ← بدلها بالرابط ديال السيرفر ديالك
+STATS_UPDATE_MINUTES = 30
+
 AI_MODEL = "deepseek/deepseek-chat"
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
@@ -108,6 +113,8 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 intents.reactions = True
+intents.presences = True  # ← ضروري باش نقدرو نحسبو "Online Members"، خاصك تفعلها من Discord Developer Portal
+# (https://discord.com/developers/applications → البوت ديالك → Bot → Privileged Gateway Intents → Presence Intent)
 bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
 user_memory = defaultdict(list)
@@ -218,6 +225,33 @@ def save_reaction_role_messages():
 
 
 load_reaction_role_messages()
+
+STATS_MESSAGE_FILE = "stats_message.json"
+stats_message_ids = {}  # {guild_id (str): message_id}
+
+
+def load_stats_message_ids():
+    """يقرا ID ديال رسالة الـ status المحفوظة، باش يبدلها بدل ما يبعث وحدة جديدة كل مرة"""
+    global stats_message_ids
+    try:
+        with open(STATS_MESSAGE_FILE, "r", encoding="utf-8") as f:
+            stats_message_ids = json.load(f)
+        print(f"[STATS] تحمل {len(stats_message_ids)} رسالة status محفوظة")
+    except FileNotFoundError:
+        print("[STATS] ماكاينش رسالة status سابقة، غادي نبعثو وحدة جديدة")
+    except Exception as e:
+        print(f"[STATS] خطأ فـ التحميل: {e}")
+
+
+def save_stats_message_ids():
+    try:
+        with open(STATS_MESSAGE_FILE, "w", encoding="utf-8") as f:
+            json.dump(stats_message_ids, f, ensure_ascii=False)
+    except Exception as e:
+        print(f"[STATS] خطأ فـ الحفظ: {e}")
+
+
+load_stats_message_ids()
 
 
 def get_system_prompt(user_gender="unknown"):
@@ -2485,6 +2519,95 @@ async def before_auto_info():
     await bot.wait_until_ready()
 
 
+# ═══════════════════════════════════════════════════════
+# ║              GGMW9 STATUS (كل 30 دقيقة)                ║
+# ═══════════════════════════════════════════════════════
+
+async def build_stats_embed(guild: discord.Guild) -> discord.Embed:
+    """يبني embed فيه الأرقام المباشرة ديال السيرفر"""
+    members_count = guild.member_count or len(guild.members)
+
+    # Online = عضو status ديالو ماشي offline (خاص intents.presences مفعلة، وماشي حسبان البوتات)
+    online_count = sum(
+        1 for m in guild.members
+        if not m.bot and m.status != discord.Status.offline
+    )
+
+    voice_count = sum(len(vc.members) for vc in guild.voice_channels)
+
+    boosts_count = guild.premium_subscription_count or 0
+    boost_level = guild.premium_tier or 0
+    boosters_count = len(guild.premium_subscribers) if guild.premium_subscribers else 0
+
+    embed = discord.Embed(
+        title=f"📊 {SERVER_NAME} STATUS",
+        description=f"[Stats]({SERVER_INVITE_LINK})",
+        color=discord.Color.blurple(),
+        timestamp=datetime.now()
+    )
+    embed.add_field(name="Members Count", value=f"{members_count:,}", inline=False)
+    embed.add_field(name="Online Members", value=f"{online_count:,}", inline=False)
+    embed.add_field(name="Members In Voice", value=f"{voice_count:,}", inline=False)
+    embed.add_field(
+        name=":12_month_boost_badge:",
+        value=f"Boosts Count : {boosts_count} (Level : {boost_level})",
+        inline=False
+    )
+    embed.add_field(
+        name=":d_boost:",
+        value=f"Members Are Boosting: {boosters_count}",
+        inline=False
+    )
+    if guild.icon:
+        embed.set_thumbnail(url=guild.icon.url)
+    embed.set_footer(text=f"{SERVER_NAME} | آخر تحديث")
+    return embed
+
+
+@tasks.loop(minutes=STATS_UPDATE_MINUTES)
+async def update_stats():
+    if not STATS_CHANNEL_ID:
+        return
+    channel = bot.get_channel(STATS_CHANNEL_ID)
+    if not channel:
+        print(f"[STATS] ❌ ماكاينش channel بـ ID {STATS_CHANNEL_ID}")
+        return
+
+    guild = channel.guild
+    embed = await build_stats_embed(guild)
+    msg_id = stats_message_ids.get(str(guild.id))
+
+    if msg_id:
+        try:
+            msg = await channel.fetch_message(int(msg_id))
+            await msg.edit(embed=embed)
+            return
+        except (discord.NotFound, discord.Forbidden):
+            pass
+        except Exception as e:
+            print(f"[STATS] خطأ فـ التعديل: {e}")
+
+    try:
+        new_msg = await channel.send(embed=embed)
+        stats_message_ids[str(guild.id)] = new_msg.id
+        save_stats_message_ids()
+    except Exception as e:
+        print(f"[STATS] خطأ فـ البعث: {e}")
+
+
+@update_stats.before_loop
+async def before_update_stats():
+    await bot.wait_until_ready()
+
+
+@update_stats.error
+async def update_stats_error(error):
+    print(f"[STATS] ❌❌ خطأ كبير وقف الـ loop: {error}")
+    await asyncio.sleep(5)
+    if not update_stats.is_running():
+        update_stats.restart()
+
+
 @auto_info.error
 async def auto_info_error(error):
     """إلا وقع خطأ ما تصيدوش try/except ديال الفئات، هادي كنسجلوه، وكنعاودو نشغلو
@@ -2547,6 +2670,7 @@ async def on_ready():
     print(f"✅ Verification: نشط")
     print(f"📰 Auto-Info: نشط (5 channels + APIs حقيقية)")
     print(f"⚠️ Warn Limit: {WARN_LIMIT}")
+    print(f"📊 Stats Channel: {STATS_CHANNEL_ID if STATS_CHANNEL_ID else 'ماشي معطي بعد'} (كل {STATS_UPDATE_MINUTES} د)")
 
     await bot.change_presence(
         activity=discord.Activity(
@@ -2557,6 +2681,9 @@ async def on_ready():
 
     if not auto_info.is_running():
         auto_info.start()
+
+    if STATS_CHANNEL_ID and not update_stats.is_running():
+        update_stats.start()
 
     bot.add_view(RulesVerifyView())  # باش الأزرار يبقاو خدامين حتى بعد ريستارت البوت
 
