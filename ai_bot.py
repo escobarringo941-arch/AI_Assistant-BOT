@@ -71,7 +71,7 @@ GIRLS_ROLE_ID = 1526337114164301824  # ← حط هنا ID ديال role "Girls"
 # ═══════ القوانين ديال السيرفر (بدلها بالقوانين الحقيقية ديالك) ═══════
 SERVER_RULES = (
     "**🇲🇦 بالدارجة:**\n"
-    "1️⃣ الاحترام واجب بين كاع الأعضاء — ممنوع السب خارج نطاق المزح، العنصرية، والتنمر.\n"
+    "1️⃣ الاحترام واجب بين كاع الأعضاء — ممنوع السب، العنصرية، والتنمر.\n"
     "2️⃣ ممنوع السبام والإعلانات بلا إذن من الإدارة.\n"
     "3️⃣ ممنوع المحتوى ديال +18 ولا العنيف ولا الصادم.\n"
     "4️⃣ هضر فـ الشات المخصص ليه (بحال #games للألعاب).\n"
@@ -79,7 +79,7 @@ SERVER_RULES = (
     "6️⃣ ممنوع مشاركة معلومات شخصية ديال الآخرين (Doxxing).\n"
     "7️⃣ عدم الالتزام بالقوانين غادي يأدي لعقوبة (تحذير، كتم، طرد).\n\n"
     "**🇬🇧 English:**\n"
-    "1️⃣ Respect everyone — Insults/cursing are not allowed outside of joking around, racism, or bullying.\n"
+    "1️⃣ Respect everyone — no insults, racism, or bullying.\n"
     "2️⃣ No spam or ads without staff permission.\n"
     "3️⃣ No NSFW, violent, or shocking content.\n"
     "4️⃣ Talk in the right channel for each topic (e.g. #games for games).\n"
@@ -87,7 +87,7 @@ SERVER_RULES = (
     "6️⃣ No sharing others' personal info (doxxing).\n"
     "7️⃣ Breaking the rules leads to punishment (warning, mute, kick).\n\n"
     "**🇫🇷 Français :**\n"
-    "1️⃣ Le respect est obligatoire — Les insultes sont interdites en dehors du cadre de la plaisanterie., de racisme ou de harcèlement.\n"
+    "1️⃣ Le respect est obligatoire — pas d'insultes, de racisme ou de harcèlement.\n"
     "2️⃣ Pas de spam ni de publicité sans autorisation.\n"
     "3️⃣ Contenu +18, violent ou choquant interdit.\n"
     "4️⃣ Parlez dans le salon approprié à chaque sujet (ex. #games pour les jeux).\n"
@@ -492,7 +492,10 @@ async def translate_genres(genres_text: str) -> str:
 
 async def translate_to_darija(text: str) -> str:
     """يترجم نص من الانجليزية للدارجة المغربية عبر نفس الـ AI (DeepSeek)"""
-    if not text or not OPENROUTER_API_KEY:
+    if not text:
+        return text
+    if not OPENROUTER_API_KEY:
+        print("[TRANSLATE] ⚠️ OPENROUTER_API_KEY ماكايناش (فارغة)! ماغاديش نترجمو والو.")
         return text
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -522,12 +525,14 @@ async def translate_to_darija(text: str) -> str:
                 if resp.status == 200:
                     data = await resp.json()
                     translated = data["choices"][0]["message"]["content"].strip()
+                    print(f"[TRANSLATE] ✅ status=200 | قبل: '{text[:50]}' | بعد: '{translated[:50]}'")
                     return translated if translated else text
                 else:
-                    print(f"[TRANSLATE] status {resp.status}")
+                    body = await resp.text()
+                    print(f"[TRANSLATE] ❌ status {resp.status}: {body[:300]}")
                     return text
     except Exception as e:
-        print(f"[TRANSLATE] Exception: {e}")
+        print(f"[TRANSLATE] ❌ Exception: {e}")
         return text
 
 
