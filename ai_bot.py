@@ -87,7 +87,7 @@ GIRLS_ROLE_ID = 1526337114164301824  # ← حط هنا ID ديال role "Girls"
 # ═══════ القوانين ديال السيرفر (بدلها بالقوانين الحقيقية ديالك) ═══════
 SERVER_RULES = (
     "**🇲🇦 بالدارجة:**\n"
-    "1️⃣ الاحترام واجب بين كاع الأعضاء — ممنوع السب خارج نطاق المزاح، العنصرية، والتنمر.\n"
+    "1️⃣ الاحترام واجب بين كاع الأعضاء — ممنوع السب خارج نطاق المزح، العنصرية، والتنمر.\n"
     "2️⃣ ممنوع السبام والإعلانات بلا إذن من الإدارة.\n"
     "3️⃣ ممنوع المحتوى ديال +18 ولا العنيف ولا الصادم.\n"
     "4️⃣ هضر فـ الشات المخصص ليه (بحال #games للألعاب).\n"
@@ -369,7 +369,23 @@ async def call_openrouter_chat(messages: list, max_tokens: int, temperature: flo
                 async with session.post(OPENROUTER_URL, headers=headers, json=payload) as resp:
                     if resp.status == 200:
                         data = await resp.json()
-                        content = data["choices"][0]["message"]["content"]
+                        try:
+                            message = data["choices"][0]["message"]
+                        except (KeyError, IndexError, TypeError):
+                            print(f"[OPENROUTER] ❌ {model} رجع شكل غريب بلا choices/message: {str(data)[:200]}")
+                            last_error = "شكل الرد ماشي متوقع (بلا choices/message)"
+                            continue
+
+                        # بعض الموديلات (خصوصا reasoning) كترجع content فارغة/None
+                        # وكتحط النص فـ reasoning بدلها
+                        content = message.get("content") or message.get("reasoning") or ""
+                        content = content.strip() if isinstance(content, str) else ""
+
+                        if not content:
+                            print(f"[OPENROUTER] ⚠️ {model} رجع content فارغة، نجرب الموديل اللي بعدو...")
+                            last_error = "content فارغة من الموديل"
+                            continue
+
                         if model != AI_MODEL:
                             print(f"[OPENROUTER] ⚠️ الموديل الأساسي فشل، خدام بـ fallback: {model}")
                         return content, None
