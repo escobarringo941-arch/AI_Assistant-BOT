@@ -444,6 +444,52 @@ async def get_og_image(page_url: str) -> str:
         return ""
 
 
+GENRE_TRANSLATIONS = {
+    "action": "أكشن", "adventure": "مغامرة", "comedy": "كوميديا",
+    "drama": "دراما", "horror": "رعب", "thriller": "تشويق",
+    "romance": "رومانسية", "sci-fi": "خيال علمي", "science fiction": "خيال علمي",
+    "fantasy": "فانتازيا", "mystery": "غموض", "crime": "جريمة",
+    "animation": "أنيميشن", "documentary": "وثائقي", "family": "عائلي",
+    "musical": "موسيقي", "music": "موسيقى", "war": "حرب", "history": "تاريخي",
+    "western": "وسترن", "biography": "سيرة ذاتية", "sport": "رياضي",
+    "sports": "رياضي", "shounen": "شونين", "shoujo": "شوجو", "seinen": "سينين",
+    "josei": "جوسي", "slice of life": "حياة يومية", "supernatural": "خوارق",
+    "psychological": "نفسي", "school": "مدرسي", "isekai": "إيسيكاي",
+    "ecchi": "إيتشي", "mecha": "ميكا", "sci fi": "خيال علمي", "indie": "إندي",
+    "rpg": "لعب أدوار", "role-playing (rpg)": "لعب أدوار", "shooter": "تصويب",
+    "strategy": "استراتيجية", "puzzle": "ألغاز", "racing": "سباق",
+    "simulation": "محاكاة", "platformer": "منصات", "fighting": "قتال",
+    "arcade": "أركيد", "casual": "كاجوال", "massively multiplayer": "متعدد اللاعبين",
+    "board games": "ألعاب طاولة", "card": "ورق", "educational": "تعليمي",
+    "kids": "أطفال", "superhero": "أبطال خارقين", "suspense": "إثارة",
+    "short": "قصير", "film-noir": "نوار", "talk-show": "برنامج حواري",
+    "reality-tv": "واقعي", "news": "أخبار", "game-show": "مسابقات",
+}
+
+
+async def translate_genres(genres_text: str) -> str:
+    """
+    يترجم لائحة الأنواع (Action, Comedy...) للعربية/الدارجة.
+    كنبداو بقاموس ثابت (سريع وموثوق) لأشهر الأنواع، وإلا لقينا نوع
+    ماكاينش فالقاموس كنعيطو لـ AI باش يترجموه (fallback).
+    ملاحظة: جربنا الترجمة بـ AI وحدها فـ الأول، ولكن الموديل كان
+    كيخلي الأنواع كيفما هي (كيتعامل معاها كـ tags ثابتة ماشي نص عادي)،
+    فـ القاموس أوثق بزاف لهاد الحالة.
+    """
+    if not genres_text or genres_text == "N/A":
+        return genres_text
+    parts = [p.strip() for p in genres_text.split(",")]
+    result = []
+    for p in parts:
+        mapped = GENRE_TRANSLATIONS.get(p.lower())
+        if mapped:
+            result.append(mapped)
+        else:
+            ai_translated = await translate_to_darija(p)
+            result.append(ai_translated if ai_translated and ai_translated.lower() != p.lower() else p)
+    return "، ".join(result)
+
+
 async def translate_to_darija(text: str) -> str:
     """يترجم نص من الانجليزية للدارجة المغربية عبر نفس الـ AI (DeepSeek)"""
     if not text or not OPENROUTER_API_KEY:
@@ -555,7 +601,7 @@ async def get_movie_from_omdb() -> dict:
             return {
                 "title": omdb_data.get("Title", "Unknown"),
                 "year": omdb_data.get("Year", "N/A"),
-                "genre": await translate_to_darija(omdb_data.get("Genre", "N/A")),
+                "genre": await translate_genres(omdb_data.get("Genre", "N/A")),
                 "plot": plot_ar,
                 "rating": rating,
                 "poster": poster,
@@ -623,7 +669,7 @@ async def _build_anime_embed_data(anime: dict) -> dict:
         "title_jp": anime.get("title_japanese", ""),
         "type": anime.get("type", "TV"),
         "episodes": anime.get("episodes", "N/A"),
-        "genres": await translate_to_darija(", ".join([g["name"] for g in anime.get("genres", [])])),
+        "genres": await translate_genres(", ".join([g["name"] for g in anime.get("genres", [])])),
         "synopsis": synopsis_ar,
         "score": anime.get("score", 0),
         "poster": poster,
@@ -679,7 +725,7 @@ async def get_game_from_rawg() -> dict:
             return {
                 "name": detail.get("name", "Unknown"),
                 "released": detail.get("released", "N/A"),
-                "genres": await translate_to_darija(", ".join([g["name"] for g in detail.get("genres", [])])),
+                "genres": await translate_genres(", ".join([g["name"] for g in detail.get("genres", [])])),
                 "description": description_ar,
                 "rating": f"{rating}/5",
                 "poster": poster,
