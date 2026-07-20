@@ -1,4 +1,5 @@
 import os
+import sys
 import discord
 import aiohttp
 import random
@@ -9,6 +10,10 @@ from typing import Optional
 from datetime import datetime, timedelta
 from discord.ext import commands, tasks
 from collections import defaultdict
+
+# ═══════ باش print() يطلع مباشرة فـ logs (Railway/containers كيعملو buffer) ═══════
+sys.stdout.reconfigure(line_buffering=True)
+sys.stderr.reconfigure(line_buffering=True)
 
 # ═══════════════════════════════════════════════════════
 # ║                    CONFIG سهل التعديل                  ║
