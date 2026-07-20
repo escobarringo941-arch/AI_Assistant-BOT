@@ -70,13 +70,30 @@ GIRLS_ROLE_ID = 1526337114164301824  # ← حط هنا ID ديال role "Girls"
 
 # ═══════ القوانين ديال السيرفر (بدلها بالقوانين الحقيقية ديالك) ═══════
 SERVER_RULES = (
+    "**🇲🇦 بالدارجة:**\n"
     "1️⃣ الاحترام واجب بين كاع الأعضاء — ممنوع السب، العنصرية، والتنمر.\n"
     "2️⃣ ممنوع السبام والإعلانات بلا إذن من الإدارة.\n"
     "3️⃣ ممنوع المحتوى ديال +18 ولا العنيف ولا الصادم.\n"
     "4️⃣ هضر فـ الشات المخصص ليه (بحال #games للألعاب).\n"
     "5️⃣ احترم القرارات ديال الأدمن والمشرفين.\n"
     "6️⃣ ممنوع مشاركة معلومات شخصية ديال الآخرين (Doxxing).\n"
-    "7️⃣ عدم الالتزام بالقوانين غادي يأدي لعقوبة (تحذير، كتم، طرد)."
+    "7️⃣ عدم الالتزام بالقوانين غادي يأدي لعقوبة (تحذير، كتم، طرد).\n\n"
+    "**🇬🇧 English:**\n"
+    "1️⃣ Respect everyone — no insults, racism, or bullying.\n"
+    "2️⃣ No spam or ads without staff permission.\n"
+    "3️⃣ No NSFW, violent, or shocking content.\n"
+    "4️⃣ Talk in the right channel for each topic (e.g. #games for games).\n"
+    "5️⃣ Respect staff/admin decisions.\n"
+    "6️⃣ No sharing others' personal info (doxxing).\n"
+    "7️⃣ Breaking the rules leads to punishment (warning, mute, kick).\n\n"
+    "**🇫🇷 Français :**\n"
+    "1️⃣ Le respect est obligatoire — pas d'insultes, de racisme ou de harcèlement.\n"
+    "2️⃣ Pas de spam ni de publicité sans autorisation.\n"
+    "3️⃣ Contenu +18, violent ou choquant interdit.\n"
+    "4️⃣ Parlez dans le salon approprié à chaque sujet (ex. #games pour les jeux).\n"
+    "5️⃣ Respectez les décisions de l'administration.\n"
+    "6️⃣ Ne partagez pas les infos personnelles des autres (doxxing).\n"
+    "7️⃣ Le non-respect des règles entraîne une sanction (avertissement, mute, exclusion)."
 )
 
 # ═══════ الاستثناءات ديال Auto-Mod (Owner + أدوار معفيين) ═══════
@@ -427,6 +444,36 @@ async def get_og_image(page_url: str) -> str:
         return ""
 
 
+GENRE_TRANSLATIONS = {
+    # أفلام / أنمي / ألعاب — أشهر الأنواع
+    "action": "أكشن", "adventure": "مغامرة", "comedy": "كوميديا",
+    "drama": "دراما", "horror": "رعب", "thriller": "تشويق",
+    "romance": "رومانسية", "sci-fi": "خيال علمي", "science fiction": "خيال علمي",
+    "fantasy": "فانتازيا", "mystery": "غموض", "crime": "جريمة",
+    "animation": "أنيميشن", "documentary": "وثائقي", "family": "عائلي",
+    "musical": "موسيقي", "music": "موسيقى", "war": "حرب", "history": "تاريخي",
+    "western": "وسترن", "biography": "سيرة ذاتية", "sport": "رياضي",
+    "sports": "رياضي", "shounen": "شونين", "shoujo": "شوجو",
+    "slice of life": "حياة يومية", "supernatural": "خوارق", "psychological": "نفسي",
+    "school": "مدرسي", "isekai": "إيسيكاي", "ecchi": "إيتشي", "mecha": "ميكا",
+    "sci fi": "خيال علمي", "indie": "إندي", "rpg": "لعب أدوار", "role-playing (rpg)": "لعب أدوار",
+    "shooter": "تصويب", "strategy": "استراتيجية", "puzzle": "ألغاز",
+    "racing": "سباق", "simulation": "محاكاة", "platformer": "منصات",
+    "fighting": "قتال", "arcade": "أركيد", "casual": "كاجوال",
+    "massively multiplayer": "متعدد اللاعبين", "board games": "ألعاب طاولة",
+    "card": "ورق", "educational": "تعليمي", "kids": "أطفال",
+}
+
+
+def translate_genres(genres_text: str) -> str:
+    """يترجم أسماء الأنواع (Action, Comedy...) للعربية/الدارجة بلا ما نديرو طلب AI إضافي"""
+    if not genres_text or genres_text == "N/A":
+        return genres_text
+    parts = [p.strip() for p in genres_text.split(",")]
+    translated = [GENRE_TRANSLATIONS.get(p.lower(), p) for p in parts]
+    return "، ".join(translated)
+
+
 async def translate_to_darija(text: str) -> str:
     """يترجم نص من الانجليزية للدارجة المغربية عبر نفس الـ AI (DeepSeek)"""
     if not text or not OPENROUTER_API_KEY:
@@ -538,7 +585,7 @@ async def get_movie_from_omdb() -> dict:
             return {
                 "title": omdb_data.get("Title", "Unknown"),
                 "year": omdb_data.get("Year", "N/A"),
-                "genre": omdb_data.get("Genre", "N/A"),
+                "genre": translate_genres(omdb_data.get("Genre", "N/A")),
                 "plot": plot_ar,
                 "rating": rating,
                 "poster": poster,
@@ -606,7 +653,7 @@ async def _build_anime_embed_data(anime: dict) -> dict:
         "title_jp": anime.get("title_japanese", ""),
         "type": anime.get("type", "TV"),
         "episodes": anime.get("episodes", "N/A"),
-        "genres": ", ".join([g["name"] for g in anime.get("genres", [])]),
+        "genres": translate_genres(", ".join([g["name"] for g in anime.get("genres", [])])),
         "synopsis": synopsis_ar,
         "score": anime.get("score", 0),
         "poster": poster,
@@ -662,7 +709,7 @@ async def get_game_from_rawg() -> dict:
             return {
                 "name": detail.get("name", "Unknown"),
                 "released": detail.get("released", "N/A"),
-                "genres": ", ".join([g["name"] for g in detail.get("genres", [])]),
+                "genres": translate_genres(", ".join([g["name"] for g in detail.get("genres", [])])),
                 "description": description_ar,
                 "rating": f"{rating}/5",
                 "poster": poster,
@@ -1185,11 +1232,12 @@ async def setup_rules_message(guild: discord.Guild):
         if message.author == bot.user and message.components:
             return
     embed = discord.Embed(
-        title="📜 قوانين السيرفر",
+        title="📜 قوانين السيرفر | Server Rules | Règles du serveur",
         description=(
             f"{SERVER_RULES}\n\n"
-            f"⚠️ **باش تقدر/ي تهضر/ي وتفاعل/ي فالسيرفر، خاصك توافق/ي على هاد القوانين بالضغط على ✅ تحت.**\n"
-            f"إلا ضغطتي على ❌ (رفض)، غادي تتطرد من السيرفر تلقائياً."
+            f"⚠️ **بالضغط ✅ كتوافق على القوانين | By clicking ✅ you agree to the rules | "
+            f"En cliquant ✅ vous acceptez le règlement**\n"
+            f"**الرفض ❌ = طرد أوتوماتيكي | Refusing ❌ = automatic kick | Refuser ❌ = exclusion automatique**"
         ),
         color=discord.Color.blue(),
         timestamp=datetime.now()
@@ -2424,9 +2472,9 @@ async def auto_info():
                     url=game['url'],
                     timestamp=datetime.now()
                 )
-                embed.add_field(name="📅 Release", value=game['released'], inline=True)
-                embed.add_field(name="⭐ Rating", value=game['rating'], inline=True)
-                embed.add_field(name="🎭 Genre", value=game['genres'], inline=False)
+                embed.add_field(name="📅 تاريخ الصدور", value=game['released'], inline=True)
+                embed.add_field(name="⭐ التقييم", value=game['rating'], inline=True)
+                embed.add_field(name="🎭 النوع", value=game['genres'], inline=False)
                 if game['poster']:
                     embed.set_image(url=game['poster'])
                 embed.set_footer(text="GGMW9 | RAWG.io")
@@ -2449,8 +2497,8 @@ async def auto_info():
                     url=movie['imdb'],
                     timestamp=datetime.now()
                 )
-                embed.add_field(name="🎭 Genre", value=movie['genre'], inline=True)
-                embed.add_field(name="⭐ IMDB Rating", value=f"{movie['rating']}/10", inline=True)
+                embed.add_field(name="🎭 النوع", value=movie['genre'], inline=True)
+                embed.add_field(name="⭐ تقييم IMDB", value=f"{movie['rating']}/10", inline=True)
                 if movie['poster'] and movie['poster'] != "N/A":
                     embed.set_image(url=movie['poster'])
                 embed.set_footer(text="GGMW9 | IMDB via OMDb")
@@ -2476,11 +2524,11 @@ async def auto_info():
                     timestamp=datetime.now()
                 )
                 if anime['title_jp']:
-                    embed.add_field(name="🇯🇵 Japanese", value=anime['title_jp'], inline=False)
-                embed.add_field(name="📺 Type", value=anime['type'], inline=True)
-                embed.add_field(name="📊 Episodes", value=str(anime['episodes']), inline=True)
-                embed.add_field(name="⭐ MAL Score", value=f"{anime['score']}/10", inline=True)
-                embed.add_field(name="🎭 Genres", value=anime['genres'], inline=False)
+                    embed.add_field(name="🇯🇵 الاسم الياباني", value=anime['title_jp'], inline=False)
+                embed.add_field(name="📺 النوع", value=anime['type'], inline=True)
+                embed.add_field(name="📊 عدد الحلقات", value=str(anime['episodes']), inline=True)
+                embed.add_field(name="⭐ تقييم MAL", value=f"{anime['score']}/10", inline=True)
+                embed.add_field(name="🎭 الأنواع", value=anime['genres'], inline=False)
                 if anime['poster']:
                     embed.set_image(url=anime['poster'])
                 embed.set_footer(text="GGMW9 | MyAnimeList via Jikan")
@@ -2504,8 +2552,8 @@ async def auto_info():
                     url=music['url'],
                     timestamp=datetime.now()
                 )
-                embed.add_field(name="🎤 Artist", value=music['artist'], inline=True)
-                embed.add_field(name="👥 Listeners", value=f"{music['listeners']:,}", inline=True)
+                embed.add_field(name="🎤 الفنان", value=music['artist'], inline=True)
+                embed.add_field(name="👥 المستمعين", value=f"{music['listeners']:,}", inline=True)
                 if music['poster']:
                     embed.set_image(url=music['poster'])
                 embed.set_footer(text="GGMW9 | Last.fm")
