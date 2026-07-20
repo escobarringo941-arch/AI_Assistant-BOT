@@ -71,7 +71,7 @@ GIRLS_ROLE_ID = 1526337114164301824  # ← حط هنا ID ديال role "Girls"
 # ═══════ القوانين ديال السيرفر (بدلها بالقوانين الحقيقية ديالك) ═══════
 SERVER_RULES = (
     "**🇲🇦 بالدارجة:**\n"
-    "1️⃣ الاحترام واجب بين كاع الأعضاء — ممنوع السب، العنصرية، والتنمر.\n"
+    "1️⃣ الاحترام واجب بين كاع الأعضاء — ممنوع السب خارج نطاق المزح، العنصرية، والتنمر.\n"
     "2️⃣ ممنوع السبام والإعلانات بلا إذن من الإدارة.\n"
     "3️⃣ ممنوع المحتوى ديال +18 ولا العنيف ولا الصادم.\n"
     "4️⃣ هضر فـ الشات المخصص ليه (بحال #games للألعاب).\n"
@@ -79,7 +79,7 @@ SERVER_RULES = (
     "6️⃣ ممنوع مشاركة معلومات شخصية ديال الآخرين (Doxxing).\n"
     "7️⃣ عدم الالتزام بالقوانين غادي يأدي لعقوبة (تحذير، كتم، طرد).\n\n"
     "**🇬🇧 English:**\n"
-    "1️⃣ Respect everyone — no insults, racism, or bullying.\n"
+    "1️⃣ Respect everyone — Insults/cursing are not allowed outside of joking around, racism, or bullying.\n"
     "2️⃣ No spam or ads without staff permission.\n"
     "3️⃣ No NSFW, violent, or shocking content.\n"
     "4️⃣ Talk in the right channel for each topic (e.g. #games for games).\n"
@@ -87,7 +87,7 @@ SERVER_RULES = (
     "6️⃣ No sharing others' personal info (doxxing).\n"
     "7️⃣ Breaking the rules leads to punishment (warning, mute, kick).\n\n"
     "**🇫🇷 Français :**\n"
-    "1️⃣ Le respect est obligatoire — pas d'insultes, de racisme ou de harcèlement.\n"
+    "1️⃣ Le respect est obligatoire — Les insultes sont interdites en dehors du cadre de la plaisanterie., de racisme ou de harcèlement.\n"
     "2️⃣ Pas de spam ni de publicité sans autorisation.\n"
     "3️⃣ Contenu +18, violent ou choquant interdit.\n"
     "4️⃣ Parlez dans le salon approprié à chaque sujet (ex. #games pour les jeux).\n"
@@ -444,36 +444,6 @@ async def get_og_image(page_url: str) -> str:
         return ""
 
 
-GENRE_TRANSLATIONS = {
-    # أفلام / أنمي / ألعاب — أشهر الأنواع
-    "action": "أكشن", "adventure": "مغامرة", "comedy": "كوميديا",
-    "drama": "دراما", "horror": "رعب", "thriller": "تشويق",
-    "romance": "رومانسية", "sci-fi": "خيال علمي", "science fiction": "خيال علمي",
-    "fantasy": "فانتازيا", "mystery": "غموض", "crime": "جريمة",
-    "animation": "أنيميشن", "documentary": "وثائقي", "family": "عائلي",
-    "musical": "موسيقي", "music": "موسيقى", "war": "حرب", "history": "تاريخي",
-    "western": "وسترن", "biography": "سيرة ذاتية", "sport": "رياضي",
-    "sports": "رياضي", "shounen": "شونين", "shoujo": "شوجو",
-    "slice of life": "حياة يومية", "supernatural": "خوارق", "psychological": "نفسي",
-    "school": "مدرسي", "isekai": "إيسيكاي", "ecchi": "إيتشي", "mecha": "ميكا",
-    "sci fi": "خيال علمي", "indie": "إندي", "rpg": "لعب أدوار", "role-playing (rpg)": "لعب أدوار",
-    "shooter": "تصويب", "strategy": "استراتيجية", "puzzle": "ألغاز",
-    "racing": "سباق", "simulation": "محاكاة", "platformer": "منصات",
-    "fighting": "قتال", "arcade": "أركيد", "casual": "كاجوال",
-    "massively multiplayer": "متعدد اللاعبين", "board games": "ألعاب طاولة",
-    "card": "ورق", "educational": "تعليمي", "kids": "أطفال",
-}
-
-
-def translate_genres(genres_text: str) -> str:
-    """يترجم أسماء الأنواع (Action, Comedy...) للعربية/الدارجة بلا ما نديرو طلب AI إضافي"""
-    if not genres_text or genres_text == "N/A":
-        return genres_text
-    parts = [p.strip() for p in genres_text.split(",")]
-    translated = [GENRE_TRANSLATIONS.get(p.lower(), p) for p in parts]
-    return "، ".join(translated)
-
-
 async def translate_to_darija(text: str) -> str:
     """يترجم نص من الانجليزية للدارجة المغربية عبر نفس الـ AI (DeepSeek)"""
     if not text or not OPENROUTER_API_KEY:
@@ -585,7 +555,7 @@ async def get_movie_from_omdb() -> dict:
             return {
                 "title": omdb_data.get("Title", "Unknown"),
                 "year": omdb_data.get("Year", "N/A"),
-                "genre": translate_genres(omdb_data.get("Genre", "N/A")),
+                "genre": await translate_to_darija(omdb_data.get("Genre", "N/A")),
                 "plot": plot_ar,
                 "rating": rating,
                 "poster": poster,
@@ -653,7 +623,7 @@ async def _build_anime_embed_data(anime: dict) -> dict:
         "title_jp": anime.get("title_japanese", ""),
         "type": anime.get("type", "TV"),
         "episodes": anime.get("episodes", "N/A"),
-        "genres": translate_genres(", ".join([g["name"] for g in anime.get("genres", [])])),
+        "genres": await translate_to_darija(", ".join([g["name"] for g in anime.get("genres", [])])),
         "synopsis": synopsis_ar,
         "score": anime.get("score", 0),
         "poster": poster,
@@ -709,7 +679,7 @@ async def get_game_from_rawg() -> dict:
             return {
                 "name": detail.get("name", "Unknown"),
                 "released": detail.get("released", "N/A"),
-                "genres": translate_genres(", ".join([g["name"] for g in detail.get("genres", [])])),
+                "genres": await translate_to_darija(", ".join([g["name"] for g in detail.get("genres", [])])),
                 "description": description_ar,
                 "rating": f"{rating}/5",
                 "poster": poster,
@@ -1019,6 +989,30 @@ async def setup_verify_message(guild: discord.Guild):
 # ║   (كيبان مباشرة تحت القوانين، بحال المواقع)              ║
 # ═══════════════════════════════════════════════════════
 
+# ═══════════════════════════════════════════════════════
+# ║   اختيار اللغة حسب لغة تطبيق الديسكورد ديال المستخدم    ║
+# ═══════════════════════════════════════════════════════
+
+def get_user_lang(interaction: discord.Interaction) -> str:
+    """
+    كيحدد اللغة المناسبة اعتماداً على interaction.locale (لغة تطبيق
+    الديسكورد ديال المستخدم لي ضغط على الزر). ماشي كاع اللغات مدعومة،
+    فكنرجعو لـ 'ar' (دارجة/عربية) كافتراضي.
+    """
+    locale = str(interaction.locale) if interaction.locale else ""
+    if locale.startswith("fr"):
+        return "fr"
+    if locale.startswith("en"):
+        return "en"
+    return "ar"
+
+
+def t(interaction: discord.Interaction, ar: str, en: str, fr: str) -> str:
+    """كيرجع النص بلغة الديسكورد ديال المستخدم لي دار الـ interaction"""
+    lang = get_user_lang(interaction)
+    return {"ar": ar, "en": en, "fr": fr}[lang]
+
+
 class GenderSelectView(discord.ui.View):
     """View كتبان بعد التفعيل مباشرة، فيها زوج أزرار: ولد / بنت"""
 
@@ -1115,19 +1109,25 @@ class RulesVerifyView(discord.ui.View):
             return True
         return any(role.id in EXEMPT_ROLE_IDS for role in member.roles)
 
-    @discord.ui.button(label="كنوافق", style=discord.ButtonStyle.success, emoji="✅", custom_id="rules_agree_button")
+    @discord.ui.button(label="✅ كنوافق / Agree / J'accepte", style=discord.ButtonStyle.success, custom_id="rules_agree_button")
     async def agree_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         member = interaction.user
         guild = interaction.guild
         if not guild or not isinstance(member, discord.Member):
-            await interaction.response.send_message("❌ وقع مشكل، عاود من جديد.", ephemeral=True)
+            await interaction.response.send_message(
+                t(interaction, "❌ وقع مشكل، عاود من جديد.", "❌ Something went wrong, try again.", "❌ Une erreur est survenue, réessayez."),
+                ephemeral=True
+            )
             return
 
         member_role = guild.get_role(MEMBER_ROLE_ID)
         unverified_role = guild.get_role(UNVERIFIED_ROLE_ID)
 
         if member_role and member_role in member.roles:
-            await interaction.response.send_message("✅ راك مفعل من قبل، مرحبا بيك!", ephemeral=True)
+            await interaction.response.send_message(
+                t(interaction, "✅ راك مفعل من قبل، مرحبا بيك!", "✅ You're already verified, welcome!", "✅ Vous êtes déjà vérifié(e), bienvenue !"),
+                ephemeral=True
+            )
             return
 
         if unverified_role and unverified_role in member.roles:
@@ -1140,8 +1140,13 @@ class RulesVerifyView(discord.ui.View):
                 await member.add_roles(member_role)
             except discord.Forbidden:
                 await interaction.response.send_message(
-                    "❌ ما قدرتش نفعلك، بلغ الإدارة (البوت ماعندوش صلاحية كافية — "
-                    "غالبا role ديال البوت تحت فـ ترتيب الرولات، خاصو يكون فوق role ديال Member).",
+                    t(interaction,
+                      "❌ ما قدرتش نفعلك، بلغ الإدارة (البوت ماعندوش صلاحية كافية — "
+                      "غالبا role ديال البوت تحت فـ ترتيب الرولات، خاصو يكون فوق role ديال Member).",
+                      "❌ I couldn't verify you, please contact staff (the bot lacks permission — "
+                      "its role is probably below the Member role in the role order).",
+                      "❌ Impossible de vous vérifier, contactez le staff (le bot n'a pas la permission — "
+                      "son rôle est probablement en dessous du rôle Member)."),
                     ephemeral=True
                 )
                 await log_action(
@@ -1155,7 +1160,11 @@ class RulesVerifyView(discord.ui.View):
                 return
 
         await interaction.response.send_message(
-            f"✅ تم تفعيلك فـ **{SERVER_NAME}**! مرحبا بيك، استمتع/ي 🎉", ephemeral=True
+            t(interaction,
+              f"✅ تم تفعيلك فـ **{SERVER_NAME}**! مرحبا بيك، استمتع/ي 🎉",
+              f"✅ You're verified in **{SERVER_NAME}**! Welcome, enjoy 🎉",
+              f"✅ Vous êtes vérifié(e) dans **{SERVER_NAME}** ! Bienvenue, amusez-vous bien 🎉"),
+            ephemeral=True
         )
 
         await log_action(
@@ -1167,8 +1176,10 @@ class RulesVerifyView(discord.ui.View):
         )
 
         gender_embed = discord.Embed(
-            title="🚻 واش نتا/نتي ولد ولا بنت؟",
-            description="ضغط/ي على الزر المناسب باش نعطيوك الرول الصحيح.",
+            title=t(interaction, "🚻 واش نتا/نتي ولد ولا بنت؟", "🚻 Are you a boy or a girl?", "🚻 Êtes-vous un garçon ou une fille ?"),
+            description=t(interaction, "ضغط/ي على الزر المناسب باش نعطيوك الرول الصحيح.",
+                          "Click the right button to get the correct role.",
+                          "Cliquez sur le bon bouton pour recevoir le rôle correspondant."),
             color=discord.Color.blurple()
         )
         await interaction.followup.send(
@@ -1177,30 +1188,44 @@ class RulesVerifyView(discord.ui.View):
             ephemeral=True
         )
 
-    @discord.ui.button(label="كنرفض", style=discord.ButtonStyle.danger, emoji="❌", custom_id="rules_refuse_button")
+    @discord.ui.button(label="❌ كنرفض / Refuse / Je refuse", style=discord.ButtonStyle.danger, custom_id="rules_refuse_button")
     async def refuse_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         member = interaction.user
         guild = interaction.guild
         if not guild or not isinstance(member, discord.Member):
-            await interaction.response.send_message("❌ وقع مشكل، عاود من جديد.", ephemeral=True)
+            await interaction.response.send_message(
+                t(interaction, "❌ وقع مشكل، عاود من جديد.", "❌ Something went wrong, try again.", "❌ Une erreur est survenue, réessayez."),
+                ephemeral=True
+            )
             return
 
         if self._is_exempt(member):
             await interaction.response.send_message(
-                "⚠️ راك أدمن/مشرف، ماغاديش نطردك، ولكن هاد الزر معناه رفض القوانين للأعضاء العاديين.",
+                t(interaction,
+                  "⚠️ راك أدمن/مشرف، ماغاديش نطردك، ولكن هاد الزر معناه رفض القوانين للأعضاء العاديين.",
+                  "⚠️ You're an admin/moderator, so you won't be kicked — but this button means rejecting the rules for regular members.",
+                  "⚠️ Vous êtes admin/modérateur, vous ne serez pas expulsé(e) — mais ce bouton signifie refuser les règles pour les membres normaux."),
                 ephemeral=True
             )
             return
 
         try:
             await interaction.response.send_message(
-                "❌ رفضتي القوانين، غادي تتطرد من السيرفر...", ephemeral=True
+                t(interaction, "❌ رفضتي القوانين، غادي تتطرد من السيرفر...",
+                  "❌ You refused the rules, you will be kicked from the server...",
+                  "❌ Vous avez refusé les règles, vous allez être expulsé(e) du serveur..."),
+                ephemeral=True
             )
         except Exception:
             pass
 
         try:
-            await member.send(f"❌ رفضتي القوانين ديال **{SERVER_NAME}**، تم طردك من السيرفر تلقائياً.")
+            await member.send(
+                t(interaction,
+                  f"❌ رفضتي القوانين ديال **{SERVER_NAME}**، تم طردك من السيرفر تلقائياً.",
+                  f"❌ You refused the rules of **{SERVER_NAME}**, you were automatically kicked from the server.",
+                  f"❌ Vous avez refusé les règles de **{SERVER_NAME}**, vous avez été automatiquement expulsé(e) du serveur.")
+            )
         except Exception:
             pass
 
