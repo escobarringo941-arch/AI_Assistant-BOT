@@ -28,7 +28,18 @@ STATS_CHANNEL_ID = 1527800975195377804  # ← channel "STATU"
 SERVER_INVITE_LINK = "https://discord.gg/5sWatSkSCY"  # ← بدلها بالرابط ديال السيرفر ديالك
 STATS_UPDATE_MINUTES = 30
 
-AI_MODEL = "deepseek/deepseek-chat"
+AI_MODEL = "openrouter/free"  # ← مؤقت! كان "deepseek/deepseek-chat" (رجعها ملي تزيد رصيد فـ OpenRouter)
+
+# ═══════ سلسلة الاحتياط (Fallback) ═══════
+# إلا الموديل الأساسي (AI_MODEL) وقف بـ 429 (rate limit) ولا 402 (بلا رصيد)،
+# البوت كيجرب أوتوماتيكيا الموديلات اللي فـ هاد اللائحة، واحد بواحد،
+# قبل ما يستسلم. زيد/بدل الموديلات اللي بغيتي هنا (خاصك تتأكد من الأسماء
+# الدقيقة فـ https://openrouter.ai/models قبل ما تزيدهم).
+AI_MODEL_FALLBACKS = [
+    "deepseek/deepseek-r1:free",
+    "meta-llama/llama-3.3-70b-instruct:free",
+    "google/gemini-2.0-flash-exp:free",
+]
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -76,7 +87,7 @@ GIRLS_ROLE_ID = 1526337114164301824  # ← حط هنا ID ديال role "Girls"
 # ═══════ القوانين ديال السيرفر (بدلها بالقوانين الحقيقية ديالك) ═══════
 SERVER_RULES = (
     "**🇲🇦 بالدارجة:**\n"
-    "1️⃣ الاحترام واجب بين كاع الأعضاء — ممنوع السب، العنصرية، والتنمر.\n"
+    "1️⃣ الاحترام واجب بين كاع الأعضاء — ممنوع السب خارج نطاق المزاح، العنصرية، والتنمر.\n"
     "2️⃣ ممنوع السبام والإعلانات بلا إذن من الإدارة.\n"
     "3️⃣ ممنوع المحتوى ديال +18 ولا العنيف ولا الصادم.\n"
     "4️⃣ هضر فـ الشات المخصص ليه (بحال #games للألعاب).\n"
@@ -84,7 +95,7 @@ SERVER_RULES = (
     "6️⃣ ممنوع مشاركة معلومات شخصية ديال الآخرين (Doxxing).\n"
     "7️⃣ عدم الالتزام بالقوانين غادي يأدي لعقوبة (تحذير، كتم، طرد).\n\n"
     "**🇬🇧 English:**\n"
-    "1️⃣ Respect everyone — no insults, racism, or bullying.\n"
+    "1️⃣ Respect everyone — Insults/cursing are not allowed outside of joking around, racism, or bullying.\n"
     "2️⃣ No spam or ads without staff permission.\n"
     "3️⃣ No NSFW, violent, or shocking content.\n"
     "4️⃣ Talk in the right channel for each topic (e.g. #games for games).\n"
@@ -92,7 +103,7 @@ SERVER_RULES = (
     "6️⃣ No sharing others' personal info (doxxing).\n"
     "7️⃣ Breaking the rules leads to punishment (warning, mute, kick).\n\n"
     "**🇫🇷 Français :**\n"
-    "1️⃣ Le respect est obligatoire — pas d'insultes, de racisme ou de harcèlement.\n"
+    "1️⃣ Le respect est obligatoire — Les insultes sont interdites en dehors du cadre de la plaisanterie., de racisme ou de harcèlement.\n"
     "2️⃣ Pas de spam ni de publicité sans autorisation.\n"
     "3️⃣ Contenu +18, violent ou choquant interdit.\n"
     "4️⃣ Parlez dans le salon approprié à chaque sujet (ex. #games pour les jeux).\n"
@@ -331,13 +342,60 @@ def detect_gender(username: str, display_name: str) -> str:
     return "unknown"
 
 
-async def ask_ai(user_id: str, username: str, display_name: str, prompt: str) -> str:
+async def call_openrouter_chat(messages: list, max_tokens: int, temperature: float) -> tuple:
+    """
+    كيبعث طلب لـ OpenRouter، وإلا وقف الموديل الأساسي بـ 429 (rate limit)
+    ولا 402 (بلا رصيد)، كيجرب الموديلات اللي فـ AI_MODEL_FALLBACKS واحد بواحد.
+    كيرجع (content, None) إلا نجح، ولا (None, error_text) إلا فشلو كامل الموديلات.
+    """
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "Content-Type": "application/json",
         "HTTP-Referer": "https://discord.com",
         "X-Title": "AI Assistant BOT"
     }
+    models_to_try = [AI_MODEL] + [m for m in AI_MODEL_FALLBACKS if m != AI_MODEL]
+    last_error = "ماكاين حتى موديل جرب"
+
+    for model in models_to_try:
+        payload = {
+            "model": model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature
+        }
+        try:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=API_TIMEOUT)) as session:
+                async with session.post(OPENROUTER_URL, headers=headers, json=payload) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        content = data["choices"][0]["message"]["content"]
+                        if model != AI_MODEL:
+                            print(f"[OPENROUTER] ⚠️ الموديل الأساسي فشل، خدام بـ fallback: {model}")
+                        return content, None
+                    elif resp.status in (429, 402):
+                        body = await resp.text()
+                        print(f"[OPENROUTER] ⚠️ {model} رجع {resp.status}, نجرب الموديل اللي بعدو... ({body[:150]})")
+                        last_error = f"{resp.status}: {body[:200]}"
+                        continue
+                    else:
+                        body = await resp.text()
+                        print(f"[OPENROUTER] ❌ {model} رجع {resp.status}: {body[:200]}")
+                        last_error = f"{resp.status}: {body[:200]}"
+                        continue
+        except asyncio.TimeoutError:
+            print(f"[OPENROUTER] ⏳ Timeout مع {model}")
+            last_error = "timeout"
+            continue
+        except Exception as e:
+            print(f"[OPENROUTER] ❌ Exception مع {model}: {e}")
+            last_error = str(e)
+            continue
+
+    return None, last_error
+
+
+async def ask_ai(user_id: str, username: str, display_name: str, prompt: str) -> str:
     gender = detect_gender(username, display_name)
     messages = [{"role": "system", "content": get_system_prompt(gender)}]
     if learned_knowledge:
@@ -348,34 +406,21 @@ async def ask_ai(user_id: str, username: str, display_name: str, prompt: str) ->
     for msg in server_memory[-10:]:
         messages.append(msg)
     messages.append({"role": "user", "content": prompt})
-    payload = {
-        "model": AI_MODEL,
-        "messages": messages,
-        "max_tokens": MAX_REPLY_LENGTH,
-        "temperature": CREATIVITY
-    }
-    try:
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=API_TIMEOUT)) as session:
-            async with session.post(OPENROUTER_URL, headers=headers, json=payload) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    reply = data["choices"][0]["message"]["content"]
-                    user_memory[user_id].append({"role": "user", "content": prompt})
-                    user_memory[user_id].append({"role": "assistant", "content": reply})
-                    if len(user_memory[user_id]) > MEMORY_SIZE * 2:
-                        user_memory[user_id] = user_memory[user_id][-MEMORY_SIZE * 2:]
-                    server_memory.append({"role": "user", "content": f"[{username}]: {prompt}"})
-                    server_memory.append({"role": "assistant", "content": reply})
-                    if len(server_memory) > MAX_SERVER_MEMORY * 2:
-                        server_memory[:] = server_memory[-MAX_SERVER_MEMORY * 2:]
-                    return reply
-                else:
-                    error = await resp.text()
-                    return f"❌ Error {resp.status}: {error[:200]}"
-    except asyncio.TimeoutError:
-        return "⏳ تعطل شوية... عاود سولني!"
-    except Exception as e:
-        return f"❌ Exception: {str(e)[:200]}"
+
+    reply, error = await call_openrouter_chat(messages, MAX_REPLY_LENGTH, CREATIVITY)
+
+    if error:
+        return f"❌ Error: {error}"
+
+    user_memory[user_id].append({"role": "user", "content": prompt})
+    user_memory[user_id].append({"role": "assistant", "content": reply})
+    if len(user_memory[user_id]) > MEMORY_SIZE * 2:
+        user_memory[user_id] = user_memory[user_id][-MEMORY_SIZE * 2:]
+    server_memory.append({"role": "user", "content": f"[{username}]: {prompt}"})
+    server_memory.append({"role": "assistant", "content": reply})
+    if len(server_memory) > MAX_SERVER_MEMORY * 2:
+        server_memory[:] = server_memory[-MAX_SERVER_MEMORY * 2:]
+    return reply
 
 
 # ═══════════════════════════════════════════════════════
@@ -496,49 +541,34 @@ async def translate_genres(genres_text: str) -> str:
 
 
 async def translate_to_darija(text: str) -> str:
-    """يترجم نص من الانجليزية للدارجة المغربية عبر نفس الـ AI (DeepSeek)"""
+    """يترجم نص من الانجليزية للدارجة المغربية عبر AI (مع fallback أوتوماتيك للموديل)"""
     if not text:
         return text
     if not OPENROUTER_API_KEY:
         print("[TRANSLATE] ⚠️ OPENROUTER_API_KEY ماكايناش (فارغة)! ماغاديش نترجمو والو.")
         return text
-    headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://discord.com",
-        "X-Title": "AI Assistant BOT"
-    }
-    payload = {
-        "model": AI_MODEL,
-        "messages": [
-            {
-                "role": "system",
-                "content": (
-                    "نتا مترجم محترف. ترجم النص التالي من الانجليزية للدارجة المغربية "
-                    "بطريقة طبيعية وسلسة ومفهومة. غير الترجمة، بلا مقدمات، بلا تعليقات، "
-                    "بلا علامات تنصيص."
-                )
-            },
-            {"role": "user", "content": text}
-        ],
-        "max_tokens": 700,
-        "temperature": 0.3
-    }
-    try:
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as session:
-            async with session.post(OPENROUTER_URL, headers=headers, json=payload) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    translated = data["choices"][0]["message"]["content"].strip()
-                    print(f"[TRANSLATE] ✅ status=200 | قبل: '{text[:50]}' | بعد: '{translated[:50]}'")
-                    return translated if translated else text
-                else:
-                    body = await resp.text()
-                    print(f"[TRANSLATE] ❌ status {resp.status}: {body[:300]}")
-                    return text
-    except Exception as e:
-        print(f"[TRANSLATE] ❌ Exception: {e}")
+
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "نتا مترجم محترف. ترجم النص التالي من الانجليزية للدارجة المغربية "
+                "بطريقة طبيعية وسلسة ومفهومة. غير الترجمة، بلا مقدمات، بلا تعليقات، "
+                "بلا علامات تنصيص."
+            )
+        },
+        {"role": "user", "content": text}
+    ]
+
+    translated, error = await call_openrouter_chat(messages, 700, 0.3)
+
+    if error:
+        print(f"[TRANSLATE] ❌ فشلو كاع الموديلات: {error}")
         return text
+
+    translated = translated.strip()
+    print(f"[TRANSLATE] ✅ قبل: '{text[:50]}' | بعد: '{translated[:50]}'")
+    return translated if translated else text
 
 
 async def get_movie_from_omdb() -> dict:
