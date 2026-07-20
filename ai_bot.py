@@ -62,11 +62,11 @@ API_TIMEOUT = 15
 # ║              CHANNELS ديال AUTO-INFO                 ║
 # ═══════════════════════════════════════════════════════
 
-NEWS_CHANNEL_ID = 1526701863141900319
-GAMES_CHANNEL_ID = 1524957892925456546
-MOVIES_CHANNEL_ID = 1526721884434206820
-ANIME_CHANNEL_ID = 1526726257012772985
-MUSIC_CHANNEL_ID = 1524957892925456547
+NEWS_CHANNEL_IDS = [1526701863141900319]      # ← زيد IDs آخرين هنا بـ , إلا بغيتي عدة channels ديال الأخبار
+GAMES_CHANNEL_IDS = [1524957892925456546]      # ← زيد IDs آخرين هنا بـ , إلا بغيتي عدة channels ديال الألعاب
+MOVIES_CHANNEL_IDS = [1526721884434206820]     # ← زيد IDs آخرين هنا بـ , إلا بغيتي عدة channels ديال الأفلام
+ANIME_CHANNEL_IDS = [1526726257012772985]      # ← زيد IDs آخرين هنا بـ , إلا بغيتي عدة channels ديال الأنمي
+MUSIC_CHANNEL_IDS = [1524957892925456547]      # ← زيد IDs آخرين هنا بـ , إلا بغيتي عدة channels ديال الموسيقى
 
 # ═══════════════════════════════════════════════════════
 # ║              MODERATION & VERIFICATION CONFIG          ║
@@ -129,16 +129,49 @@ SPAM_INTERVAL = 5
 WARN_LIMIT = 3
 
 # ═══════════════════════════════════════════════════════
-# ║              REACTION ROLES CONFIG                     ║
+# ║              PICK ROLES CONFIG (Dropdown)               ║
 # ═══════════════════════════════════════════════════════
-# حط هنا الإيموجي ↔ ID ديال الرول (كليك يمين على الرول فـ Discord → Copy ID)
+# نظام اختيار الأدوار بـ Dropdown Menu (بدل الـ Reactions القديمة).
+# كل مجموعة (category) كتبان فـ Select Menu وحدها فـ الرسالة، والعضو
+# يقدر يختار عدة أدوار من نفس المجموعة مرة وحدة.
+# حط هنا label + emoji + ID ديال الرول (كليك يمين على الرول فـ Discord → Copy ID)
 # خاصك تفعّل "Developer Mode" فـ Discord Settings > Advanced باش يبان ليك Copy ID
-REACTION_ROLES = {
-    "🎮": 1526800480007880845,  # ← حط ID دور Gamer
-    "📺": 1526800623419523072,  # ← حط ID دور Anime Fan
-    "🎬": 1526801019458158642,  # ← حط ID دور Movie Fan
-    "🎧": 1526801165692702842,  # ← حط ID دور Music Fan
+PICK_ROLES = {
+    "🎯 الهوايات": [
+        {"label": "Gamer", "emoji": "🎮", "role_id": 1526800480007880845},
+        {"label": "Anime Fan", "emoji": "📺", "role_id": 1526800623419523072},
+        {"label": "Movie Fan", "emoji": "🎬", "role_id": 1526801019458158642},
+        {"label": "Music Fan", "emoji": "🎧", "role_id": 1526801165692702842},
+        {"label": "Book Worm", "emoji": "📚", "role_id": 1528897494400897066},   # ← حط ID
+        {"label": "Artist", "emoji": "🎨", "role_id": 1528897791089315880},      # ← حط ID
+        {"label": "Coder / Tech", "emoji": "💻", "role_id": 1528897975638822924},  # ← حط ID
+        {"label": "Sports Fan", "emoji": "⚽", "role_id": 1528898014863691996},  # ← حط ID
+    ],
+    "🔔 إشعارات (Pings)": [
+        {"label": "News Ping", "emoji": "📰", "role_id": 0},     # ← حط ID
+        {"label": "Games Ping", "emoji": "🎮", "role_id": 0},    # ← حط ID
+        {"label": "Movies Ping", "emoji": "🎬", "role_id": 0},   # ← حط ID
+        {"label": "Anime Ping", "emoji": "📺", "role_id": 0},    # ← حط ID
+        {"label": "Music Ping", "emoji": "🎧", "role_id": 0},    # ← حط ID
+        {"label": "Announcements Ping", "emoji": "📢", "role_id": 0},  # ← حط ID
+    ],
+    "🌍 اللغة": [
+        {"label": "Darija", "emoji": "🇲🇦", "role_id": 0},   # ← حط ID
+        {"label": "English", "emoji": "🇬🇧", "role_id": 0},  # ← حط ID
+        {"label": "Français", "emoji": "🇫🇷", "role_id": 0},  # ← حط ID
+    ],
 }
+
+
+def get_ping_mention(label: str) -> str:
+    """كيرجع نص الـ mention ديال رول (بحال '<@&123> ') إلا كان معمر فـ PICK_ROLES،
+    وإلا كايرجع string فارغ (باش الرسالة تبعث عادي بلا مشكل)."""
+    for roles_list in PICK_ROLES.values():
+        for r in roles_list:
+            if r["label"] == label and r["role_id"]:
+                return f"<@&{r['role_id']}> "
+    return ""
+
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 
@@ -157,7 +190,6 @@ learned_knowledge = []
 warns_db = {}
 spam_tracker = {}
 mute_tasks = {}
-reaction_role_messages = {}  # {message_id: {emoji: role_id}}
 
 # ═══════════════════════════════════════════════════════
 # ║   سجل المحتوى المنشور (باش ما يتعاودش تا شي حاجة)      ║
@@ -230,34 +262,9 @@ def reset_category_history(category: str):
 
 load_posted_history()
 
-REACTION_ROLES_FILE = "reaction_roles.json"
-
-
-def load_reaction_role_messages():
-    """يقرا رسائل Reaction Roles المحفوظة من ملف JSON (باش ما تتمسحش عند restart)"""
-    global reaction_role_messages
-    try:
-        with open(REACTION_ROLES_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        # الـ keys فـ JSON دايما strings، خاصنا نرجعوهم int (message_id)
-        reaction_role_messages = {int(msg_id): roles_map for msg_id, roles_map in data.items()}
-        print(f"[REACTION ROLES] تحمل {len(reaction_role_messages)} رسالة محفوظة")
-    except FileNotFoundError:
-        print("[REACTION ROLES] ماكاينش سجل سابق، غادي نبداو من الصفر")
-    except Exception as e:
-        print(f"[REACTION ROLES] خطأ فـ التحميل: {e}")
-
-
-def save_reaction_role_messages():
-    """يحفظ رسائل Reaction Roles فـ ملف JSON"""
-    try:
-        with open(REACTION_ROLES_FILE, "w", encoding="utf-8") as f:
-            json.dump({str(k): v for k, v in reaction_role_messages.items()}, f, ensure_ascii=False)
-    except Exception as e:
-        print(f"[REACTION ROLES] خطأ فـ الحفظ: {e}")
-
-
-load_reaction_role_messages()
+# ملاحظة: نظام Dropdown ماعادش محتاج يحفظ IDs ديال الرسائل فـ JSON،
+# لأن الـ View كتشتغل بـ custom_id ثابت (persistent view) — كتخدم
+# فـ أي رسالة وحتى بعد ريستارت البوت، بلا ما نحتاجو نخزنو شي حاجة.
 
 STATS_MESSAGE_FILE = "stats_message.json"
 stats_message_ids = {}  # {guild_id (str): message_id}
@@ -1202,6 +1209,86 @@ class GenderSelectView(discord.ui.View):
             pass
 
 
+class RoleCategorySelect(discord.ui.Select):
+    """Select menu واحد كيمثل مجموعة (category) وحدة من PICK_ROLES.
+    العضو يقدر يختار عدة خيارات مرة وحدة (multi-select)."""
+
+    def __init__(self, category_name: str, roles_list: list):
+        self.category_name = category_name
+        # {role_id: label} باش نستعملوها ملي كيوصل اختيار جديد
+        self.role_map = {r["role_id"]: r["label"] for r in roles_list if r["role_id"]}
+
+        options = [
+            discord.SelectOption(
+                label=r["label"],
+                emoji=r["emoji"] or None,
+                value=str(r["role_id"]),
+            )
+            for r in roles_list if r["role_id"]
+        ]
+
+        super().__init__(
+            placeholder=f"اختار من: {category_name}",
+            min_values=0,
+            max_values=len(options) if options else 1,
+            options=options,
+            custom_id=f"pickroles_select_{category_name}",
+            disabled=not options,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        guild = interaction.guild
+        member = interaction.user
+        if not guild or not isinstance(member, discord.Member):
+            await interaction.response.send_message("❌ وقع مشكل، حاول عاود.", ephemeral=True)
+            return
+
+        selected_ids = {int(v) for v in self.values}
+        all_ids = set(self.role_map.keys())
+
+        added, removed, failed = [], [], []
+
+        for role_id in all_ids:
+            role = guild.get_role(role_id)
+            if not role:
+                continue
+            has_it = role in member.roles
+            wants_it = role_id in selected_ids
+            try:
+                if wants_it and not has_it:
+                    await member.add_roles(role)
+                    added.append(role.name)
+                elif has_it and not wants_it:
+                    await member.remove_roles(role)
+                    removed.append(role.name)
+            except discord.Forbidden:
+                failed.append(role.name)
+
+        parts = []
+        if added:
+            parts.append("✅ تزادو: " + ", ".join(added))
+        if removed:
+            parts.append("🔄 تنزعو: " + ", ".join(removed))
+        if failed:
+            parts.append("❌ ما قدرتش نعطي (صلاحية): " + ", ".join(failed))
+        if not parts:
+            parts.append("مافيش تغيير.")
+
+        await interaction.response.send_message("\n".join(parts), ephemeral=True)
+
+
+class RolePickerView(discord.ui.View):
+    """View فيها Select menu واحد لكل category فـ PICK_ROLES.
+    Persistent (timeout=None) باش تبقى خدامة حتى بعد ريستارت البوت."""
+
+    def __init__(self):
+        super().__init__(timeout=None)
+        for category_name, roles_list in PICK_ROLES.items():
+            valid = [r for r in roles_list if r["role_id"]]
+            if valid:
+                self.add_item(RoleCategorySelect(category_name, valid))
+
+
 class RulesVerifyView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)  # باش يبقى خدام للأبد (persistent view)
@@ -1532,19 +1619,6 @@ async def on_raw_reaction_add(payload):
     if not member or member.bot:
         return
 
-    # ═══════ Reaction Roles ═══════
-    if payload.message_id in reaction_role_messages:
-        emoji = str(payload.emoji)
-        role_id = reaction_role_messages[payload.message_id].get(emoji)
-        if role_id:
-            role = guild.get_role(role_id)
-            if role:
-                try:
-                    await member.add_roles(role)
-                except discord.Forbidden:
-                    pass
-        return
-
     # ═══════ Verification ═══════
     if payload.channel_id != VERIFY_CHANNEL_ID:
         return
@@ -1591,28 +1665,6 @@ async def on_raw_reaction_add(payload):
         )
     except Exception:
         pass
-
-
-@bot.event
-async def on_raw_reaction_remove(payload):
-    """كينزع الرول إلا نزع العضو الـ reaction ديالو"""
-    if payload.message_id not in reaction_role_messages:
-        return
-    guild = bot.get_guild(payload.guild_id)
-    if not guild:
-        return
-    member = guild.get_member(payload.user_id)
-    if not member or member.bot:
-        return
-    emoji = str(payload.emoji)
-    role_id = reaction_role_messages[payload.message_id].get(emoji)
-    if role_id:
-        role = guild.get_role(role_id)
-        if role:
-            try:
-                await member.remove_roles(role)
-            except discord.Forbidden:
-                pass
 
 
 @bot.event
@@ -2201,65 +2253,61 @@ async def setuprules(ctx):
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def setuproles(ctx):
-    """يصاوب رسالة اختيار الأدوار بالـ Reactions (خاصك تعمر REACTION_ROLES فـ config أولاً)"""
-    valid_roles = {}
-    for emoji, role_id in REACTION_ROLES.items():
-        if not role_id:
-            continue
-        role = ctx.guild.get_role(role_id)
-        if role:
-            valid_roles[emoji] = role_id
-
-    if not valid_roles:
+    """يصاوب رسالة اختيار الأدوار بـ Dropdown Menus (خاصك تعمر PICK_ROLES فـ config أولاً)"""
+    has_any_valid_role = any(
+        r["role_id"] for roles_list in PICK_ROLES.values() for r in roles_list
+    )
+    if not has_any_valid_role:
         await ctx.send(
-            "❌ ماكاين حتى رول صالح فـ `REACTION_ROLES`!\n"
+            "❌ ماكاين حتى رول صالح فـ `PICK_ROLES`!\n"
             "خاصك تحط IDs ديال الأدوار فـ config (فعّل Developer Mode فـ Discord، "
             "بعدها كليك يمين على الرول → Copy ID)."
         )
         return
 
-    description = "كليك على الإيموجي باش تاخد الرول، وكليك عليه مرة أخرى باش تنزعو 🔄\n\n"
-    description += "\n".join([
-        f"{emoji} — <@&{role_id}>" for emoji, role_id in valid_roles.items()
-    ])
+    description_lines = ["اختار من اللائحة (Dropdown) تحت باش تاخد الأدوار، وعاود اختار باش تبدلها 🔄\n"]
+    for category_name, roles_list in PICK_ROLES.items():
+        valid = [r for r in roles_list if r["role_id"]]
+        if not valid:
+            continue
+        description_lines.append(f"**{category_name}**")
+        description_lines.append(", ".join(f"{r['emoji']} {r['label']}" for r in valid))
+        description_lines.append("")
 
     embed = discord.Embed(
         title="🎭 اختار الأدوار ديالك",
-        description=description,
+        description="\n".join(description_lines),
         color=discord.Color.blue(),
         timestamp=datetime.now()
     )
-    embed.set_footer(text="GGMW9 | Reaction Roles")
+    embed.set_footer(text="GGMW9 | Pick Roles")
 
-    msg = await ctx.send(embed=embed)
-    for emoji in valid_roles:
-        try:
-            await msg.add_reaction(emoji)
-        except discord.HTTPException:
-            pass
-
-    reaction_role_messages[msg.id] = valid_roles
-    save_reaction_role_messages()
+    await ctx.send(embed=embed, view=RolePickerView())
     await ctx.send("✅ تصاوبات رسالة الأدوار!", delete_after=5)
 
 
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def listroles(ctx):
-    """يبين شحال من رسالة Reaction Roles فعّالة دابا"""
-    if not reaction_role_messages:
-        await ctx.send("ماكاين حتى رسالة Reaction Roles فعّالة دابا. استعمل `!setuproles`.")
-        return
+    """يبين لائحة الأدوار المعمرة دابا فـ PICK_ROLES"""
     lines = []
-    for msg_id, roles_map in reaction_role_messages.items():
-        roles_text = ", ".join([f"{e} → <@&{r}>" for e, r in roles_map.items()])
-        lines.append(f"**Message ID:** `{msg_id}`\n{roles_text}")
+    for category_name, roles_list in PICK_ROLES.items():
+        valid = [r for r in roles_list if r["role_id"]]
+        if not valid:
+            continue
+        roles_text = ", ".join(f"{r['emoji']} {r['label']} → <@&{r['role_id']}>" for r in valid)
+        lines.append(f"**{category_name}**\n{roles_text}")
+
+    if not lines:
+        await ctx.send("ماكاين حتى رول معمر دابا فـ `PICK_ROLES`. عمر IDs ديال الأدوار فـ config.")
+        return
+
     embed = discord.Embed(
-        title="🎭 رسائل Reaction Roles الفعّالة",
+        title="🎭 الأدوار المعمرة فـ PICK_ROLES",
         description="\n\n".join(lines),
         color=discord.Color.blue()
     )
-    embed.set_footer(text="GGMW9 | Reaction Roles")
+    embed.set_footer(text="GGMW9 | Pick Roles")
     await ctx.send(embed=embed)
 
 
@@ -2511,11 +2559,11 @@ async def testinfo(ctx, category: str = "all"):
     الاستخدام: !testinfo [news|games|movies|anime|music|all]
     """
     categories = {
-        "news": ("📰 News", NEWS_CHANNEL_ID, get_news_from_api, "NewsAPI"),
-        "games": ("🎮 Games", GAMES_CHANNEL_ID, get_game_from_rawg, "RAWG.io"),
-        "movies": ("🎬 Movies", MOVIES_CHANNEL_ID, get_movie_from_omdb, "TMDb+OMDb"),
-        "anime": ("📺 Anime", ANIME_CHANNEL_ID, get_anime_from_jikan, "Jikan"),
-        "music": ("🎧 Music", MUSIC_CHANNEL_ID, get_music_from_lastfm, "Last.fm")
+        "news": ("📰 News", NEWS_CHANNEL_IDS, get_news_from_api, "NewsAPI"),
+        "games": ("🎮 Games", GAMES_CHANNEL_IDS, get_game_from_rawg, "RAWG.io"),
+        "movies": ("🎬 Movies", MOVIES_CHANNEL_IDS, get_movie_from_omdb, "TMDb+OMDb"),
+        "anime": ("📺 Anime", ANIME_CHANNEL_IDS, get_anime_from_jikan, "Jikan"),
+        "music": ("🎧 Music", MUSIC_CHANNEL_IDS, get_music_from_lastfm, "Last.fm")
     }
     
     if category == "all":
@@ -2529,8 +2577,8 @@ async def testinfo(ctx, category: str = "all"):
     await ctx.send(f"🧪 جاري اختبار {len(cats_to_test)} APIs...")
     
     for cat in cats_to_test:
-        name, channel_id, func, api_name = categories[cat]
-        channel = bot.get_channel(channel_id)
+        name, channel_ids, func, api_name = categories[cat]
+        channel = bot.get_channel(channel_ids[0]) if channel_ids else None
         
         if not channel:
             await ctx.send(f"❌ {name}: ما لقيتش القناة!")
@@ -2565,22 +2613,24 @@ async def auto_info():
 
     # ═══════ 📰 NEWS — أخبار عامة ═══════
     try:
-        news_channel = bot.get_channel(NEWS_CHANNEL_ID)
-        if news_channel:
-            news = await get_news_from_api()
-            if news:
-                embed = discord.Embed(
-                    title=f"📰 {news['title']}",
-                    description=news['description'],
-                    color=discord.Color.blue(),
-                    url=news['url'],
-                    timestamp=datetime.now()
-                )
-                embed.set_author(name=f"📡 {news['source']}")
-                if news['image']:
-                    embed.set_image(url=news['image'])
-                embed.set_footer(text="GGMW9 | NewsAPI")
-                await news_channel.send(embed=embed)
+        news = await get_news_from_api()
+        if news:
+            embed = discord.Embed(
+                title=f"📰 {news['title']}",
+                description=news['description'],
+                color=discord.Color.blue(),
+                url=news['url'],
+                timestamp=datetime.now()
+            )
+            embed.set_author(name=f"📡 {news['source']}")
+            if news['image']:
+                embed.set_image(url=news['image'])
+            embed.set_footer(text="GGMW9 | NewsAPI")
+            ping = get_ping_mention("News Ping") or None
+            for channel_id in NEWS_CHANNEL_IDS:
+                channel = bot.get_channel(channel_id)
+                if channel:
+                    await channel.send(content=ping, embed=embed)
     except Exception as e:
         print(f"[AUTO_INFO] ❌ خطأ فـ NEWS: {e}")
 
@@ -2588,24 +2638,26 @@ async def auto_info():
 
     # ═══════ 🎮 GAMES — أخبار ألعاب ═══════
     try:
-        games_channel = bot.get_channel(GAMES_CHANNEL_ID)
-        if games_channel:
-            game = await get_game_from_rawg()
-            if game:
-                embed = discord.Embed(
-                    title=f"🎮 {game['name']}",
-                    description=game['description'][:400] + "...",
-                    color=discord.Color.green(),
-                    url=game['url'],
-                    timestamp=datetime.now()
-                )
-                embed.add_field(name="📅 تاريخ الصدور", value=game['released'], inline=True)
-                embed.add_field(name="⭐ التقييم", value=game['rating'], inline=True)
-                embed.add_field(name="🎭 النوع", value=game['genres'], inline=False)
-                if game['poster']:
-                    embed.set_image(url=game['poster'])
-                embed.set_footer(text="GGMW9 | RAWG.io")
-                await games_channel.send(embed=embed)
+        game = await get_game_from_rawg()
+        if game:
+            embed = discord.Embed(
+                title=f"🎮 {game['name']}",
+                description=game['description'][:400] + "...",
+                color=discord.Color.green(),
+                url=game['url'],
+                timestamp=datetime.now()
+            )
+            embed.add_field(name="📅 تاريخ الصدور", value=game['released'], inline=True)
+            embed.add_field(name="⭐ التقييم", value=game['rating'], inline=True)
+            embed.add_field(name="🎭 النوع", value=game['genres'], inline=False)
+            if game['poster']:
+                embed.set_image(url=game['poster'])
+            embed.set_footer(text="GGMW9 | RAWG.io")
+            ping = get_ping_mention("Games Ping") or None
+            for channel_id in GAMES_CHANNEL_IDS:
+                channel = bot.get_channel(channel_id)
+                if channel:
+                    await channel.send(content=ping, embed=embed)
     except Exception as e:
         print(f"[AUTO_INFO] ❌ خطأ فـ GAMES: {e}")
 
@@ -2613,23 +2665,25 @@ async def auto_info():
 
     # ═══════ 🎬 MOVIES — أفلام + ملخص ═══════
     try:
-        movies_channel = bot.get_channel(MOVIES_CHANNEL_ID)
-        if movies_channel:
-            movie = await get_movie_from_omdb()
-            if movie:
-                embed = discord.Embed(
-                    title=f"🎬 {movie['title']} ({movie['year']})",
-                    description=movie['plot'][:500] + "...",
-                    color=discord.Color.gold(),
-                    url=movie['imdb'],
-                    timestamp=datetime.now()
-                )
-                embed.add_field(name="🎭 النوع", value=movie['genre'], inline=True)
-                embed.add_field(name="⭐ تقييم IMDB", value=f"{movie['rating']}/10", inline=True)
-                if movie['poster'] and movie['poster'] != "N/A":
-                    embed.set_image(url=movie['poster'])
-                embed.set_footer(text="GGMW9 | IMDB via OMDb")
-                await movies_channel.send(embed=embed)
+        movie = await get_movie_from_omdb()
+        if movie:
+            embed = discord.Embed(
+                title=f"🎬 {movie['title']} ({movie['year']})",
+                description=movie['plot'][:500] + "...",
+                color=discord.Color.gold(),
+                url=movie['imdb'],
+                timestamp=datetime.now()
+            )
+            embed.add_field(name="🎭 النوع", value=movie['genre'], inline=True)
+            embed.add_field(name="⭐ تقييم IMDB", value=f"{movie['rating']}/10", inline=True)
+            if movie['poster'] and movie['poster'] != "N/A":
+                embed.set_image(url=movie['poster'])
+            embed.set_footer(text="GGMW9 | IMDB via OMDb")
+            ping = get_ping_mention("Movies Ping") or None
+            for channel_id in MOVIES_CHANNEL_IDS:
+                channel = bot.get_channel(channel_id)
+                if channel:
+                    await channel.send(content=ping, embed=embed)
     except Exception as e:
         print(f"[AUTO_INFO] ❌ خطأ فـ MOVIES: {e}")
 
@@ -2637,30 +2691,31 @@ async def auto_info():
 
     # ═══════ 📺 ANIME — أنمي + ملخص ═══════
     try:
-        anime_channel = bot.get_channel(ANIME_CHANNEL_ID)
-        print(f"[AUTO_INFO] ANIME channel lookup ({ANIME_CHANNEL_ID}): {anime_channel}")
-        if anime_channel:
-            anime = await get_anime_from_jikan()
-            print(f"[AUTO_INFO] get_anime_from_jikan رجع: {'فيها داتا' if anime else 'فارغة'}")
-            if anime:
-                embed = discord.Embed(
-                    title=f"📺 {anime['title']}",
-                    description=anime['synopsis'][:500] + "...",
-                    color=discord.Color.purple(),
-                    url=anime['url'],
-                    timestamp=datetime.now()
-                )
-                if anime['title_jp']:
-                    embed.add_field(name="🇯🇵 الاسم الياباني", value=anime['title_jp'], inline=False)
-                embed.add_field(name="📺 النوع", value=anime['type'], inline=True)
-                embed.add_field(name="📊 عدد الحلقات", value=str(anime['episodes']), inline=True)
-                embed.add_field(name="⭐ تقييم MAL", value=f"{anime['score']}/10", inline=True)
-                embed.add_field(name="🎭 الأنواع", value=anime['genres'], inline=False)
-                if anime['poster']:
-                    embed.set_image(url=anime['poster'])
-                embed.set_footer(text="GGMW9 | MyAnimeList via Jikan")
-                await anime_channel.send(embed=embed)
-                print("[AUTO_INFO] ✅ تبعث embed ديال الأنمي")
+        anime = await get_anime_from_jikan()
+        print(f"[AUTO_INFO] get_anime_from_jikan رجع: {'فيها داتا' if anime else 'فارغة'}")
+        if anime:
+            embed = discord.Embed(
+                title=f"📺 {anime['title']}",
+                description=anime['synopsis'][:500] + "...",
+                color=discord.Color.purple(),
+                url=anime['url'],
+                timestamp=datetime.now()
+            )
+            if anime['title_jp']:
+                embed.add_field(name="🇯🇵 الاسم الياباني", value=anime['title_jp'], inline=False)
+            embed.add_field(name="📺 النوع", value=anime['type'], inline=True)
+            embed.add_field(name="📊 عدد الحلقات", value=str(anime['episodes']), inline=True)
+            embed.add_field(name="⭐ تقييم MAL", value=f"{anime['score']}/10", inline=True)
+            embed.add_field(name="🎭 الأنواع", value=anime['genres'], inline=False)
+            if anime['poster']:
+                embed.set_image(url=anime['poster'])
+            embed.set_footer(text="GGMW9 | MyAnimeList via Jikan")
+            ping = get_ping_mention("Anime Ping") or None
+            for channel_id in ANIME_CHANNEL_IDS:
+                channel = bot.get_channel(channel_id)
+                if channel:
+                    await channel.send(content=ping, embed=embed)
+                    print("[AUTO_INFO] ✅ تبعث embed ديال الأنمي")
     except Exception as e:
         print(f"[AUTO_INFO] ❌ خطأ فـ ANIME: {e}")
 
@@ -2668,23 +2723,25 @@ async def auto_info():
 
     # ═══════ 🎧 MUSIC — موسيقى + أغاني ═══════
     try:
-        music_channel = bot.get_channel(MUSIC_CHANNEL_ID)
-        if music_channel:
-            music = await get_music_from_lastfm()
-            if music:
-                embed = discord.Embed(
-                    title=f"🎵 {music['name']}",
-                    description=f"أغنية جديدة من **{music['artist']}**",
-                    color=discord.Color.red(),
-                    url=music['url'],
-                    timestamp=datetime.now()
-                )
-                embed.add_field(name="🎤 الفنان", value=music['artist'], inline=True)
-                embed.add_field(name="👥 المستمعين", value=f"{music['listeners']:,}", inline=True)
-                if music['poster']:
-                    embed.set_image(url=music['poster'])
-                embed.set_footer(text="GGMW9 | Last.fm")
-                await music_channel.send(embed=embed)
+        music = await get_music_from_lastfm()
+        if music:
+            embed = discord.Embed(
+                title=f"🎵 {music['name']}",
+                description=f"أغنية جديدة من **{music['artist']}**",
+                color=discord.Color.red(),
+                url=music['url'],
+                timestamp=datetime.now()
+            )
+            embed.add_field(name="🎤 الفنان", value=music['artist'], inline=True)
+            embed.add_field(name="👥 المستمعين", value=f"{music['listeners']:,}", inline=True)
+            if music['poster']:
+                embed.set_image(url=music['poster'])
+            embed.set_footer(text="GGMW9 | Last.fm")
+            ping = get_ping_mention("Music Ping") or None
+            for channel_id in MUSIC_CHANNEL_IDS:
+                channel = bot.get_channel(channel_id)
+                if channel:
+                    await channel.send(content=ping, embed=embed)
     except Exception as e:
         print(f"[AUTO_INFO] ❌ خطأ فـ MUSIC: {e}")
 
@@ -2835,11 +2892,11 @@ async def on_ready():
     print(f"👋 Welcome: {WELCOME_CHANNEL_ID}")
     print(f"✅ Verify: {VERIFY_CHANNEL_ID}")
     print(f"🛡️ Mod Logs: {MOD_LOGS_CHANNEL_ID}")
-    print(f"📰 News: {NEWS_CHANNEL_ID}")
-    print(f"🎮 Games: {GAMES_CHANNEL_ID}")
-    print(f"🎬 Movies: {MOVIES_CHANNEL_ID}")
-    print(f"📺 Anime: {ANIME_CHANNEL_ID}")
-    print(f"🎧 Music: {MUSIC_CHANNEL_ID}")
+    print(f"📰 News: {NEWS_CHANNEL_IDS}")
+    print(f"🎮 Games: {GAMES_CHANNEL_IDS}")
+    print(f"🎬 Movies: {MOVIES_CHANNEL_IDS}")
+    print(f"📺 Anime: {ANIME_CHANNEL_IDS}")
+    print(f"🎧 Music: {MUSIC_CHANNEL_IDS}")
     print(f"⏱️ Timeout: {API_TIMEOUT}s")
     print(f"🛡️ Moderation: نشط")
     print(f"✅ Verification: نشط")
@@ -2861,6 +2918,7 @@ async def on_ready():
         update_stats.start()
 
     bot.add_view(RulesVerifyView())  # باش الأزرار يبقاو خدامين حتى بعد ريستارت البوت
+    bot.add_view(RolePickerView())   # باش الـ Dropdown ديال الأدوار يبقى خدام حتى بعد ريستارت البوت
 
     for guild in bot.guilds:
         # ملاحظة: ماعادش كنبعثو رسالة "تفعيل العضوية" القديمة (بالريأكشن ✅)
