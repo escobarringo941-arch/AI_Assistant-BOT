@@ -87,7 +87,7 @@ GIRLS_ROLE_ID = 1526337114164301824  # ← حط هنا ID ديال role "Girls"
 # ═══════ القوانين ديال السيرفر (بدلها بالقوانين الحقيقية ديالك) ═══════
 SERVER_RULES = (
     "**🇲🇦 بالدارجة:**\n"
-    "1️⃣ الاحترام واجب بين كاع الأعضاء — ممنوع السب خارج نطاق المزح، العنصرية، والتنمر.\n"
+    "1️⃣ الاحترام واجب بين كاع الأعضاء — ممنوع السب خارج نطاق المزاح، العنصرية، والتنمر.\n"
     "2️⃣ ممنوع السبام والإعلانات بلا إذن من الإدارة.\n"
     "3️⃣ ممنوع المحتوى ديال +18 ولا العنيف ولا الصادم.\n"
     "4️⃣ هضر فـ الشات المخصص ليه (بحال #games للألعاب).\n"
@@ -1362,8 +1362,8 @@ async def setup_rules_message(guild: discord.Guild):
         title="📜 قوانين السيرفر | Server Rules | Règles du serveur",
         description=(
             f"{SERVER_RULES}\n\n"
-            f"⚠️ **بالضغط ✅ كتوافق على القوانين | By clicking ✅ you agree to the rules | "
-            f"En cliquant ✅ vous acceptez le règlement**\n"
+            f"⚠️ **بالضغط ✅ كتوافق على القوانين وكيتم التفعيل ديالك اوتوماتيكيا | By clicking ✅ you agree to the terms and your activation will be done automatically | "
+            f"En cliquant sur ✅, vous acceptez les conditions et votre activation se fait automatiquement**\n"
             f"**الرفض ❌ = طرد أوتوماتيكي | Refusing ❌ = automatic kick | Refuser ❌ = exclusion automatique**"
         ),
         color=discord.Color.blue(),
