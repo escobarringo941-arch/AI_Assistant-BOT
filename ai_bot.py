@@ -32,7 +32,12 @@ SERVER_NAME = "GGMW9"
 STATS_CHANNEL_ID = 1527800975195377804  # ← channel "STATU"
 SERVER_INVITE_LINK = "https://discord.gg/5sWatSkSCY"  # ← بدلها بالرابط ديال السيرفر ديالك
 STATS_UPDATE_MINUTES = 30
-STATS_IMAGE_URL = "https://www.animated-gif-creator.com/images/01/-check-mark-gif-image-_45.gif"  # ← حط هنا رابط مباشر لصورة (بحال بانر) باش تبان فـ رسالة الـ STATUS، ولا خليها فارغة
+STATS_IMAGE_URL = ""  # ← حط هنا رابط مباشر ديال صورة (بانر) باش تبان فـ رسالة الـ STATUS، ولا خليها فارغة
+# ⚠️ خاص الرابط يكون Direct Link ديال صورة حقيقية (يسالي بـ .png/.jpg/.gif فـ الرابط نفسو
+# وتقدر تفتحو فـ المتصفح ويبان ليك غير الصورة بوحدها بلا حتى صفحة حداها).
+# أحسن طريقة: بعث الصورة فـ أي channel ديال ديسكورد، كليك يمين عليها → Copy Link،
+# وحط هاد الرابط هنا (كيبدا بـ https://cdn.discordapp.com/attachments/...).
+# مواقع بحال animated-gif-creator.com عادة ماخدامينش كـ hotlink، البوت ما غاديش يقدر يبين الصورة بيهم.
 
 AI_MODEL = "openrouter/free"  # ← مؤقت! كان "deepseek/deepseek-chat" (رجعها ملي تزيد رصيد فـ OpenRouter)
 
@@ -3509,16 +3514,16 @@ async def build_stats_embed(guild: discord.Guild) -> discord.Embed:
         color=discord.Color.blurple(),
         timestamp=datetime.now()
     )
-    embed.add_field(name="Members Count", value=f"{members_count:,}", inline=False)
-    embed.add_field(name="Online Members", value=f"{online_count:,}", inline=False)
-    embed.add_field(name="Members In Voice", value=f"{voice_count:,}", inline=False)
+    embed.add_field(name="👥 Members Count", value=f"{members_count:,}", inline=False)
+    embed.add_field(name="🟢 Online Members", value=f"{online_count:,}", inline=False)
+    embed.add_field(name="🔊 Members In Voice", value=f"{voice_count:,}", inline=False)
     embed.add_field(
-        name=":12_month_boost_badge:",
+        name="🚀 Server Boosts",
         value=f"Boosts Count : {boosts_count} (Level : {boost_level})",
         inline=False
     )
     embed.add_field(
-        name=":d_boost:",
+        name="💎 Boosters",
         value=f"Members Are Boosting: {boosters_count}",
         inline=False
     )
