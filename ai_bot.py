@@ -159,6 +159,9 @@ PICK_ROLES = {
         {"label": "Darija", "emoji": "🇲🇦", "role_id": 1528919040792334497},   # ← حط ID
         {"label": "English", "emoji": "🇬🇧", "role_id": 1528919152767664259},  # ← حط ID
         {"label": "Français", "emoji": "🇫🇷", "role_id": 1528919222888173699},  # ← حط ID
+        {"label": "Italiano", "emoji": "🇮🇹", "role_id": 1528921431990337727},   # ← حط ID
+        {"label": "Español", "emoji": "🇪🇸", "role_id": 1528921497421222028},    # ← حط ID
+        {"label": "العربية", "emoji": "🇸🇦", "role_id": 1528921564354056362},  # ← حط ID
     ],
 }
 
