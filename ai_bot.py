@@ -328,6 +328,107 @@ load_stats_message_ids()
 
 
 # ═══════════════════════════════════════════════════════
+# ║                  نظام التذكيرات (Reminders)             ║
+# ═══════════════════════════════════════════════════════
+# كل واحد يقدر يصاوب تذكير لراسو بـ !remind <وقت> <رسالة>
+# مثال: !remind 10m اشرب الما  /  !remind 2h30m اجتماع  /  !remind 1d تذكير
+# البوت كيحفظ التذكيرات فـ ملف JSON باش ما تضيعش حتى ملي يعاود ريستارت.
+REMINDERS_FILE = os.path.join(DATA_DIR, "reminders.json")
+reminders = []  # [{id, user_id, channel_id, guild_id, message, remind_at, created_at}]
+next_reminder_id = 1
+
+
+def load_reminders():
+    """يقرا التذكيرات المحفوظة من ملف JSON (إلا كانت موجودة)"""
+    global reminders, next_reminder_id
+    try:
+        with open(REMINDERS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, list):
+            reminders = data
+        if reminders:
+            next_reminder_id = max(r.get("id", 0) for r in reminders) + 1
+        print(f"[REMINDERS] تحمل {len(reminders)} تذكير محفوظ")
+    except FileNotFoundError:
+        print("[REMINDERS] ماكاينش تذكيرات سابقة، غادي نبداو من الصفر")
+    except Exception as e:
+        print(f"[REMINDERS] خطأ فـ التحميل: {e}")
+
+
+def save_reminders():
+    """يحفظ التذكيرات فـ ملف JSON"""
+    try:
+        with open(REMINDERS_FILE, "w", encoding="utf-8") as f:
+            json.dump(reminders, f, ensure_ascii=False)
+    except Exception as e:
+        print(f"[REMINDERS] خطأ فـ الحفظ: {e}")
+
+
+def parse_duration(text: str):
+    """
+    يحول صيغة بحال '10m' / '2h' / '1h30m' / '1d' / '45s' لـ timedelta.
+    الوحدات: s=ثواني، m=دقايق، h=ساعات، d=أيام. كتقدر تخلط بينهم (بحال 1h30m).
+    كيرجع None إلا الصيغة ماشي صحيحة.
+    """
+    cleaned = text.strip().lower().replace(" ", "")
+    matches = re.findall(r'(\d+)(d|h|m|s)', cleaned)
+    if not matches:
+        return None
+    # تأكد بلي الماتشات كيغطيو كامل النص (باش ما يقبلش حاجة غريبة زايدة)
+    rebuilt = "".join(f"{num}{unit}" for num, unit in matches)
+    if rebuilt != cleaned:
+        return None
+    units = {"d": "days", "h": "hours", "m": "minutes", "s": "seconds"}
+    kwargs = {}
+    for num, unit in matches:
+        key = units[unit]
+        kwargs[key] = kwargs.get(key, 0) + int(num)
+    return timedelta(**kwargs)
+
+
+def parse_time_input(text: str):
+    """
+    كيقبل 3 صيغ ديال الوقت (باش كل واحد يحدد الوقت اللي بغى بالضبط):
+    1) مدة نسبية:      10m / 2h / 1h30m / 1d   → بعد X من دابا
+    2) وقت اليوم:      21:00                    → اليوم إلا مازال ماجاش، وإلا غدا
+    3) تاريخ + وقت:    2026-07-25-21:00         → نهار محدد بالضبط
+    كيرجع datetime إلا الصيغة صحيحة، وإلا None.
+    """
+    text = text.strip()
+    now = datetime.now()
+
+    # 1) مدة نسبية
+    delta = parse_duration(text)
+    if delta is not None and delta.total_seconds() > 0:
+        return now + delta
+
+    # 2) وقت اليوم بالساعة:دقيقة (HH:MM)
+    m = re.match(r'^(\d{1,2}):(\d{2})$', text)
+    if m:
+        hour, minute = int(m.group(1)), int(m.group(2))
+        if 0 <= hour <= 23 and 0 <= minute <= 59:
+            target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            if target <= now:
+                target += timedelta(days=1)
+            return target
+        return None
+
+    # 3) تاريخ كامل: YYYY-MM-DD-HH:MM
+    m = re.match(r'^(\d{4})-(\d{2})-(\d{2})-(\d{1,2}):(\d{2})$', text)
+    if m:
+        year, month, day, hour, minute = map(int, m.groups())
+        try:
+            return datetime(year, month, day, hour, minute)
+        except ValueError:
+            return None
+
+    return None
+
+
+load_reminders()
+
+
+# ═══════════════════════════════════════════════════════
 # ║   لائحة الكلمات/الأفعال الممنوعة الديناميكية (Owner only) ║
 # ═══════════════════════════════════════════════════════
 
@@ -3209,6 +3310,123 @@ async def info(ctx):
     await ctx.send(embed=embed)
 
 
+@bot.command(name="remind", aliases=["تذكير", "reminder"])
+async def remind_cmd(ctx, channel: Optional[discord.TextChannel] = None, *, rest: str):
+    """
+    كل واحد يصاوب تذكير لراسو، فأي وقت وأي شانيل بغى:
+    !remind 10m اشرب الما                     ← بعد 10 دقايق، فنفس الشانيل
+    !remind 21:00 نوض                         ← اليوم/غدا فـ 21:00، فنفس الشانيل
+    !remind #general 2h30m سلام              ← بعد ساعتين ونص، فـ #general
+    !remind #announcements 2026-07-25-18:00 حدث ← نهار محدد بالضبط
+    """
+    parts = rest.strip().split(maxsplit=1)
+    if len(parts) < 2:
+        await ctx.send(
+            "❌ خاصك تحط الوقت والرسالة. مثال: `!remind 10m اشرب الما`\n"
+            "استعمل `!help` باش تشوف كاع الصيغ الممكنة.",
+            delete_after=15
+        )
+        return
+
+    وقت, رسالة = parts[0], parts[1]
+    target_channel = channel or ctx.channel
+
+    if ctx.guild and target_channel.guild and target_channel.guild.id != ctx.guild.id:
+        await ctx.send("❌ الشانيل خاصو يكون فنفس السيرفر.", delete_after=10)
+        return
+
+    if ctx.guild:
+        perms = target_channel.permissions_for(ctx.guild.me)
+        if not perms.send_messages:
+            await ctx.send(f"❌ ما عنديش صلاحية نبعث فـ {target_channel.mention}.", delete_after=10)
+            return
+
+    target_dt = parse_time_input(وقت)
+    if not target_dt:
+        embed = discord.Embed(
+            title="❌ الوقت ماشي صحيح!",
+            description=(
+                "استعمل شي صيغة من هادو:\n"
+                "`10m` / `2h` / `1h30m` / `1d` — بعد مدة من دابا\n"
+                "`21:00` — اليوم فهاد الساعة (وإلا غدا إلا فاتت)\n"
+                "`2026-07-25-21:00` — نهار محدد بالضبط\n\n"
+                "مثال كامل: `!remind #general 2h30m سلام`"
+            ),
+            color=discord.Color.red()
+        )
+        await ctx.send(embed=embed, delete_after=25)
+        return
+
+    if target_dt <= datetime.now():
+        await ctx.send("❌ الوقت لي حطيتي فات! حط وقت فالمستقبل.", delete_after=10)
+        return
+
+    if target_dt > datetime.now() + timedelta(days=90):
+        await ctx.send("❌ ما نقدرش نحط تذكير فوق 90 يوم.", delete_after=10)
+        return
+
+    global next_reminder_id
+    reminder = {
+        "id": next_reminder_id,
+        "user_id": str(ctx.author.id),
+        "channel_id": target_channel.id,
+        "guild_id": ctx.guild.id if ctx.guild else None,
+        "message": رسالة,
+        "remind_at": target_dt.isoformat(),
+        "created_at": datetime.now().isoformat(),
+    }
+    reminders.append(reminder)
+    next_reminder_id += 1
+    save_reminders()
+
+    ts = int(target_dt.timestamp())
+    embed = discord.Embed(
+        title="⏰ تسجل التذكير!",
+        description=f"غادي نذكرك بـ:\n> {رسالة}",
+        color=discord.Color.green(),
+        timestamp=datetime.now()
+    )
+    embed.add_field(name="📅 وقت التذكير", value=f"<t:{ts}:F> (<t:{ts}:R>)", inline=False)
+    embed.add_field(name="📍 الشانيل", value=target_channel.mention, inline=False)
+    embed.set_footer(text=f"GGMW9 | ID: {reminder['id']}")
+    await ctx.send(embed=embed)
+
+
+@bot.command(name="reminders", aliases=["تذكيراتي"])
+async def reminders_cmd(ctx):
+    """كيبين التذكيرات المبرمجة ديال الشخص اللي طلب الأمر"""
+    user_id = str(ctx.author.id)
+    user_reminders = sorted(
+        (r for r in reminders if r["user_id"] == user_id),
+        key=lambda r: r["remind_at"]
+    )
+    if not user_reminders:
+        await ctx.send("📭 ماعندكش أي تذكير مبرمج دابا.", delete_after=10)
+        return
+
+    embed = discord.Embed(title="⏰ التذكيرات ديالك", color=discord.Color.blue(), timestamp=datetime.now())
+    for r in user_reminders[:15]:
+        ts = int(datetime.fromisoformat(r["remind_at"]).timestamp())
+        text = r["message"] if len(r["message"]) <= 200 else r["message"][:200] + "..."
+        chan_txt = f"<#{r['channel_id']}>"
+        embed.add_field(name=f"#{r['id']}", value=f"{text}\n<t:{ts}:R> — {chan_txt}", inline=False)
+    embed.set_footer(text="!delreminder <ID> باش تلغي وحدة")
+    await ctx.send(embed=embed)
+
+
+@bot.command(name="delreminder", aliases=["حذف_تذكير"])
+async def delreminder_cmd(ctx, reminder_id: int):
+    """كيحيد تذكير (غير ديال الشخص اللي صاوبو)"""
+    user_id = str(ctx.author.id)
+    target = next((r for r in reminders if r["id"] == reminder_id and r["user_id"] == user_id), None)
+    if not target:
+        await ctx.send("❌ ماكاينش هاد التذكير عندك (تأكد من الـ ID).", delete_after=10)
+        return
+    reminders.remove(target)
+    save_reminders()
+    await ctx.send(f"✅ تحذاف التذكير #{reminder_id}.", delete_after=10)
+
+
 @bot.command()
 async def help(ctx):
     embed = discord.Embed(
@@ -3255,6 +3473,16 @@ async def help(ctx):
         "`!testinfo` — جرب Auto-Info فوراً (Admin)"
     )
     embed.add_field(name="🔧 أدوات", value=util_cmds, inline=False)
+    reminder_cmds = (
+        "`!remind [#شانيل] <وقت> <رسالة>` — صاوب تذكير\n"
+        "`!remind 10m اشرب الما` — بعد 10 دقايق، فنفس الشانيل\n"
+        "`!remind 21:00 نوض` — اليوم فـ 21:00 (وإلا غدا إلا فاتت)\n"
+        "`!remind #general 2h30m سلام` — بعد ساعتين ونص، فـ #general\n"
+        "`!remind #الشانيل 2026-07-25-18:00 حدث` — نهار محدد بالضبط\n"
+        "`!reminders` — التذكيرات ديالك المبرمجة\n"
+        "`!delreminder <ID>` — لغي تذكير"
+    )
+    embed.add_field(name="⏰ تذكيرات", value=reminder_cmds, inline=False)
     auto_mod = (
         "✅ كلمات ممنوعة\n"
         "✅ كشف السبام (5 msg/5s)\n"
@@ -3630,6 +3858,53 @@ async def auto_info_error(error):
         auto_info.restart()
 
 
+# ═══════════════════════════════════════════════════════
+# ║           Loop: كيتحقق من التذكيرات كل 30 ثانية        ║
+# ═══════════════════════════════════════════════════════
+@tasks.loop(seconds=30)
+async def check_reminders():
+    if not reminders:
+        return
+
+    now = datetime.now()
+    due = [r for r in reminders if datetime.fromisoformat(r["remind_at"]) <= now]
+    if not due:
+        return
+
+    for r in due:
+        try:
+            channel = bot.get_channel(r["channel_id"])
+            if channel:
+                embed = discord.Embed(
+                    title="⏰ تذكير!",
+                    description=r["message"],
+                    color=discord.Color.gold(),
+                    timestamp=datetime.now()
+                )
+                embed.set_footer(text=f"GGMW9 | ID: {r['id']}")
+                await channel.send(content=f"<@{r['user_id']}>", embed=embed)
+            else:
+                print(f"[REMINDERS] ❌ ماكاينش channel بـ ID {r['channel_id']} (تذكير #{r['id']})")
+        except Exception as e:
+            print(f"[REMINDERS] خطأ فـ بعث التذكير #{r['id']}: {e}")
+        reminders.remove(r)
+
+    save_reminders()
+
+
+@check_reminders.before_loop
+async def before_check_reminders():
+    await bot.wait_until_ready()
+
+
+@check_reminders.error
+async def check_reminders_error(error):
+    print(f"[REMINDERS] ❌❌ خطأ كبير وقف الـ loop: {error}")
+    await asyncio.sleep(5)
+    if not check_reminders.is_running():
+        check_reminders.restart()
+
+
 @bot.event
 async def on_command_error(ctx, error):
     if isinstance(error, commands.MissingPermissions):
@@ -3690,6 +3965,7 @@ async def on_ready():
     print(f"📰 Auto-Info: نشط (5 channels + APIs حقيقية)")
     print(f"⚠️ Warn Escalation: Mute@{MUTE_AFTER_WARNS} / Kick@{KICK_AFTER_WARNS} / Ban@{BAN_AFTER_WARNS}")
     print(f"📊 Stats Channel: {STATS_CHANNEL_ID if STATS_CHANNEL_ID else 'ماشي معطي بعد'} (كل {STATS_UPDATE_MINUTES} د)")
+    print(f"⏰ Reminders: {len(reminders)} مبرمجين (كيتفقّد كل 30 ثانية)")
 
     await bot.change_presence(
         activity=discord.Activity(
@@ -3703,6 +3979,9 @@ async def on_ready():
 
     if STATS_CHANNEL_ID and not update_stats.is_running():
         update_stats.start()
+
+    if not check_reminders.is_running():
+        check_reminders.start()
 
     bot.add_view(RulesVerifyView())  # باش الأزرار يبقاو خدامين حتى بعد ريستارت البوت
     bot.add_view(RolePickerView())   # باش الـ Dropdown ديال الأدوار يبقى خدام حتى بعد ريستارت البوت
