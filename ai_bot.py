@@ -1228,6 +1228,68 @@ def check_role_hierarchy(guild: discord.Guild) -> list:
     return problems
 
 
+async def send_warn_dm(member: discord.Member, count: int, reason: str):
+    """
+    كيبعث فـ DM تنبيه احترافي للعضو ملي ياخد تحذير (يدوي ولا أوتوماتيكي)،
+    فيه رقم التحذير، السبب، وجدول العقوبات المتدرجة (كتم/طرد/حظر) مبني
+    على الأرقام الحقيقية ديال الـ CONFIG. مكتوب بـ 3 لغات: الدارجة، الفرنسية، الإنجليزية.
+    """
+    embed = discord.Embed(
+        title="⚠️ تحذير جديد | Avertissement | Warning",
+        color=discord.Color.orange(),
+        timestamp=datetime.now()
+    )
+
+    embed.add_field(
+        name="🇲🇦 بالدارجة",
+        value=(
+            f"خذيتي تحذير فـ **{SERVER_NAME}**.\n"
+            f"**السبب:** {reason}\n"
+            f"**عدد التحذيرات ديالك دابا:** {count}\n\n"
+            f"⚠️ **خاصك تعرف:**\n"
+            f"🔇 عند {MUTE_AFTER_WARNS} تحذيرات → كتم تلقائي لمدة {MUTE_DURATION_MINUTES} دقيقة\n"
+            f"👢 عند {KICK_AFTER_WARNS} تحذيرات → طرد تلقائي من السيرفر\n"
+            f"🚫 عند {BAN_AFTER_WARNS} تحذيرات → حظر نهائي من السيرفر\n\n"
+            f"من فضلك احترم/ي قوانين السيرفر باش ما توصلش لهاد المراحل."
+        ),
+        inline=False
+    )
+    embed.add_field(
+        name="🇫🇷 En Français",
+        value=(
+            f"Vous avez reçu un avertissement sur **{SERVER_NAME}**.\n"
+            f"**Raison :** {reason}\n"
+            f"**Nombre total d'avertissements :** {count}\n\n"
+            f"⚠️ **À savoir :**\n"
+            f"🔇 À {MUTE_AFTER_WARNS} avertissements → mute automatique pendant {MUTE_DURATION_MINUTES} minutes\n"
+            f"👢 À {KICK_AFTER_WARNS} avertissements → expulsion automatique du serveur\n"
+            f"🚫 À {BAN_AFTER_WARNS} avertissements → bannissement définitif du serveur\n\n"
+            f"Merci de respecter les règles du serveur pour éviter d'en arriver là."
+        ),
+        inline=False
+    )
+    embed.add_field(
+        name="🇬🇧 In English",
+        value=(
+            f"You have received a warning on **{SERVER_NAME}**.\n"
+            f"**Reason:** {reason}\n"
+            f"**Total warnings:** {count}\n\n"
+            f"⚠️ **Please note:**\n"
+            f"🔇 At {MUTE_AFTER_WARNS} warnings → automatic mute for {MUTE_DURATION_MINUTES} minutes\n"
+            f"👢 At {KICK_AFTER_WARNS} warnings → automatic kick from the server\n"
+            f"🚫 At {BAN_AFTER_WARNS} warnings → permanent ban from the server\n\n"
+            f"Please follow the server rules to avoid reaching these stages."
+        ),
+        inline=False
+    )
+    embed.set_footer(text=f"{SERVER_NAME} | Moderation System")
+
+    try:
+        await member.send(embed=embed)
+    except (discord.Forbidden, discord.HTTPException):
+        pass
+
+
 async def add_warn(member: discord.Member, reason: str) -> int:
     user_id = str(member.id)
     if user_id not in warns_db:
@@ -1235,7 +1297,9 @@ async def add_warn(member: discord.Member, reason: str) -> int:
     warns_db[user_id]["count"] += 1
     warns_db[user_id]["reasons"].append(reason)
     warns_db[user_id]["dates"].append(datetime.now().strftime("%Y-%m-%d %H:%M"))
-    return warns_db[user_id]["count"]
+    count = warns_db[user_id]["count"]
+    await send_warn_dm(member, count, reason)
+    return count
 
 
 def is_exempt(member: discord.Member) -> bool:
@@ -1671,97 +1735,284 @@ async def setup_rules_message(guild: discord.Guild):
 
 
 async def setup_blacklist_message(guild: discord.Guild):
-    """كيبعث embed فـ channel 'Blacklist things' فيه الممنوعات والعقوبات المتدرجة بالتفصيل"""
+    """كيبعث embeds فـ channel 'Blacklist things' فيه الممنوعات والعقوبات المتدرجة
+    بالتفصيل — وحدة بالدارجة، وحدة بالفرنسية، ووحدة بالإنجليزية."""
     channel = bot.get_channel(BLACKLIST_CHANNEL_ID)
     if not channel:
         return
-    async for message in channel.history(limit=10):
-        if message.author == bot.user and "Blacklist" in (message.embeds[0].title if message.embeds else ""):
-            return
 
-    embed = discord.Embed(
-        title="🚫 Blacklist Things — الممنوعات والعقوبات",
-        description=(
-            "قرا/ي هاد الصفحة بالكامل قبل ما تبدا/ي تهضر/ي فالسيرفر. "
-            "البوت كيراقب هاد النقاط **أوتوماتيكياً 24/24**، وكل مخالفة عندها ثمن.\n"
-            "الهدف من هاد الصفحة ماشي نخوفوك، بغينا غير تفهم/ي شنو ممنوع بالضبط باش ما تتعاقب/ي بلا وعي."
-        ),
-        color=discord.Color.dark_red(),
-        timestamp=datetime.now()
-    )
+    has_darija = False
+    has_fr = False
+    has_en = False
+    async for message in channel.history(limit=15):
+        if message.author == bot.user and message.embeds:
+            title = message.embeds[0].title or ""
+            if "الممنوعات" in title:
+                has_darija = True
+            elif "Règles et Sanctions" in title:
+                has_fr = True
+            elif "Rules & Penalties" in title:
+                has_en = True
 
-    embed.add_field(
-        name="1️⃣ السبام والإعلانات",
-        value=(
-            "**ممنوع:** تكرار نفس الرسالة، بعث رابط ديسكورد ديال سيرفر آخر بلا إذن، "
-            "الإعلان لقناة/منتوج/خدمة بلا موافقة الإدارة، Mention مفرط (@everyone/@here بلا حق).\n"
-            "**مثال:** بعثتي `discord.gg/xxxx` فـ #general باش تجيب ناس لسيرفر آخر → تحذير + مسح الرسالة."
-        ),
-        inline=False
-    )
-    embed.add_field(
-        name="2️⃣ الاحترام بين الأعضاء",
-        value=(
-            "**ممنوع:** السب المباشر خارج نطاق المزاح، التنمر، العنصرية، الإهانة الشخصية، التهديد بأي شكل.\n"
-            "**مثال:** كتبتي كلام عنصري ولا مهين على عضو آخر → تحذير مباشر، ومع التكرار طرد/حظر."
-        ),
-        inline=False
-    )
-    embed.add_field(
-        name="3️⃣ محتوى +18 / عنيف / صادم",
-        value=(
-            "**ممنوع:** صور/فيديوهات/روابط جنسية، محتوى عنيف صريح (دم، تعذيب...)، مشاهد صادمة.\n"
-            "**مثال:** بعثتي صورة/رابط فيه محتوى جنسي حتى بشكل 'مزحة' → **حظر مباشر بلا تحذير**."
-        ),
-        inline=False
-    )
-    embed.add_field(
-        name="4️⃣ الخصوصية (Doxxing)",
-        value=(
-            "**ممنوع:** نشر رقم تيليفون، عنوان، صور شخصية، ولا أي معلومة كتعرف بشخص آخر بلا إذنو.\n"
-            "**مثال:** نشرتي سكرين شوت فيه رقم ديال عضو آخر → **حظر مباشر**."
-        ),
-        inline=False
-    )
-    embed.add_field(
-        name="5️⃣ استعمال القنوات بطريقة غالطة",
-        value=(
-            "**ممنوع:** الهضرة خارج الموضوع فـ channel مخصص (مثلاً هضرة عادية فـ #announcements).\n"
-            "**مثال:** كتبتي ميم فـ channel ديال الأخبار الرسمية → مسح الرسالة + تنبيه."
-        ),
-        inline=False
-    )
+    if not has_darija:
+        embed = discord.Embed(
+            title="🚫 Blacklist Things — الممنوعات والعقوبات",
+            description=(
+                "قرا/ي هاد الصفحة بالكامل قبل ما تبدا/ي تهضر/ي فالسيرفر. "
+                "البوت كيراقب هاد النقاط **أوتوماتيكياً 24/24**، وكل مخالفة عندها ثمن.\n"
+                "الهدف من هاد الصفحة ماشي نخوفوك، بغينا غير تفهم/ي شنو ممنوع بالضبط باش ما تتعاقب/ي بلا وعي."
+            ),
+            color=discord.Color.dark_red(),
+            timestamp=datetime.now()
+        )
 
-    embed.add_field(
-        name="⚖️ العقوبات المتدرجة",
-        value=(
-            f"1️⃣ **تحذير** — كل مخالفة خفيفة كتبان تحذير أوتوماتيكي\n"
-            f"2️⃣ **كتم (Mute)** — عند {MUTE_AFTER_WARNS} تحذيرات ({MUTE_DURATION_MINUTES} دقيقة)، ولا إلا بعتي {SPAM_THRESHOLD} رسايل فـ {SPAM_INTERVAL} ثواني (سبام)\n"
-            f"3️⃣ **طرد (Kick)** — عند الوصول لـ {KICK_AFTER_WARNS} تحذيرات\n"
-            f"4️⃣ **حظر (Ban)** — عند الوصول لـ {BAN_AFTER_WARNS} تحذيرات، ولا مباشرة فحالة Doxxing/محتوى +18/تهديد خطير"
-        ),
-        inline=False
-    )
-
-    if REPORTS_CHANNEL_ID:
         embed.add_field(
-            name="🚨 كيفاش تبلغ عن مخالفة (!report)",
+            name="1️⃣ السبام والإعلانات",
             value=(
-                "إلا شفتي شي مخالفة والبوت ما تدخلش أوتوماتيكياً، عندك طريقتين:\n\n"
-                "**1) بلاغ على عضو معين:**\n"
-                "`!report @العضو السبب`\n"
-                "مثال: `!report @GGMW9 بعث رابط ديال سيرفر آخر فـ #general`\n\n"
-                "**2) بلاغ عام (بلا ما تحدد عضو):**\n"
-                "`!report وصف المشكل`\n"
-                "مثال: `!report كاين ناس كيهضرو بزربة فـ #announcements`\n\n"
-                "💡 **نصيحة:** إلا عندك سكرين شوت ديال المخالفة، بعثو مباشرة للمشرفين ولا فـ نفس الرسالة معاك (mention العضو بحال Ahmed)\n"
-                "⚠️ الرسالة ديالك كتمسح أوتوماتيك من الشات العام والبلاغ كيوصل مباشرة للإدارة، حتى حد ماغاديش يشوف بلي بلغتي."
+                "**ممنوع:** تكرار نفس الرسالة، بعث رابط ديسكورد ديال سيرفر آخر بلا إذن، "
+                "الإعلان لقناة/منتوج/خدمة بلا موافقة الإدارة، Mention مفرط (@everyone/@here بلا حق).\n"
+                "**مثال:** بعثتي `discord.gg/xxxx` فـ #general باش تجيب ناس لسيرفر آخر → تحذير + مسح الرسالة."
+            ),
+            inline=False
+        )
+        embed.add_field(
+            name="2️⃣ الاحترام بين الأعضاء",
+            value=(
+                "**ممنوع:** السب المباشر خارج نطاق المزاح، التنمر، العنصرية، الإهانة الشخصية، التهديد بأي شكل.\n"
+                "**مثال:** كتبتي كلام عنصري ولا مهين على عضو آخر → تحذير مباشر، ومع التكرار طرد/حظر."
+            ),
+            inline=False
+        )
+        embed.add_field(
+            name="3️⃣ محتوى +18 / عنيف / صادم",
+            value=(
+                "**ممنوع:** صور/فيديوهات/روابط جنسية، محتوى عنيف صريح (دم، تعذيب...)، مشاهد صادمة.\n"
+                "**مثال:** بعثتي صورة/رابط فيه محتوى جنسي حتى بشكل 'مزحة' → **حظر مباشر بلا تحذير**."
+            ),
+            inline=False
+        )
+        embed.add_field(
+            name="4️⃣ الخصوصية (Doxxing)",
+            value=(
+                "**ممنوع:** نشر رقم تيليفون، عنوان، صور شخصية، ولا أي معلومة كتعرف بشخص آخر بلا إذنو.\n"
+                "**مثال:** نشرتي سكرين شوت فيه رقم ديال عضو آخر → **حظر مباشر**."
+            ),
+            inline=False
+        )
+        embed.add_field(
+            name="5️⃣ استعمال القنوات بطريقة غالطة",
+            value=(
+                "**ممنوع:** الهضرة خارج الموضوع فـ channel مخصص (مثلاً هضرة عادية فـ #announcements).\n"
+                "**مثال:** كتبتي ميم فـ channel ديال الأخبار الرسمية → مسح الرسالة + تنبيه."
+            ),
+            inline=False
+        )
+        embed.add_field(
+            name="⚖️ العقوبات المتدرجة",
+            value=(
+                f"1️⃣ **تحذير** — كل مخالفة خفيفة كتبان تحذير أوتوماتيكي\n"
+                f"2️⃣ **كتم (Mute)** — عند {MUTE_AFTER_WARNS} تحذيرات ({MUTE_DURATION_MINUTES} دقيقة)، ولا إلا بعتي {SPAM_THRESHOLD} رسايل فـ {SPAM_INTERVAL} ثواني (سبام)\n"
+                f"3️⃣ **طرد (Kick)** — عند الوصول لـ {KICK_AFTER_WARNS} تحذيرات\n"
+                f"4️⃣ **حظر (Ban)** — عند الوصول لـ {BAN_AFTER_WARNS} تحذيرات، ولا مباشرة فحالة Doxxing/محتوى +18/تهديد خطير"
             ),
             inline=False
         )
 
-    embed.set_footer(text="GGMW9 | Auto-Moderation System")
-    await channel.send(embed=embed)
+        if REPORTS_CHANNEL_ID:
+            embed.add_field(
+                name="🚨 كيفاش تبلغ عن مخالفة (!report)",
+                value=(
+                    "إلا شفتي شي مخالفة والبوت ما تدخلش أوتوماتيكياً، عندك طريقتين:\n\n"
+                    "**1) بلاغ على عضو معين:**\n"
+                    "`!report @العضو السبب`\n"
+                    "مثال: `!report @GGMW9 بعث رابط ديال سيرفر آخر فـ #general`\n\n"
+                    "**2) بلاغ عام (بلا ما تحدد عضو):**\n"
+                    "`!report وصف المشكل`\n"
+                    "مثال: `!report كاين ناس كيهضرو بزربة فـ #announcements`\n\n"
+                    "💡 **نصيحة:** إلا عندك سكرين شوت ديال المخالفة، بعثو مباشرة للمشرفين ولا فـ نفس الرسالة معاك (mention العضو بحال Ahmed)\n"
+                    "⚠️ الرسالة ديالك كتمسح أوتوماتيك من الشات العام والبلاغ كيوصل مباشرة للإدارة، حتى حد ماغاديش يشوف بلي بلغتي."
+                ),
+                inline=False
+            )
+
+        embed.set_footer(text="GGMW9 | Auto-Moderation System")
+        await channel.send(embed=embed)
+
+    if not has_fr:
+        embed_fr = discord.Embed(
+            title="🚫 Blacklist Things — Règles et Sanctions",
+            description=(
+                "Lisez cette page en entier avant de discuter sur le serveur. "
+                "Le bot surveille ces points **automatiquement 24h/24**, et chaque infraction a un prix.\n"
+                "Le but de cette page n'est pas de vous effrayer, mais de vous faire comprendre exactement ce qui est interdit "
+                "pour éviter d'être sanctionné sans le savoir."
+            ),
+            color=discord.Color.dark_red(),
+            timestamp=datetime.now()
+        )
+
+        embed_fr.add_field(
+            name="1️⃣ Spam et Publicité",
+            value=(
+                "**Interdit :** répéter le même message, poster un lien d'invitation Discord vers un autre serveur sans permission, "
+                "faire de la publicité pour un salon/produit/service sans l'accord du staff, mentions excessives (@everyone/@here sans droit).\n"
+                "**Exemple :** poster `discord.gg/xxxx` dans #general pour attirer des membres vers un autre serveur → avertissement + message supprimé."
+            ),
+            inline=False
+        )
+        embed_fr.add_field(
+            name="2️⃣ Respect entre les membres",
+            value=(
+                "**Interdit :** insultes directes hors contexte de plaisanterie, harcèlement, racisme, insultes personnelles, menaces sous toute forme.\n"
+                "**Exemple :** tenir des propos racistes ou insultants envers un autre membre → avertissement immédiat, "
+                "en cas de récidive : exclusion/bannissement."
+            ),
+            inline=False
+        )
+        embed_fr.add_field(
+            name="3️⃣ Contenu +18 / Violent / Choquant",
+            value=(
+                "**Interdit :** images/vidéos/liens à caractère sexuel, contenu violent explicite (sang, torture...), scènes choquantes.\n"
+                "**Exemple :** envoyer une image/un lien à caractère sexuel même « pour rire » → **bannissement immédiat, sans avertissement**."
+            ),
+            inline=False
+        )
+        embed_fr.add_field(
+            name="4️⃣ Vie privée (Doxxing)",
+            value=(
+                "**Interdit :** publier un numéro de téléphone, une adresse, des photos personnelles, ou toute information identifiant "
+                "quelqu'un sans son consentement.\n"
+                "**Exemple :** publier une capture d'écran contenant le numéro d'un autre membre → **bannissement immédiat**."
+            ),
+            inline=False
+        )
+        embed_fr.add_field(
+            name="5️⃣ Mauvaise utilisation des salons",
+            value=(
+                "**Interdit :** discuter hors sujet dans un salon dédié (ex. discussion informelle dans #announcements).\n"
+                "**Exemple :** poster un mème dans le salon d'actualités officiel → message supprimé + rappel."
+            ),
+            inline=False
+        )
+        embed_fr.add_field(
+            name="⚖️ Sanctions progressives",
+            value=(
+                f"1️⃣ **Avertissement** — chaque infraction légère déclenche un avertissement automatique\n"
+                f"2️⃣ **Mute** — à {MUTE_AFTER_WARNS} avertissements ({MUTE_DURATION_MINUTES} min), ou après {SPAM_THRESHOLD} messages en {SPAM_INTERVAL}s (spam)\n"
+                f"3️⃣ **Kick** — à {KICK_AFTER_WARNS} avertissements\n"
+                f"4️⃣ **Ban** — à {BAN_AFTER_WARNS} avertissements, ou immédiatement en cas de doxxing/contenu +18/menace grave"
+            ),
+            inline=False
+        )
+
+        if REPORTS_CHANNEL_ID:
+            embed_fr.add_field(
+                name="🚨 Comment signaler une infraction (!report)",
+                value=(
+                    "Si vous voyez une infraction et que le bot n'intervient pas automatiquement, vous avez deux options :\n\n"
+                    "**1) Signaler un membre précis :**\n"
+                    "`!report @Membre raison`\n"
+                    "Exemple : `!report @GGMW9 a posté un lien vers un autre serveur dans #general`\n\n"
+                    "**2) Signalement général (sans citer de membre) :**\n"
+                    "`!report description du problème`\n"
+                    "Exemple : `!report des gens spamment dans #announcements`\n\n"
+                    "💡 **Conseil :** si vous avez une capture d'écran de l'infraction, envoyez-la directement au staff ou dans le même message "
+                    "(en mentionnant le membre, ex. Ahmed)\n"
+                    "⚠️ Votre message est automatiquement supprimé du salon public et le signalement arrive directement à l'administration, "
+                    "personne ne verra que vous avez signalé."
+                ),
+                inline=False
+            )
+
+        embed_fr.set_footer(text="GGMW9 | Système de Modération Automatique")
+        await channel.send(embed=embed_fr)
+
+    if not has_en:
+        embed_en = discord.Embed(
+            title="🚫 Blacklist Things — Rules & Penalties",
+            description=(
+                "Read this page in full before chatting on the server. "
+                "The bot monitors these points **automatically 24/7**, and every violation has a cost.\n"
+                "The goal of this page isn't to scare you — we just want you to understand exactly what's forbidden "
+                "so you don't get punished without knowing why."
+            ),
+            color=discord.Color.dark_red(),
+            timestamp=datetime.now()
+        )
+
+        embed_en.add_field(
+            name="1️⃣ Spam & Advertising",
+            value=(
+                "**Forbidden:** repeating the same message, posting a Discord invite link to another server without permission, "
+                "advertising a channel/product/service without staff approval, excessive mentions (@everyone/@here without the right to).\n"
+                "**Example:** posting `discord.gg/xxxx` in #general to bring people to another server → warning + message deleted."
+            ),
+            inline=False
+        )
+        embed_en.add_field(
+            name="2️⃣ Respect Among Members",
+            value=(
+                "**Forbidden:** direct insults outside of joking around, bullying, racism, personal insults, threats of any kind.\n"
+                "**Example:** posting racist or insulting comments about another member → immediate warning, repeated offenses lead to kick/ban."
+            ),
+            inline=False
+        )
+        embed_en.add_field(
+            name="3️⃣ NSFW / Violent / Shocking Content",
+            value=(
+                "**Forbidden:** sexual images/videos/links, explicit violent content (blood, torture...), shocking scenes.\n"
+                "**Example:** sending sexual content even as a 'joke' → **immediate ban, no warning**."
+            ),
+            inline=False
+        )
+        embed_en.add_field(
+            name="4️⃣ Privacy (Doxxing)",
+            value=(
+                "**Forbidden:** sharing a phone number, address, personal photos, or any identifying information about someone without their consent.\n"
+                "**Example:** posting a screenshot showing another member's phone number → **immediate ban**."
+            ),
+            inline=False
+        )
+        embed_en.add_field(
+            name="5️⃣ Misusing Channels",
+            value=(
+                "**Forbidden:** off-topic chat in a dedicated channel (e.g. casual talk in #announcements).\n"
+                "**Example:** posting a meme in the official news channel → message deleted + reminder."
+            ),
+            inline=False
+        )
+        embed_en.add_field(
+            name="⚖️ Escalating Penalties",
+            value=(
+                f"1️⃣ **Warning** — every minor offense triggers an automatic warning\n"
+                f"2️⃣ **Mute** — at {MUTE_AFTER_WARNS} warnings ({MUTE_DURATION_MINUTES} minutes), or after {SPAM_THRESHOLD} messages in {SPAM_INTERVAL}s (spam)\n"
+                f"3️⃣ **Kick** — upon reaching {KICK_AFTER_WARNS} warnings\n"
+                f"4️⃣ **Ban** — upon reaching {BAN_AFTER_WARNS} warnings, or immediately for doxxing/NSFW content/serious threats"
+            ),
+            inline=False
+        )
+
+        if REPORTS_CHANNEL_ID:
+            embed_en.add_field(
+                name="🚨 How to report a violation (!report)",
+                value=(
+                    "If you see a violation and the bot doesn't step in automatically, you have two options:\n\n"
+                    "**1) Report a specific member:**\n"
+                    "`!report @Member reason`\n"
+                    "Example: `!report @GGMW9 posted a link to another server in #general`\n\n"
+                    "**2) General report (without naming a member):**\n"
+                    "`!report description of the issue`\n"
+                    "Example: `!report people are spamming in #announcements`\n\n"
+                    "💡 **Tip:** if you have a screenshot of the violation, send it directly to staff or in the same message "
+                    "(mentioning the member, e.g. Ahmed)\n"
+                    "⚠️ Your message is automatically deleted from the public chat and the report goes straight to the staff, "
+                    "no one will see that you reported it."
+                ),
+                inline=False
+            )
+
+        embed_en.set_footer(text="GGMW9 | Auto-Moderation System")
+        await channel.send(embed=embed_en)
 
 
 @bot.event
