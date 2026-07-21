@@ -2089,12 +2089,53 @@ async def on_member_join(member):
         embed.set_footer(text="GGMW9 | Verification System")
         await welcome_channel.send(embed=embed)
     try:
-        await member.send(
-            f"👋 مرحبا بيك فـ **{SERVER_NAME}**!\n\n"
-            f"قبل ما تقدر/ي تهضر/ي فالسيرفر، خاصك توافق/ي على القوانين.\n"
-            f"سير/ي لـ <#{VERIFY_CHANNEL_ID}> وكليك على ✅\n\n"
-            f"شكرا! 🙏"
+        welcome_dm = discord.Embed(
+            title=f"👋 مرحبا بيك | أهلاً بك | Welcome | Bienvenue",
+            color=discord.Color.orange(),
+            timestamp=datetime.now()
         )
+        welcome_dm.add_field(
+            name="🇲🇦 بالدارجة",
+            value=(
+                f"مرحبا بيك فـ **{SERVER_NAME}**!\n"
+                f"قبل ما تقدر/ي تهضر/ي فالسيرفر، خاصك توافق/ي على القوانين.\n"
+                f"سير/ي لـ <#{VERIFY_CHANNEL_ID}> وكليك على ✅\n"
+                f"شكرا! 🙏"
+            ),
+            inline=False
+        )
+        welcome_dm.add_field(
+            name="🇸🇦 بالعربية الفصحى",
+            value=(
+                f"مرحبًا بك في **{SERVER_NAME}**!\n"
+                f"قبل أن تتمكن من التحدث في السيرفر، يجب عليك الموافقة على القوانين.\n"
+                f"توجّه إلى <#{VERIFY_CHANNEL_ID}> واضغط على ✅\n"
+                f"شكرًا لك! 🙏"
+            ),
+            inline=False
+        )
+        welcome_dm.add_field(
+            name="🇬🇧 In English",
+            value=(
+                f"Welcome to **{SERVER_NAME}**!\n"
+                f"Before you can chat on the server, you need to agree to the rules.\n"
+                f"Go to <#{VERIFY_CHANNEL_ID}> and click ✅\n"
+                f"Thank you! 🙏"
+            ),
+            inline=False
+        )
+        welcome_dm.add_field(
+            name="🇫🇷 En Français",
+            value=(
+                f"Bienvenue sur **{SERVER_NAME}** !\n"
+                f"Avant de pouvoir discuter sur le serveur, vous devez accepter les règles.\n"
+                f"Rendez-vous dans <#{VERIFY_CHANNEL_ID}> et cliquez sur ✅\n"
+                f"Merci ! 🙏"
+            ),
+            inline=False
+        )
+        welcome_dm.set_footer(text=f"{SERVER_NAME} | Verification System")
+        await member.send(embed=welcome_dm)
     except discord.Forbidden:
         pass
     await log_action(
