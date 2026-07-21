@@ -32,6 +32,7 @@ SERVER_NAME = "GGMW9"
 STATS_CHANNEL_ID = 1527800975195377804  # ← channel "STATU"
 SERVER_INVITE_LINK = "https://discord.gg/5sWatSkSCY"  # ← بدلها بالرابط ديال السيرفر ديالك
 STATS_UPDATE_MINUTES = 30
+STATS_IMAGE_URL = "https://www.animated-gif-creator.com/images/01/-check-mark-gif-image-_45.gif"  # ← حط هنا رابط مباشر لصورة (بحال بانر) باش تبان فـ رسالة الـ STATUS، ولا خليها فارغة
 
 AI_MODEL = "openrouter/free"  # ← مؤقت! كان "deepseek/deepseek-chat" (رجعها ملي تزيد رصيد فـ OpenRouter)
 
@@ -3523,6 +3524,8 @@ async def build_stats_embed(guild: discord.Guild) -> discord.Embed:
     )
     if guild.icon:
         embed.set_thumbnail(url=guild.icon.url)
+    if STATS_IMAGE_URL:
+        embed.set_image(url=STATS_IMAGE_URL)
     embed.set_footer(text=f"{SERVER_NAME} | آخر تحديث")
     return embed
 
