@@ -19,6 +19,11 @@ sys.stderr.reconfigure(line_buffering=True)
 # ║                    CONFIG سهل التعديل                  ║
 # ═══════════════════════════════════════════════════════
 
+# ═══════ مجلد التخزين الدائم (Railway Volume) ═══════
+# لازم يكون مطابق تماماً للـ Mount Path اللي حطيتي فـ Railway → Volumes.
+DATA_DIR = "/app/data"
+os.makedirs(DATA_DIR, exist_ok=True)
+
 TARGET_CHANNEL_ID = 1526384339670270012
 WELCOME_CHANNEL_ID = 1524957892925456545
 SERVER_NAME = "GGMW9"
@@ -124,6 +129,15 @@ BANNED_WORDS = [
     'nude', 'porn', 'xxx', 'sex', 'fuck', 'shit', 'bitch'
 ]
 
+# ═══════ لائحة ديناميكية: كلمات وأفعال ممنوعة كتزاد/كتحيد بالأوامر ═══════
+# BANNED_WORDS فوق هي القائمة الأساسية المكتوبة فالكود. أي كلمة/عبارة كتزاد
+# ولا كتحيد بالأوامر (!addword, !addaction) كتتسجل فـ BANNED_LISTS_FILE
+# باش تبقى محفوظة حتى بعد ريستارت البوت. BANNED_ACTIONS هي عبارات/سلوكيات
+# ممنوعة زيادة على الكلمات، وكتتبع نفس آلية الحذف/التحذير ديال BANNED_WORDS.
+BANNED_LISTS_FILE = os.path.join(DATA_DIR, "banned_lists.json")
+BANNED_ACTIONS = []  # كتتعمر من الملف فـ load_banned_lists()
+banned_words_state = {"extra": [], "removed": []}  # كتتعمر من الملف
+
 SPAM_THRESHOLD = 5
 SPAM_INTERVAL = 5
 WARN_LIMIT = 3
@@ -197,7 +211,7 @@ mute_tasks = {}
 # ═══════════════════════════════════════════════════════
 # ║   سجل المحتوى المنشور (باش ما يتعاودش تا شي حاجة)      ║
 # ═══════════════════════════════════════════════════════
-POSTED_HISTORY_FILE = "posted_history.json"
+POSTED_HISTORY_FILE = os.path.join(DATA_DIR, "posted_history.json")
 
 posted_history = {
     "news": [],     # روابط الأخبار اللي تبعثات
@@ -269,7 +283,7 @@ load_posted_history()
 # لأن الـ View كتشتغل بـ custom_id ثابت (persistent view) — كتخدم
 # فـ أي رسالة وحتى بعد ريستارت البوت، بلا ما نحتاجو نخزنو شي حاجة.
 
-STATS_MESSAGE_FILE = "stats_message.json"
+STATS_MESSAGE_FILE = os.path.join(DATA_DIR, "stats_message.json")
 stats_message_ids = {}  # {guild_id (str): message_id}
 
 
@@ -295,6 +309,67 @@ def save_stats_message_ids():
 
 
 load_stats_message_ids()
+
+
+# ═══════════════════════════════════════════════════════
+# ║   لائحة الكلمات/الأفعال الممنوعة الديناميكية (Owner only) ║
+# ═══════════════════════════════════════════════════════
+
+def load_banned_lists():
+    """يقرا الكلمات/الأفعال الممنوعة اللي تزادو بالأوامر من ملف JSON"""
+    global BANNED_ACTIONS
+    try:
+        with open(BANNED_LISTS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        banned_words_state["extra"] = data.get("extra_words", [])
+        banned_words_state["removed"] = data.get("removed_words", [])
+        BANNED_ACTIONS[:] = data.get("actions", [])
+        print(f"[BANNED_LISTS] تحمل {len(banned_words_state['extra'])} كلمة إضافية، "
+              f"{len(banned_words_state['removed'])} كلمة محيدة، {len(BANNED_ACTIONS)} فعل ممنوع")
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        print(f"[BANNED_LISTS] خطأ فـ التحميل: {e}")
+
+
+def save_banned_lists():
+    """يحفظ الكلمات/الأفعال الممنوعة الديناميكية فـ ملف JSON"""
+    try:
+        with open(BANNED_LISTS_FILE, "w", encoding="utf-8") as f:
+            json.dump({
+                "extra_words": banned_words_state["extra"],
+                "removed_words": banned_words_state["removed"],
+                "actions": BANNED_ACTIONS,
+            }, f, ensure_ascii=False)
+    except Exception as e:
+        print(f"[BANNED_LISTS] خطأ فـ الحفظ: {e}")
+
+
+def get_active_banned_words() -> list:
+    """كترجع اللائحة الفعلية: الأساسية (ناقص لي تحيد) + الإضافية"""
+    words = [w for w in BANNED_WORDS if w not in banned_words_state["removed"]]
+    for w in banned_words_state["extra"]:
+        if w not in words:
+            words.append(w)
+    return words
+
+
+load_banned_lists()
+
+
+def is_owner(ctx) -> bool:
+    """كتأكد بلي الشخص اللي بعث الأمر هو بالضبط الـ Owner (بواسطة ID)،
+    بلا ما يهم شنو هي الأدوار/الصلاحيات ديالو فالسيرفر."""
+    return bool(OWNER_ID) and ctx.author.id == OWNER_ID
+
+
+async def _delete_trigger_silently(ctx):
+    """يمسح الرسالة اللي فيها الأمر مباشرة (بحال !report) باش حتى حد
+    ما يشوف الأمر ولا المحتوى ديالو فالقناة."""
+    try:
+        await ctx.message.delete()
+    except Exception:
+        pass
 
 
 def get_system_prompt(user_gender="unknown"):
@@ -1712,7 +1787,7 @@ async def on_message(message):
     gender = detect_gender(message.author.name, message.author.display_name)
 
     if not is_exempt(message.author):
-        for word in BANNED_WORDS:
+        for word in get_active_banned_words() + BANNED_ACTIONS:
             if word.lower() in msg_lower:
                 try:
                     await message.delete()
@@ -2207,6 +2282,241 @@ async def unwarn(ctx, member: discord.Member):
     )
 
 
+# ═══════════════════════════════════════════════════════
+# ║   OWNER ONLY — إدارة اللائحة الممنوعة (سري، ماشي فالقناة)  ║
+# ═══════════════════════════════════════════════════════
+# هاد الأوامر خاصة غير بالـ Owner (بواسطة الـ ID فـ OWNER_ID)، حتى
+# الـ Admins والـ Moderators ما يقدروش يستعملوها. الرسالة ديال الأمر
+# كتمسح مباشرة، والجواب كيوصل بـ DM للـ Owner فقط — باش حتى حد آخر فالسيرفر
+# ما يشوف واش تزادت/تحيدت شي كلمة، وواش شكون دارها.
+
+@bot.command(name="addword")
+async def addword_cmd(ctx, *, word: str = ""):
+    await _delete_trigger_silently(ctx)
+    if not is_owner(ctx):
+        return
+    word = word.strip()
+    if not word:
+        return
+    if word in banned_words_state["removed"]:
+        banned_words_state["removed"].remove(word)
+    if word not in banned_words_state["extra"] and word not in BANNED_WORDS:
+        banned_words_state["extra"].append(word)
+    save_banned_lists()
+    try:
+        await ctx.author.send(f"✅ تزادت الكلمة للائحة الممنوعة. (المجموع الحالي: {len(get_active_banned_words())})")
+    except Exception:
+        pass
+
+
+@bot.command(name="removeword")
+async def removeword_cmd(ctx, *, word: str = ""):
+    await _delete_trigger_silently(ctx)
+    if not is_owner(ctx):
+        return
+    word = word.strip()
+    if not word:
+        return
+    if word in banned_words_state["extra"]:
+        banned_words_state["extra"].remove(word)
+    if word in BANNED_WORDS and word not in banned_words_state["removed"]:
+        banned_words_state["removed"].append(word)
+    save_banned_lists()
+    try:
+        await ctx.author.send(f"✅ تحيدت الكلمة من اللائحة. (المجموع الحالي: {len(get_active_banned_words())})")
+    except Exception:
+        pass
+
+
+@bot.command(name="addaction")
+async def addaction_cmd(ctx, *, phrase: str = ""):
+    """كتزيد عبارة/سلوك ممنوع (بحال كلمة، غير كتقدر تكون جملة كاملة)،
+    وكيتبع نفس آلية الحذف/التحذير ديال BANNED_WORDS."""
+    await _delete_trigger_silently(ctx)
+    if not is_owner(ctx):
+        return
+    phrase = phrase.strip()
+    if not phrase or phrase in BANNED_ACTIONS:
+        return
+    BANNED_ACTIONS.append(phrase)
+    save_banned_lists()
+    try:
+        await ctx.author.send(f"✅ تزادت العبارة/الفعل الممنوع. (المجموع الحالي: {len(BANNED_ACTIONS)})")
+    except Exception:
+        pass
+
+
+@bot.command(name="removeaction")
+async def removeaction_cmd(ctx, *, phrase: str = ""):
+    await _delete_trigger_silently(ctx)
+    if not is_owner(ctx):
+        return
+    phrase = phrase.strip()
+    if phrase in BANNED_ACTIONS:
+        BANNED_ACTIONS.remove(phrase)
+        save_banned_lists()
+        try:
+            await ctx.author.send(f"✅ تحيدت العبارة. (المجموع الحالي: {len(BANNED_ACTIONS)})")
+        except Exception:
+            pass
+
+
+@bot.command(name="listbanned")
+async def listbanned_cmd(ctx):
+    """كيبعث اللائحة الكاملة بـ DM للـ Owner فقط (حتى الأدمن ما شايفينهاش)"""
+    await _delete_trigger_silently(ctx)
+    if not is_owner(ctx):
+        return
+    words = get_active_banned_words()
+    actions = BANNED_ACTIONS
+    text_words = "\n".join(f"- {w}" for w in words) or "ماكاين والو"
+    text_actions = "\n".join(f"- {a}" for a in actions) or "ماكاين والو"
+    try:
+        await ctx.author.send(
+            f"🚫 **الكلمات الممنوعة ({len(words)}):**\n{text_words}\n\n"
+            f"🚫 **الأفعال/العبارات الممنوعة ({len(actions)}):**\n{text_actions}"
+        )
+    except Exception:
+        pass
+
+
+# ═══════════════════════════════════════════════════════
+# ║   OWNER ONLY — تحكم كامل فالسيرفر (كتم/حظر/طرد)          ║
+# ═══════════════════════════════════════════════════════
+# هاد الأوامر منفصلة على !kick/!ban/!mute العاديين (اللي خدامين بالصلاحيات
+# ديال Discord)، وخاصة غير بالـ Owner بواسطة الـ ID — حتى admin/mod ما
+# يقدروش يستعملوها. الـ Admins والـ Moderators كيبقاو خدامين بالأوامر
+# العادية فوق حسب الصلاحيات ديال الـ role ديالهم بحال ماكانو.
+
+@bot.command(name="ownerkick")
+async def ownerkick_cmd(ctx, member: discord.Member, *, reason="ما ذكرش سبب"):
+    if not is_owner(ctx):
+        return
+    if member.id == OWNER_ID:
+        await ctx.send("❌ ما نقدرش نمس فـ Owner ديال السيرفر!", delete_after=5)
+        return
+    try:
+        await member.kick(reason=reason)
+        await ctx.send(f"👢 {member.mention} تم طرده من طرف Owner.", delete_after=6)
+        await log_action(
+            ctx.guild, "👢 طرد (Owner)",
+            f"**المستخدم:** {member.mention} ({member.name})\n**السبب:** {reason}",
+            discord.Color.orange()
+        )
+    except discord.Forbidden:
+        await ctx.send("❌ ما عنديش الصلاحية!", delete_after=5)
+    except Exception as e:
+        await ctx.send(f"❌ خطأ: {str(e)}", delete_after=5)
+
+
+@bot.command(name="ownerban")
+async def ownerban_cmd(ctx, member: discord.Member, *, reason="ما ذكرش سبب"):
+    if not is_owner(ctx):
+        return
+    if member.id == OWNER_ID:
+        await ctx.send("❌ ما نقدرش نمس فـ Owner ديال السيرفر!", delete_after=5)
+        return
+    try:
+        await member.ban(reason=reason)
+        await ctx.send(f"🚫 {member.mention} تم حظره من طرف Owner.", delete_after=6)
+        await log_action(
+            ctx.guild, "🚫 حظر (Owner)",
+            f"**المستخدم:** {member.mention} ({member.name})\n**السبب:** {reason}",
+            discord.Color.red()
+        )
+    except discord.Forbidden:
+        await ctx.send("❌ ما عنديش الصلاحية!", delete_after=5)
+    except Exception as e:
+        await ctx.send(f"❌ خطأ: {str(e)}", delete_after=5)
+
+
+@bot.command(name="ownermute")
+async def ownermute_cmd(ctx, member: discord.Member, duration: int = 5, *, reason="ما ذكرش سبب"):
+    if not is_owner(ctx):
+        return
+    if member.id == OWNER_ID:
+        await ctx.send("❌ ما نقدرش نمس فـ Owner ديال السيرفر!", delete_after=5)
+        return
+    muted_role = ctx.guild.get_role(MUTED_ROLE_ID)
+    if not muted_role:
+        await ctx.send("❌ ما لقيتش دور Mute! حط ID صحيح فـ MUTED_ROLE_ID.", delete_after=5)
+        return
+    try:
+        await member.add_roles(muted_role)
+        user_id = str(member.id)
+        if user_id in mute_tasks and not mute_tasks[user_id].done():
+            mute_tasks[user_id].cancel()
+        task = asyncio.create_task(auto_unmute(member, duration, ctx.guild))
+        mute_tasks[user_id] = task
+        await ctx.send(f"🔇 {member.mention} تكتم من طرف Owner ({duration} دقيقة).", delete_after=6)
+        await log_action(
+            ctx.guild, "🔇 كتم (Owner)",
+            f"**المستخدم:** {member.mention} ({member.name})\n**المدة:** {duration}د\n**السبب:** {reason}",
+            discord.Color.yellow()
+        )
+    except discord.Forbidden:
+        await ctx.send("❌ ما عنديش الصلاحية!", delete_after=5)
+
+
+@bot.command(name="muteall")
+async def muteall_cmd(ctx, *, reason="Server Lockdown (Owner)"):
+    """كتكتم كاع الأعضاء فالسيرفر (ما عدا Owner والأدوار المعفية) — Owner فقط"""
+    if not is_owner(ctx):
+        return
+    muted_role = ctx.guild.get_role(MUTED_ROLE_ID)
+    if not muted_role:
+        await ctx.send("❌ ما لقيتش دور Mute! حط ID صحيح فـ MUTED_ROLE_ID.", delete_after=5)
+        return
+    status_msg = await ctx.send("⏳ كنكتم كاع الأعضاء، صبر شوية...")
+    muted_count = 0
+    for member in ctx.guild.members:
+        if member.bot or member.id == OWNER_ID or is_exempt(member):
+            continue
+        if muted_role in member.roles:
+            continue
+        try:
+            await member.add_roles(muted_role, reason=reason)
+            muted_count += 1
+            await asyncio.sleep(0.4)
+        except (discord.Forbidden, discord.HTTPException):
+            continue
+    await status_msg.edit(content=f"🔇 تكتمو {muted_count} عضو من طرف Owner.")
+    await log_action(
+        ctx.guild, "🔇 Mute All (Owner)",
+        f"**العدد:** {muted_count}\n**السبب:** {reason}\n**المنفذ:** {ctx.author.mention}",
+        discord.Color.yellow()
+    )
+
+
+@bot.command(name="unmuteall")
+async def unmuteall_cmd(ctx):
+    """كتفك الكتم على كاع الأعضاء المكتومين — Owner فقط"""
+    if not is_owner(ctx):
+        return
+    muted_role = ctx.guild.get_role(MUTED_ROLE_ID)
+    if not muted_role:
+        await ctx.send("❌ ما لقيتش دور Mute!", delete_after=5)
+        return
+    status_msg = await ctx.send("⏳ كنفك الكتم على الجميع، صبر شوية...")
+    unmuted_count = 0
+    for member in list(muted_role.members):
+        try:
+            await member.remove_roles(muted_role)
+            unmuted_count += 1
+            user_id = str(member.id)
+            if user_id in mute_tasks and not mute_tasks[user_id].done():
+                mute_tasks[user_id].cancel()
+            await asyncio.sleep(0.4)
+        except (discord.Forbidden, discord.HTTPException):
+            continue
+    await status_msg.edit(content=f"🔊 تفك الكتم على {unmuted_count} عضو.")
+    await log_action(
+        ctx.guild, "🔊 Unmute All (Owner)",
+        f"**العدد:** {unmuted_count}\n**المنفذ:** {ctx.author.mention}",
+        discord.Color.green()
+    )
+
+
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def clearoldverify(ctx):
@@ -2433,7 +2743,7 @@ async def info(ctx):
     embed.add_field(name="✅ Verification", value="✅ نشط", inline=False)
     embed.add_field(name="📰 Auto-Info", value="✅ نشط (5 channels)", inline=False)
     embed.add_field(name="⚠️ Warn Limit", value=f"`{WARN_LIMIT}`", inline=True)
-    embed.add_field(name="🚫 Banned Words", value=f"`{len(BANNED_WORDS)}`", inline=True)
+    embed.add_field(name="🚫 Banned Words", value=f"`{len(get_active_banned_words())}`", inline=True)
     embed.set_footer(text="GGMW9")
     await ctx.send(embed=embed)
 
