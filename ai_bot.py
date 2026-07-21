@@ -148,17 +148,17 @@ PICK_ROLES = {
         {"label": "Sports Fan", "emoji": "⚽", "role_id": 1528898014863691996},  # ← حط ID
     ],
     "🔔 إشعارات (Pings)": [
-        {"label": "News Ping", "emoji": "📰", "role_id": 0},     # ← حط ID
-        {"label": "Games Ping", "emoji": "🎮", "role_id": 0},    # ← حط ID
-        {"label": "Movies Ping", "emoji": "🎬", "role_id": 0},   # ← حط ID
-        {"label": "Anime Ping", "emoji": "📺", "role_id": 0},    # ← حط ID
-        {"label": "Music Ping", "emoji": "🎧", "role_id": 0},    # ← حط ID
-        {"label": "Announcements Ping", "emoji": "📢", "role_id": 0},  # ← حط ID
+        {"label": "News Ping", "emoji": "📰", "role_id": 1528916802510389278},     # ← حط ID
+        {"label": "Games Ping", "emoji": "🎮", "role_id": 1528916898262159440},    # ← حط ID
+        {"label": "Movies Ping", "emoji": "🎬", "role_id": 1528916993304957019},   # ← حط ID
+        {"label": "Anime Ping", "emoji": "📺", "role_id": 1528917042630230097},    # ← حط ID
+        {"label": "Music Ping", "emoji": "🎧", "role_id": 1528917090071871588},    # ← حط ID
+        {"label": "Announcements Ping", "emoji": "📢", "role_id": 1528917133839433851},  # ← حط ID
     ],
     "🌍 اللغة": [
-        {"label": "Darija", "emoji": "🇲🇦", "role_id": 0},   # ← حط ID
-        {"label": "English", "emoji": "🇬🇧", "role_id": 0},  # ← حط ID
-        {"label": "Français", "emoji": "🇫🇷", "role_id": 0},  # ← حط ID
+        {"label": "Darija", "emoji": "🇲🇦", "role_id": 1528919040792334497},   # ← حط ID
+        {"label": "English", "emoji": "🇬🇧", "role_id": 1528919152767664259},  # ← حط ID
+        {"label": "Français", "emoji": "🇫🇷", "role_id": 1528919222888173699},  # ← حط ID
     ],
 }
 
