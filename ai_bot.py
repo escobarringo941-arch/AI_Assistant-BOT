@@ -363,6 +363,14 @@ def is_owner(ctx) -> bool:
     return bool(OWNER_ID) and ctx.author.id == OWNER_ID
 
 
+def owner_only():
+    """Decorator: كيحدد الأمر غير بالـ Owner (بواسطة ID)، حتى Admin/Mod
+    ولا حتى شخص عندو Administrator ما يقدر يستعملو."""
+    async def predicate(ctx):
+        return is_owner(ctx)
+    return commands.check(predicate)
+
+
 async def _delete_trigger_silently(ctx):
     """يمسح الرسالة اللي فيها الأمر مباشرة (بحال !report) باش حتى حد
     ما يشوف الأمر ولا المحتوى ديالو فالقناة."""
@@ -2829,6 +2837,7 @@ async def chat(ctx, *, message: str):
 
 
 @bot.command()
+@owner_only()
 async def نسيني(ctx):
     user_id = str(ctx.author.id)
     if user_id in user_memory:
@@ -2839,6 +2848,7 @@ async def نسيني(ctx):
 
 
 @bot.command()
+@owner_only()
 async def ذاكرة(ctx):
     user_id = str(ctx.author.id)
     count = len(user_memory.get(user_id, [])) // 2
@@ -2846,6 +2856,7 @@ async def ذاكرة(ctx):
 
 
 @bot.command()
+@owner_only()
 async def انعلمك(ctx, *, knowledge: str):
     learned_knowledge.append(knowledge)
     gender = detect_gender(ctx.author.name, ctx.author.display_name)
@@ -2856,6 +2867,7 @@ async def انعلمك(ctx, *, knowledge: str):
 
 
 @bot.command()
+@owner_only()
 async def انعلمك_شي_حاجة_جديدة(ctx, *, knowledge: str):
     await انعلمك(ctx, knowledge=knowledge)
 
@@ -2865,7 +2877,7 @@ async def انعلمك_شي_حاجة_جديدة(ctx, *, knowledge: str):
 # ═══════════════════════════════════════════════════════
 
 @bot.command()
-@commands.has_permissions(administrator=True)
+@owner_only()
 async def testinfo(ctx, category: str = "all"):
     """
     جرب Auto-Info فوراً!
@@ -3190,6 +3202,13 @@ async def on_command_error(ctx, error):
         embed = discord.Embed(
             title="❌ خطأ فـ المدخلات!",
             description="الرقم ولا الـ ID ما صحيحش.",
+            color=discord.Color.red()
+        )
+        await ctx.send(embed=embed, delete_after=5)
+    elif isinstance(error, commands.CheckFailure):
+        embed = discord.Embed(
+            title="❌ ما عندكش الصلاحية!",
+            description="هاد الأمر خاص غير بـ Owner ديال السيرفر.",
             color=discord.Color.red()
         )
         await ctx.send(embed=embed, delete_after=5)
