@@ -367,6 +367,50 @@ def get_active_banned_words() -> list:
 load_banned_lists()
 
 
+# ═══════════════════════════════════════════════════════
+# ║   حفظ الرولات ديال العضو (باش يرجعو ليه ملي يرجع للسيرفر)   ║
+# ═══════════════════════════════════════════════════════
+# كل مرة عضو يخرج من السيرفر (كيك، بان، ولا خرج بنفسو) كنسجلو الرولات
+# اللي كانت عندو. ملي يرجع (بعد فك الحظر ولا رجع من بعد الكيك/الخروج)
+# كنعطيوه نفس الرولات مباشرة بلا ما يعاود Verification.
+MEMBER_ROLES_FILE = os.path.join(DATA_DIR, "member_roles.json")
+member_roles_data = {}  # {guild_id (str): {user_id (str): [role_id, ...]}}
+
+
+def load_member_roles():
+    global member_roles_data
+    try:
+        with open(MEMBER_ROLES_FILE, "r", encoding="utf-8") as f:
+            member_roles_data = json.load(f)
+        print(f"[MEMBER_ROLES] تحمل بيانات الرولات ديال {sum(len(v) for v in member_roles_data.values())} عضو")
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        print(f"[MEMBER_ROLES] خطأ فـ التحميل: {e}")
+
+
+def save_member_roles():
+    try:
+        with open(MEMBER_ROLES_FILE, "w", encoding="utf-8") as f:
+            json.dump(member_roles_data, f, ensure_ascii=False)
+    except Exception as e:
+        print(f"[MEMBER_ROLES] خطأ فـ الحفظ: {e}")
+
+
+def remember_member_roles(member: discord.Member):
+    """كتسجل الرولات الحالية ديال العضو (ناقص @everyone) قبل ما يخرج
+    (كيك، بان، ولا خروج عادي) باش يقدر يرجع ليهم ملي يرجع للسيرفر."""
+    guild_id = str(member.guild.id)
+    user_id = str(member.id)
+    role_ids = [r.id for r in member.roles if r.id != member.guild.id]
+    if role_ids:
+        member_roles_data.setdefault(guild_id, {})[user_id] = role_ids
+        save_member_roles()
+
+
+load_member_roles()
+
+
 def is_owner(ctx) -> bool:
     """كتأكد بلي الشخص اللي بعث الأمر هو بالضبط الـ Owner (بواسطة ID)،
     بلا ما يهم شنو هي الأدوار/الصلاحيات ديالو فالسيرفر."""
@@ -1722,6 +1766,48 @@ async def setup_blacklist_message(guild: discord.Guild):
 
 @bot.event
 async def on_member_join(member):
+    guild_id = str(member.guild.id)
+    user_id = str(member.id)
+    saved_role_ids = member_roles_data.get(guild_id, {}).get(user_id)
+
+    # ═══════ عضو رجع للسيرفر (بعد كيك/بان/خروج) — رجع ليه نفس الرولات ═══════
+    if saved_role_ids:
+        roles_to_add = []
+        for rid in saved_role_ids:
+            role = member.guild.get_role(rid)
+            if role:
+                roles_to_add.append(role)
+
+        restore_error = None
+        if roles_to_add:
+            try:
+                await member.add_roles(*roles_to_add, reason="استرجاع الرولات القديمة بعد الرجوع للسيرفر")
+            except discord.Forbidden as e:
+                restore_error = str(e)
+
+        welcome_channel = bot.get_channel(WELCOME_CHANNEL_ID)
+        if welcome_channel:
+            embed = discord.Embed(
+                title=f"👋 مرحبا بيك مرة أخرى {member.display_name}!",
+                description="رجعنا ليك نفس الرولات اللي كانت عندك من قبل. 🎉",
+                color=discord.Color.blue(),
+                timestamp=datetime.now()
+            )
+            embed.set_thumbnail(url=member.display_avatar.url)
+            embed.set_footer(text="GGMW9 | Welcome Back")
+            await welcome_channel.send(embed=embed)
+
+        await log_action(
+            member.guild,
+            "🔁 عضو رجع للسيرفر",
+            f"**المستخدم:** {member.mention} ({member.name})\n"
+            f"**الرولات المسترجعة:** {', '.join(r.mention for r in roles_to_add) if roles_to_add else 'ماكانش عندو رولات صالحة باش ترجع'}"
+            + (f"\n⚠️ **خطأ:** ما قدرتش نعطي بعض الرولات (صلاحية/ترتيب الرولات): {restore_error}" if restore_error else ""),
+            discord.Color.blue()
+        )
+        return
+
+    # ═══════ عضو جديد بصح — نظام Unverified/Welcome العادي ═══════
     unverified_role = member.guild.get_role(UNVERIFIED_ROLE_ID)
     if unverified_role:
         try:
@@ -1766,6 +1852,9 @@ async def on_member_join(member):
 
 @bot.event
 async def on_member_remove(member):
+    # كنسجلو الرولات ديالو قبل ما يخرج (كيك، بان، ولا خرج بنفسو) باش
+    # يقدر يرجع ليهم تلقائياً ملي يرجع للسيرفر.
+    remember_member_roles(member)
     await log_action(
         member.guild,
         "👋 عضو خرج",
