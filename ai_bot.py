@@ -130,6 +130,17 @@ EXEMPT_ROLE_IDS = [
     1526182506272133180,  # Moderator
 ]
 
+# ═══════ لائحة الإدارة (Owner + Admins + Mods) فـ channel "Administrators" ═══════
+ADMINISTRATORS_CHANNEL_ID = 1532115828450000967  # ← حط هنا ID ديال channel "Administrators"
+ADMIN_LIST_UPDATE_MINUTES = 30  # ← كل شحال ديال الدقائق كيتحدث المساج
+
+# الأدوار اللي غادي تبان فـ اللائحة، بالترتيب اللي بغيتي تبان بيه (من فوق لتحت).
+# زيد/بدل label و role_id حسب الرولات ديالك (الـ Owner كيبان فوق بوحدو من OWNER_ID).
+STAFF_ROLES_ORDER = [
+    {"label": "🔱 Admins", "role_id": 1525712399456272495},      # نفس role "Admin"
+    {"label": "🛡️ Moderators", "role_id": 1526182506272133180},  # نفس role "Moderator"
+]
+
 BANNED_WORDS = [
     'سبام', 'spam', 'naked.', 'discord.gg', 'العزية', 'عزي',
     'nude', 'porn', 'xxx', 'sex', 'fuck', 'shit', 'bitch'
@@ -325,6 +336,33 @@ def save_stats_message_ids():
 
 
 load_stats_message_ids()
+
+ADMIN_LIST_MESSAGE_FILE = os.path.join(DATA_DIR, "admin_list_message.json")
+admin_list_message_ids = {}  # {guild_id (str): message_id}
+
+
+def load_admin_list_message_ids():
+    """يقرا ID ديال رسالة لائحة الإدارة المحفوظة، باش يبدلها بدل ما يبعث وحدة جديدة كل مرة"""
+    global admin_list_message_ids
+    try:
+        with open(ADMIN_LIST_MESSAGE_FILE, "r", encoding="utf-8") as f:
+            admin_list_message_ids = json.load(f)
+        print(f"[ADMIN_LIST] تحمل {len(admin_list_message_ids)} رسالة لائحة محفوظة")
+    except FileNotFoundError:
+        print("[ADMIN_LIST] ماكاينش رسالة لائحة سابقة، غادي نبعثو وحدة جديدة")
+    except Exception as e:
+        print(f"[ADMIN_LIST] خطأ فـ التحميل: {e}")
+
+
+def save_admin_list_message_ids():
+    try:
+        with open(ADMIN_LIST_MESSAGE_FILE, "w", encoding="utf-8") as f:
+            json.dump(admin_list_message_ids, f, ensure_ascii=False)
+    except Exception as e:
+        print(f"[ADMIN_LIST] خطأ فـ الحفظ: {e}")
+
+
+load_admin_list_message_ids()
 
 
 # ═══════════════════════════════════════════════════════
@@ -3848,6 +3886,98 @@ async def update_stats_error(error):
         update_stats.restart()
 
 
+# ═══════════════════════════════════════════════════════
+# ║      لائحة الإدارة (Administrators) — كل 30 دقيقة       ║
+# ═══════════════════════════════════════════════════════
+
+async def build_admin_list_embed(guild: discord.Guild) -> discord.Embed:
+    """يبني embed فيه Owner + Admins + Mods مرتبين بالـ roles، باش لي بغا
+    يدير report يعرف بسرعة شكون يدير ليه tag."""
+    embed = discord.Embed(
+        title="👑 لائحة الإدارة",
+        description=(
+            "هادي لائحة الـ Owner والـ Admins والـ Moderators ديال السيرفر.\n"
+            "إلا بغيتي تدير report، دير tag لواحد من هادو حسب الحالة ديالك."
+        ),
+        color=discord.Color.gold(),
+        timestamp=datetime.now()
+    )
+
+    already_listed_ids = set()
+
+    # Owner فوق بوحدو
+    owner_member = guild.get_member(OWNER_ID) if OWNER_ID else None
+    if OWNER_ID:
+        already_listed_ids.add(OWNER_ID)
+    embed.add_field(
+        name="👑 Owner",
+        value=owner_member.mention if owner_member else (f"<@{OWNER_ID}>" if OWNER_ID else "—"),
+        inline=False
+    )
+
+    # باقي الأدوار بالترتيب المحدد فـ STAFF_ROLES_ORDER
+    for entry in STAFF_ROLES_ORDER:
+        role = guild.get_role(entry["role_id"])
+        if not role:
+            embed.add_field(name=entry["label"], value="⚠️ هاد الرول ماكاينش فالسيرفر (تأكد من role_id)", inline=False)
+            continue
+
+        members = [m for m in role.members if m.id not in already_listed_ids]
+        already_listed_ids.update(m.id for m in members)
+
+        value = "\n".join(m.mention for m in members) if members else "— محدش دابا"
+        embed.add_field(name=f"{entry['label']} ({len(members)})", value=value, inline=False)
+
+    if guild.icon:
+        embed.set_thumbnail(url=guild.icon.url)
+    embed.set_footer(text=f"{SERVER_NAME} | آخر تحديث")
+    return embed
+
+
+@tasks.loop(minutes=ADMIN_LIST_UPDATE_MINUTES)
+async def update_admin_list():
+    if not ADMINISTRATORS_CHANNEL_ID:
+        return
+    channel = bot.get_channel(ADMINISTRATORS_CHANNEL_ID)
+    if not channel:
+        print(f"[ADMIN_LIST] ❌ ماكاينش channel بـ ID {ADMINISTRATORS_CHANNEL_ID}")
+        return
+
+    guild = channel.guild
+    embed = await build_admin_list_embed(guild)
+    msg_id = admin_list_message_ids.get(str(guild.id))
+
+    if msg_id:
+        try:
+            msg = await channel.fetch_message(int(msg_id))
+            await msg.edit(embed=embed)
+            return
+        except (discord.NotFound, discord.Forbidden):
+            pass
+        except Exception as e:
+            print(f"[ADMIN_LIST] خطأ فـ التعديل: {e}")
+
+    try:
+        new_msg = await channel.send(embed=embed)
+        admin_list_message_ids[str(guild.id)] = new_msg.id
+        save_admin_list_message_ids()
+    except Exception as e:
+        print(f"[ADMIN_LIST] خطأ فـ البعث: {e}")
+
+
+@update_admin_list.before_loop
+async def before_update_admin_list():
+    await bot.wait_until_ready()
+
+
+@update_admin_list.error
+async def update_admin_list_error(error):
+    print(f"[ADMIN_LIST] ❌❌ خطأ كبير وقف الـ loop: {error}")
+    await asyncio.sleep(5)
+    if not update_admin_list.is_running():
+        update_admin_list.restart()
+
+
 @auto_info.error
 async def auto_info_error(error):
     """إلا وقع خطأ ما تصيدوش try/except ديال الفئات، هادي كنسجلوه، وكنعاودو نشغلو
@@ -3965,6 +4095,7 @@ async def on_ready():
     print(f"📰 Auto-Info: نشط (5 channels + APIs حقيقية)")
     print(f"⚠️ Warn Escalation: Mute@{MUTE_AFTER_WARNS} / Kick@{KICK_AFTER_WARNS} / Ban@{BAN_AFTER_WARNS}")
     print(f"📊 Stats Channel: {STATS_CHANNEL_ID if STATS_CHANNEL_ID else 'ماشي معطي بعد'} (كل {STATS_UPDATE_MINUTES} د)")
+    print(f"👑 Administrators Channel: {ADMINISTRATORS_CHANNEL_ID if ADMINISTRATORS_CHANNEL_ID else 'ماشي معطي بعد'} (كل {ADMIN_LIST_UPDATE_MINUTES} د)")
     print(f"⏰ Reminders: {len(reminders)} مبرمجين (كيتفقّد كل 30 ثانية)")
 
     await bot.change_presence(
@@ -3979,6 +4110,9 @@ async def on_ready():
 
     if STATS_CHANNEL_ID and not update_stats.is_running():
         update_stats.start()
+
+    if ADMINISTRATORS_CHANNEL_ID and not update_admin_list.is_running():
+        update_admin_list.start()
 
     if not check_reminders.is_running():
         check_reminders.start()
