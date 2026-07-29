@@ -131,7 +131,7 @@ EXEMPT_ROLE_IDS = [
 ]
 
 # ═══════ لائحة الإدارة (Owner + Admins + Mods) فـ channel "Administrators" ═══════
-ADMINISTRATORS_CHANNEL_ID = 1532115828450000967  # ← حط هنا ID ديال channel "Administrators"
+ADMINISTRATORS_CHANNEL_ID = 0  # ← حط هنا ID ديال channel "Administrators"
 ADMIN_LIST_UPDATE_MINUTES = 30  # ← كل شحال ديال الدقائق كيتحدث المساج
 
 # الأدوار اللي غادي تبان فـ اللائحة، بالترتيب اللي بغيتي تبان بيه (من فوق لتحت).
@@ -234,6 +234,39 @@ learned_knowledge = []
 warns_db = {}
 spam_tracker = {}
 mute_tasks = {}
+
+# ═══════════════════════════════════════════════════════
+# ║   نظام Case ID (سجل كامل لكل عقوبة برقم فريد)          ║
+# ═══════════════════════════════════════════════════════
+# كل عقوبة (warn/mute/kick/ban/unmute/unban/unwarn) كتاخد رقم Case فريد
+# ومتزايد (#1, #2, #3...)، وكتتسجل فـ cases.json باش تبقى محفوظة حتى
+# بعد ريستارت البوت. استعمل !history @user باش تشوف كاع الحالات ديال
+# عضو معين، ولا !case <رقم> باش تشوف حالة معينة بالتفصيل.
+CASES_FILE = os.path.join(DATA_DIR, "cases.json")
+cases_db = {"next_id": 1, "cases": {}}  # cases: {"1": {...}, "2": {...}}
+
+
+def load_cases():
+    global cases_db
+    try:
+        with open(CASES_FILE, "r", encoding="utf-8") as f:
+            cases_db = json.load(f)
+        print(f"[CASES] تحمل {len(cases_db.get('cases', {}))} حالة محفوظة (التالية: #{cases_db.get('next_id', 1)})")
+    except FileNotFoundError:
+        print("[CASES] ماكاينش حالات سابقة، غادي نبداو من Case #1")
+    except Exception as e:
+        print(f"[CASES] خطأ فـ التحميل: {e}")
+
+
+def save_cases():
+    try:
+        with open(CASES_FILE, "w", encoding="utf-8") as f:
+            json.dump(cases_db, f, ensure_ascii=False)
+    except Exception as e:
+        print(f"[CASES] خطأ فـ الحفظ: {e}")
+
+
+load_cases()
 
 # ═══════════════════════════════════════════════════════
 # ║   سجل المحتوى المنشور (باش ما يتعاودش تا شي حاجة)      ║
@@ -590,14 +623,13 @@ async def apply_warn_escalation(member: discord.Member, guild: discord.Guild, co
     if BAN_AFTER_WARNS and count >= BAN_AFTER_WARNS:
         try:
             await member.ban(reason=f"{count} تحذيرات: {reason}")
-            if channel:
-                await channel.send(f"🚫 {member.mention} تم حظره تلقائياً ({count} تحذيرات)!", delete_after=10)
-            await log_action(
-                guild, "🚫 Auto-Ban",
-                f"**المستخدم:** {member.mention} ({member.name})\n"
-                f"**السبب:** {count} تحذيرات — {reason}",
-                discord.Color.dark_red()
+            case_id = await log_case(
+                guild, "🚫 حظر تلقائي (Auto-Ban)", "🚫", discord.Color.dark_red(),
+                target=member, moderator=None,
+                reason=reason, extra=f"عدد التحذيرات: {count}"
             )
+            if channel:
+                await channel.send(f"🚫 {member.mention} تم حظره تلقائياً ({count} تحذيرات) — Case #{case_id}!", delete_after=10)
             clear_warns(str(member.id))
             return "ban"
         except discord.Forbidden:
@@ -606,14 +638,13 @@ async def apply_warn_escalation(member: discord.Member, guild: discord.Guild, co
     if KICK_AFTER_WARNS and count >= KICK_AFTER_WARNS:
         try:
             await member.kick(reason=f"{count} تحذيرات: {reason}")
-            if channel:
-                await channel.send(f"👢 {member.mention} تم طرده تلقائياً ({count} تحذيرات)!", delete_after=10)
-            await log_action(
-                guild, "👢 Auto-Kick",
-                f"**المستخدم:** {member.mention} ({member.name})\n"
-                f"**السبب:** {count} تحذيرات — {reason}",
-                discord.Color.orange()
+            case_id = await log_case(
+                guild, "👢 طرد تلقائي (Auto-Kick)", "👢", discord.Color.orange(),
+                target=member, moderator=None,
+                reason=reason, extra=f"عدد التحذيرات: {count}"
             )
+            if channel:
+                await channel.send(f"👢 {member.mention} تم طرده تلقائياً ({count} تحذيرات) — Case #{case_id}!", delete_after=10)
             clear_warns(str(member.id))
             return "kick"
         except discord.Forbidden:
@@ -629,18 +660,16 @@ async def apply_warn_escalation(member: discord.Member, guild: discord.Guild, co
                     mute_tasks[user_id].cancel()
                 task = asyncio.create_task(auto_unmute(member, MUTE_DURATION_MINUTES, guild))
                 mute_tasks[user_id] = task
+                case_id = await log_case(
+                    guild, "🔇 كتم تلقائي (Auto-Mute)", "🔇", discord.Color.yellow(),
+                    target=member, moderator=None,
+                    reason=reason, extra=f"عدد التحذيرات: {count} | المدة: {MUTE_DURATION_MINUTES} دقيقة"
+                )
                 if channel:
                     await channel.send(
-                        f"🔇 {member.mention} تكتم تلقائياً ({count} تحذيرات، {MUTE_DURATION_MINUTES} دقيقة)!",
+                        f"🔇 {member.mention} تكتم تلقائياً ({count} تحذيرات، {MUTE_DURATION_MINUTES} دقيقة) — Case #{case_id}!",
                         delete_after=10
                     )
-                await log_action(
-                    guild, "🔇 Auto-Mute",
-                    f"**المستخدم:** {member.mention} ({member.name})\n"
-                    f"**السبب:** {count} تحذيرات — {reason}\n"
-                    f"**المدة:** {MUTE_DURATION_MINUTES} دقيقة",
-                    discord.Color.yellow()
-                )
                 return "mute"
             except discord.Forbidden:
                 return None
@@ -1336,6 +1365,77 @@ async def log_action(guild, title: str, description: str, color: discord.Color):
         )
         embed.set_footer(text=f"GGMW9 | {datetime.now().strftime('%H:%M:%S')}")
         await channel.send(embed=embed)
+
+
+async def log_case(guild, action: str, emoji: str, color: discord.Color,
+                    target, moderator, reason: str, extra: str = None) -> int:
+    """
+    كتسجل عقوبة/إجراء كـ 'Case' برقم فريد ومتزايد، كتحفظها فـ cases.json
+    (باقية حتى بعد ريستارت)، وكتبعث embed احترافي موحد فـ MOD_LOGS_CHANNEL_ID.
+    target/moderator: discord.Member/discord.User أو None (مثلا Auto-Mod بلا منفذ بشري).
+    كترجع رقم الـ Case باش تقدر تبينو للمستخدم مباشرة.
+    """
+    case_id = cases_db.get("next_id", 1)
+    cases_db["next_id"] = case_id + 1
+
+    target_id = getattr(target, "id", None)
+    target_name = str(target) if target else "غير معروف"
+    mod_id = getattr(moderator, "id", None)
+    mod_name = str(moderator) if moderator else "Auto-Mod (System)"
+
+    record = {
+        "id": case_id,
+        "action": action,
+        "target_id": target_id,
+        "target_name": target_name,
+        "moderator_id": mod_id,
+        "moderator_name": mod_name,
+        "reason": reason or "ما ذكرش سبب",
+        "extra": extra,
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    cases_db.setdefault("cases", {})[str(case_id)] = record
+    save_cases()
+
+    channel = bot.get_channel(MOD_LOGS_CHANNEL_ID)
+    if channel:
+        embed = discord.Embed(
+            title=f"{emoji} {action} — Case #{case_id}",
+            color=color,
+            timestamp=datetime.now()
+        )
+        embed.add_field(
+            name="🎯 العضو",
+            value=f"{target.mention} ({target_name})" if hasattr(target, "mention") else target_name,
+            inline=False
+        )
+        embed.add_field(
+            name="🛡️ نفذ من طرف",
+            value=(moderator.mention if hasattr(moderator, "mention") else mod_name),
+            inline=False
+        )
+        embed.add_field(name="📝 السبب", value=reason or "ما ذكرش سبب", inline=False)
+        if extra:
+            embed.add_field(name="ℹ️ تفاصيل إضافية", value=extra, inline=False)
+        embed.set_footer(text=f"{SERVER_NAME} | Case #{case_id}")
+        try:
+            await channel.send(embed=embed)
+        except Exception as e:
+            print(f"[CASES] خطأ فـ بعث embed ديال Case #{case_id}: {e}")
+
+    return case_id
+
+
+def get_case(case_id) -> Optional[dict]:
+    return cases_db.get("cases", {}).get(str(case_id))
+
+
+def get_cases_for_user(user_id: int) -> list:
+    """كترجع كاع الحالات ديال عضو معين، الأحدث فالأول"""
+    all_cases = list(cases_db.get("cases", {}).values())
+    user_cases = [c for c in all_cases if c.get("target_id") == user_id]
+    user_cases.sort(key=lambda c: c["id"], reverse=True)
+    return user_cases
 
 
 def check_role_hierarchy(guild: discord.Guild) -> list:
@@ -2553,6 +2653,10 @@ async def kick(ctx, member: discord.Member, *, reason="ما ذكرش سبب"):
         return
     try:
         await member.kick(reason=reason)
+        case_id = await log_case(
+            ctx.guild, "👢 طرد", "👢", discord.Color.orange(),
+            target=member, moderator=ctx.author, reason=reason
+        )
         embed = discord.Embed(
             title="👢 طرد",
             description=f"**{member.mention}** تم طرده.",
@@ -2561,16 +2665,8 @@ async def kick(ctx, member: discord.Member, *, reason="ما ذكرش سبب"):
         )
         embed.add_field(name="السبب", value=reason, inline=False)
         embed.add_field(name="الطارد", value=ctx.author.mention, inline=False)
-        embed.set_footer(text="GGMW9 | Moderation")
+        embed.set_footer(text=f"GGMW9 | Moderation | Case #{case_id}")
         await ctx.send(embed=embed)
-        await log_action(
-            ctx.guild,
-            "👢 طرد",
-            f"**المستخدم:** {member.mention} ({member.name})\n"
-            f"**السبب:** {reason}\n"
-            f"**الطارد:** {ctx.author.mention}",
-            discord.Color.orange()
-        )
     except discord.Forbidden:
         await ctx.send("❌ ما عنديش الصلاحية!")
     except Exception as e:
@@ -2588,6 +2684,10 @@ async def ban(ctx, member: discord.Member, *, reason="ما ذكرش سبب"):
         return
     try:
         await member.ban(reason=reason)
+        case_id = await log_case(
+            ctx.guild, "🚫 حظر", "🚫", discord.Color.red(),
+            target=member, moderator=ctx.author, reason=reason
+        )
         embed = discord.Embed(
             title="🚫 حظر",
             description=f"**{member.mention}** تم حظره.",
@@ -2596,16 +2696,8 @@ async def ban(ctx, member: discord.Member, *, reason="ما ذكرش سبب"):
         )
         embed.add_field(name="السبب", value=reason, inline=False)
         embed.add_field(name="الحاضر", value=ctx.author.mention, inline=False)
-        embed.set_footer(text="GGMW9 | Moderation")
+        embed.set_footer(text=f"GGMW9 | Moderation | Case #{case_id}")
         await ctx.send(embed=embed)
-        await log_action(
-            ctx.guild,
-            "🚫 حظر",
-            f"**المستخدم:** {member.mention} ({member.name})\n"
-            f"**السبب:** {reason}\n"
-            f"**الحاضر:** {ctx.author.mention}",
-            discord.Color.red()
-        )
     except discord.Forbidden:
         await ctx.send("❌ ما عنديش الصلاحية!")
     except Exception as e:
@@ -2618,21 +2710,18 @@ async def unban(ctx, user_id: int):
     try:
         user = await bot.fetch_user(user_id)
         await ctx.guild.unban(user)
+        case_id = await log_case(
+            ctx.guild, "✅ فك الحظر", "✅", discord.Color.green(),
+            target=user, moderator=ctx.author, reason="فك حظر يدوي"
+        )
         embed = discord.Embed(
             title="✅ فك الحظر",
             description=f"**{user.name}** تم فك حظره.",
             color=discord.Color.green(),
             timestamp=datetime.now()
         )
-        embed.set_footer(text="GGMW9 | Moderation")
+        embed.set_footer(text=f"GGMW9 | Moderation | Case #{case_id}")
         await ctx.send(embed=embed)
-        await log_action(
-            ctx.guild,
-            "✅ فك الحظر",
-            f"**المستخدم:** {user.mention} ({user.name})\n"
-            f"**المنفذ:** {ctx.author.mention}",
-            discord.Color.green()
-        )
     except discord.NotFound:
         await ctx.send("❌ ما لقيتش هاد العضو!")
     except discord.Forbidden:
@@ -2677,6 +2766,16 @@ async def mute(ctx, member: discord.Member, duration: int = 5, *, reason="ما �
         return
     try:
         await member.add_roles(muted_role)
+        user_id = str(member.id)
+        if user_id in mute_tasks and not mute_tasks[user_id].done():
+            mute_tasks[user_id].cancel()
+        task = asyncio.create_task(auto_unmute(member, duration, ctx.guild))
+        mute_tasks[user_id] = task
+        case_id = await log_case(
+            ctx.guild, "🔇 كتم", "🔇", discord.Color.yellow(),
+            target=member, moderator=ctx.author, reason=reason,
+            extra=f"المدة: {duration} دقيقة"
+        )
         embed = discord.Embed(
             title="🔇 كتم",
             description=f"**{member.mention}** تم كتم صوته.",
@@ -2686,22 +2785,8 @@ async def mute(ctx, member: discord.Member, duration: int = 5, *, reason="ما �
         embed.add_field(name="المدة", value=f"{duration} دقيقة", inline=False)
         embed.add_field(name="السبب", value=reason, inline=False)
         embed.add_field(name="المنفذ", value=ctx.author.mention, inline=False)
-        embed.set_footer(text="GGMW9 | Moderation")
+        embed.set_footer(text=f"GGMW9 | Moderation | Case #{case_id}")
         await ctx.send(embed=embed)
-        user_id = str(member.id)
-        if user_id in mute_tasks and not mute_tasks[user_id].done():
-            mute_tasks[user_id].cancel()
-        task = asyncio.create_task(auto_unmute(member, duration, ctx.guild))
-        mute_tasks[user_id] = task
-        await log_action(
-            ctx.guild,
-            "🔇 كتم",
-            f"**المستخدم:** {member.mention} ({member.name})\n"
-            f"**المدة:** {duration} دقيقة\n"
-            f"**السبب:** {reason}\n"
-            f"**المنفذ:** {ctx.author.mention}",
-            discord.Color.yellow()
-        )
     except discord.Forbidden:
         await ctx.send("❌ ما عنديش الصلاحية!")
 
@@ -2718,21 +2803,18 @@ async def unmute(ctx, member: discord.Member):
         user_id = str(member.id)
         if user_id in mute_tasks and not mute_tasks[user_id].done():
             mute_tasks[user_id].cancel()
+        case_id = await log_case(
+            ctx.guild, "🔊 فك الكتم", "🔊", discord.Color.green(),
+            target=member, moderator=ctx.author, reason="فك كتم يدوي"
+        )
         embed = discord.Embed(
             title="🔊 فك الكتم",
             description=f"**{member.mention}** تم فك الكتم.",
             color=discord.Color.green(),
             timestamp=datetime.now()
         )
-        embed.set_footer(text="GGMW9 | Moderation")
+        embed.set_footer(text=f"GGMW9 | Moderation | Case #{case_id}")
         await ctx.send(embed=embed)
-        await log_action(
-            ctx.guild,
-            "🔊 فك الكتم",
-            f"**المستخدم:** {member.mention} ({member.name})\n"
-            f"**المنفذ:** {ctx.author.mention}",
-            discord.Color.green()
-        )
     except discord.Forbidden:
         await ctx.send("❌ ما عنديش الصلاحية!")
 
@@ -2801,6 +2883,11 @@ async def warn(ctx, member: discord.Member, *, reason):
         await ctx.send("❌ هاد العضو معفي من Auto-Mod/Moderation (Admin/Mod)!")
         return
     count = await add_warn(member, reason)
+    case_id = await log_case(
+        ctx.guild, "⚠️ تحذير", "⚠️", discord.Color.yellow(),
+        target=member, moderator=ctx.author, reason=reason,
+        extra=f"عدد التحذيرات الحالي: {count}"
+    )
     embed = discord.Embed(
         title="⚠️ تحذير",
         description=f"**{member.mention}** تم تحذيره.",
@@ -2814,17 +2901,8 @@ async def warn(ctx, member: discord.Member, *, reason):
         inline=False
     )
     embed.add_field(name="المنفذ", value=ctx.author.mention, inline=False)
-    embed.set_footer(text="GGMW9 | Moderation")
+    embed.set_footer(text=f"GGMW9 | Moderation | Case #{case_id}")
     await ctx.send(embed=embed)
-    await log_action(
-        ctx.guild,
-        "⚠️ تحذير",
-        f"**المستخدم:** {member.mention} ({member.name})\n"
-        f"**السبب:** {reason}\n"
-        f"**العدد:** {count}\n"
-        f"**المنفذ:** {ctx.author.mention}",
-        discord.Color.yellow()
-    )
     action = await apply_warn_escalation(member, ctx.guild, count, reason, channel=ctx.channel)
     if action is None and count >= MUTE_AFTER_WARNS:
         await ctx.send("❌ ما قدرتش نطبق العقوبة (تأكد من صلاحيات وترتيب الأدوار ديال البوت)!")
@@ -2861,21 +2939,97 @@ async def warns(ctx, member: discord.Member = None):
 @commands.has_permissions(kick_members=True)
 async def unwarn(ctx, member: discord.Member):
     clear_warns(str(member.id))
+    case_id = await log_case(
+        ctx.guild, "✅ مسح تحذيرات", "✅", discord.Color.green(),
+        target=member, moderator=ctx.author, reason="مسح كاع التحذيرات"
+    )
     embed = discord.Embed(
         title="✅ مسح التحذيرات",
         description=f"**{member.mention}** تم مسح تحذيراتو.",
         color=discord.Color.green(),
         timestamp=datetime.now()
     )
-    embed.set_footer(text="GGMW9 | Moderation")
+    embed.set_footer(text=f"GGMW9 | Moderation | Case #{case_id}")
     await ctx.send(embed=embed)
-    await log_action(
-        ctx.guild,
-        "✅ مسح تحذيرات",
-        f"**المستخدم:** {member.mention} ({member.name})\n"
-        f"**المنفذ:** {ctx.author.mention}",
-        discord.Color.green()
+
+
+# ═══════════════════════════════════════════════════════
+# ║        !case و !history — تصفح سجل الـ Cases            ║
+# ═══════════════════════════════════════════════════════
+
+CASE_ACTION_COLORS = {
+    "⚠️": discord.Color.yellow(),
+    "🔇": discord.Color.yellow(),
+    "🔊": discord.Color.green(),
+    "👢": discord.Color.orange(),
+    "🚫": discord.Color.red(),
+    "✅": discord.Color.green(),
+}
+
+
+@bot.command(name="case")
+@commands.has_permissions(kick_members=True)
+async def case_cmd(ctx, case_id: int):
+    """كيبين التفاصيل الكاملة ديال Case معين برقمو"""
+    record = get_case(case_id)
+    if not record:
+        await ctx.send(f"❌ ماكاينش Case #{case_id}.")
+        return
+
+    emoji = record["action"].split(" ")[0] if record["action"] else "📋"
+    color = CASE_ACTION_COLORS.get(emoji, discord.Color.blurple())
+
+    embed = discord.Embed(
+        title=f"📋 Case #{record['id']} — {record['action']}",
+        color=color,
+        timestamp=datetime.now()
     )
+    target_value = f"<@{record['target_id']}> ({record['target_name']})" if record.get("target_id") else record["target_name"]
+    mod_value = f"<@{record['moderator_id']}> ({record['moderator_name']})" if record.get("moderator_id") else record["moderator_name"]
+    embed.add_field(name="🎯 العضو", value=target_value, inline=False)
+    embed.add_field(name="🛡️ نفذ من طرف", value=mod_value, inline=False)
+    embed.add_field(name="📝 السبب", value=record["reason"], inline=False)
+    if record.get("extra"):
+        embed.add_field(name="ℹ️ تفاصيل إضافية", value=record["extra"], inline=False)
+    embed.add_field(name="🕐 التاريخ", value=record["timestamp"], inline=False)
+    embed.set_footer(text=f"{SERVER_NAME} | Case #{record['id']}")
+    await ctx.send(embed=embed)
+
+
+@bot.command(name="history")
+@commands.has_permissions(kick_members=True)
+async def history_cmd(ctx, member: discord.Member = None):
+    """كيبين كاع الـ Cases ديال عضو معين، الأحدث فالأول (آخر 15)"""
+    member = member or ctx.author
+    user_cases = get_cases_for_user(member.id)
+
+    embed = discord.Embed(
+        title=f"📋 سجل {member.display_name}",
+        color=discord.Color.blurple(),
+        timestamp=datetime.now()
+    )
+
+    if not user_cases:
+        embed.add_field(name="النتيجة", value="ما كاين حتى Case فسجل هاد العضو ✅", inline=False)
+    else:
+        lines = []
+        for c in user_cases[:15]:
+            mod_display = f"<@{c['moderator_id']}>" if c.get("moderator_id") else c["moderator_name"]
+            lines.append(
+                f"**#{c['id']} — {c['action']}**\n"
+                f"السبب: {c['reason']} | نفذ من طرف: {mod_display} | {c['timestamp']}"
+            )
+        embed.description = "\n\n".join(lines)
+        embed.add_field(name="📊 مجموع الـ Cases", value=str(len(user_cases)), inline=False)
+        if len(user_cases) > 15:
+            embed.set_footer(text=f"{SERVER_NAME} | كيبان غير آخر 15 Case، استعمل !case <رقم> باش تشوف واحد قديم")
+        else:
+            embed.set_footer(text=f"{SERVER_NAME} | Moderation History")
+
+    if member.display_avatar:
+        embed.set_thumbnail(url=member.display_avatar.url)
+
+    await ctx.send(embed=embed)
 
 
 # ═══════════════════════════════════════════════════════
@@ -2993,12 +3147,11 @@ async def ownerkick_cmd(ctx, member: discord.Member, *, reason="ما ذكرش س
         return
     try:
         await member.kick(reason=reason)
-        await ctx.send(f"👢 {member.mention} تم طرده من طرف Owner.", delete_after=6)
-        await log_action(
-            ctx.guild, "👢 طرد (Owner)",
-            f"**المستخدم:** {member.mention} ({member.name})\n**السبب:** {reason}",
-            discord.Color.orange()
+        case_id = await log_case(
+            ctx.guild, "👢 طرد (Owner)", "👢", discord.Color.orange(),
+            target=member, moderator=ctx.author, reason=reason
         )
+        await ctx.send(f"👢 {member.mention} تم طرده من طرف Owner. Case #{case_id}", delete_after=6)
     except discord.Forbidden:
         await ctx.send("❌ ما عنديش الصلاحية!", delete_after=5)
     except Exception as e:
@@ -3014,12 +3167,11 @@ async def ownerban_cmd(ctx, member: discord.Member, *, reason="ما ذكرش س�
         return
     try:
         await member.ban(reason=reason)
-        await ctx.send(f"🚫 {member.mention} تم حظره من طرف Owner.", delete_after=6)
-        await log_action(
-            ctx.guild, "🚫 حظر (Owner)",
-            f"**المستخدم:** {member.mention} ({member.name})\n**السبب:** {reason}",
-            discord.Color.red()
+        case_id = await log_case(
+            ctx.guild, "🚫 حظر (Owner)", "🚫", discord.Color.red(),
+            target=member, moderator=ctx.author, reason=reason
         )
+        await ctx.send(f"🚫 {member.mention} تم حظره من طرف Owner. Case #{case_id}", delete_after=6)
     except discord.Forbidden:
         await ctx.send("❌ ما عنديش الصلاحية!", delete_after=5)
     except Exception as e:
@@ -3044,12 +3196,12 @@ async def ownermute_cmd(ctx, member: discord.Member, duration: int = 5, *, reaso
             mute_tasks[user_id].cancel()
         task = asyncio.create_task(auto_unmute(member, duration, ctx.guild))
         mute_tasks[user_id] = task
-        await ctx.send(f"🔇 {member.mention} تكتم من طرف Owner ({duration} دقيقة).", delete_after=6)
-        await log_action(
-            ctx.guild, "🔇 كتم (Owner)",
-            f"**المستخدم:** {member.mention} ({member.name})\n**المدة:** {duration}د\n**السبب:** {reason}",
-            discord.Color.yellow()
+        case_id = await log_case(
+            ctx.guild, "🔇 كتم (Owner)", "🔇", discord.Color.yellow(),
+            target=member, moderator=ctx.author, reason=reason,
+            extra=f"المدة: {duration} دقيقة"
         )
+        await ctx.send(f"🔇 {member.mention} تكتم من طرف Owner ({duration} دقيقة). Case #{case_id}", delete_after=6)
     except discord.Forbidden:
         await ctx.send("❌ ما عنديش الصلاحية!", delete_after=5)
 
@@ -3489,6 +3641,8 @@ async def help(ctx):
         "`!warn @user <سبب>` — تحذير\n"
         "`!warns [@user]` — عرض التحذيرات\n"
         "`!unwarn @user` — مسح التحذيرات\n"
+        "`!case <رقم>` — تفاصيل Case معين\n"
+        "`!history [@user]` — سجل الـ Cases ديال عضو\n"
         "`!clear <عدد>` — حذف رسائل (1-100)"
     )
     embed.add_field(name="🛡️ موديراتورز", value=mod_cmds, inline=False)
@@ -3526,7 +3680,7 @@ async def help(ctx):
         "✅ كشف السبام (5 msg/5s)\n"
         "✅ Auto-mute\n"
         "✅ Auto-kick (3 warns)\n"
-        "✅ Logs كاملة فـ #mod-logs"
+        "✅ Logs كاملة فـ #mod-logs بـ Case ID (`!case`, `!history`)"
     )
     embed.add_field(name="🤖 Auto-Mod", value=auto_mod, inline=False)
     auto_info_cmds = (
@@ -3897,7 +4051,7 @@ async def build_admin_list_embed(guild: discord.Guild) -> discord.Embed:
         title="👑 لائحة الإدارة",
         description=(
             "هادي لائحة الـ Owner والـ Admins والـ Moderators ديال السيرفر.\n"
-            "إلا بغيتي تدير report، و !report دير tag لواحد من هادو حسب الحالة ديالك."
+            "إلا بغيتي تدير report، دير tag لواحد من هادو حسب الحالة ديالك."
         ),
         color=discord.Color.gold(),
         timestamp=datetime.now()
