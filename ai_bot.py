@@ -89,6 +89,11 @@ RULES_CHANNEL_ID = 1526474691789721700
 BLACKLIST_CHANNEL_ID = 1526858911477661786  # ← حط هنا ID ديال channel "Blacklist things"
 REPORTS_CHANNEL_ID = 1526884019105431562    # ← حط هنا ID ديال channel البلاغات (فين كتوصل البلاغات ديال !report)
 
+# ═══════ نظام Tickets (بدل/جنب !report — channels خاصة بكل مشكل) ═══════
+TICKETS_PANEL_CHANNEL_ID = 1532144216958959839   # ← channel فين غادي تبان رسالة "🎫 دير Ticket" بالزر
+TICKETS_CATEGORY_ID = 1532144271933706553        # ← ID ديال Category (فولدر) "Tickets" فين كيتخلقو الـ channels الخاصة
+TICKET_LOGS_CHANNEL_ID = 1532144316611428352     # ← channel فين كيتبعث ملخص/transcript الـ ticket ملي يتسد (إلا خليتها 0 غايستعمل MOD_LOGS_CHANNEL_ID)
+
 UNVERIFIED_ROLE_ID = 1526452828267085915
 MEMBER_ROLE_ID = 1526451890399739934
 MUTED_ROLE_ID = 1526468718534590574
@@ -267,6 +272,43 @@ def save_cases():
 
 
 load_cases()
+
+# ═══════════════════════════════════════════════════════
+# ║   نظام Tickets (channels خاصة لكل مشكل/استفسار)         ║
+# ═══════════════════════════════════════════════════════
+TICKETS_FILE = os.path.join(DATA_DIR, "tickets.json")
+tickets_db = {"next_id": 1, "open": {}}  # open: {channel_id (str): {id, opener_id, opened_at, claimed_by}}
+
+
+def load_tickets():
+    global tickets_db
+    try:
+        with open(TICKETS_FILE, "r", encoding="utf-8") as f:
+            tickets_db = json.load(f)
+        print(f"[TICKETS] تحمل {len(tickets_db.get('open', {}))} ticket مفتوح")
+    except FileNotFoundError:
+        print("[TICKETS] ماكاينش tickets سابقين، غادي نبداو من Ticket #1")
+    except Exception as e:
+        print(f"[TICKETS] خطأ فـ التحميل: {e}")
+
+
+def save_tickets():
+    try:
+        with open(TICKETS_FILE, "w", encoding="utf-8") as f:
+            json.dump(tickets_db, f, ensure_ascii=False)
+    except Exception as e:
+        print(f"[TICKETS] خطأ فـ الحفظ: {e}")
+
+
+def get_open_ticket_for_user(user_id: int):
+    """كترجع (channel_id, record) ديال ticket مفتوح ديال هاد العضو، وإلا None"""
+    for channel_id, record in tickets_db.get("open", {}).items():
+        if record.get("opener_id") == user_id:
+            return channel_id, record
+    return None, None
+
+
+load_tickets()
 
 # ═══════════════════════════════════════════════════════
 # ║   سجل المحتوى المنشور (باش ما يتعاودش تا شي حاجة)      ║
@@ -2260,6 +2302,316 @@ async def setup_blacklist_message(guild: discord.Guild):
         await channel.send(embed=embed_en)
 
 
+# ═══════════════════════════════════════════════════════
+# ║              نظام Tickets (channels خاصة)               ║
+# ═══════════════════════════════════════════════════════
+
+def _is_ticket_staff(member: discord.Member) -> bool:
+    if OWNER_ID and member.id == OWNER_ID:
+        return True
+    return any(role.id in EXEMPT_ROLE_IDS for role in member.roles)
+
+
+class TicketControlView(discord.ui.View):
+    """الأزرار جوة channel ديال ticket وحدة (Claim + Close). Persistent —
+    كتخدم بـ interaction.channel باش تعرف شنو الـ ticket، بلا ما تحتاج تخزن
+    شي حاجة خاصة بكل ticket فـ الـ View نفسها."""
+
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="🙋 نستلمو (Claim)", style=discord.ButtonStyle.secondary, custom_id="ticket_claim_button")
+    async def claim_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        member = interaction.user
+        if not isinstance(member, discord.Member) or not _is_ticket_staff(member):
+            await interaction.response.send_message("❌ هاد الزر خاص غير بالإدارة.", ephemeral=True)
+            return
+
+        record = tickets_db.get("open", {}).get(str(interaction.channel.id))
+        if not record:
+            await interaction.response.send_message("❌ ماكاينش هاد الـ ticket فالسجل ديالنا.", ephemeral=True)
+            return
+
+        record["claimed_by"] = member.id
+        save_tickets()
+        await interaction.response.send_message(f"✅ {member.mention} استلم هاد الـ ticket ودابا كيتكلف بيه.")
+
+    @discord.ui.button(label="🔒 سد الـ Ticket", style=discord.ButtonStyle.danger, custom_id="ticket_close_button")
+    async def close_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        member = interaction.user
+        record = tickets_db.get("open", {}).get(str(interaction.channel.id))
+        if not record:
+            await interaction.response.send_message("❌ ماكاينش هاد الـ ticket فالسجل ديالنا (ممكن تسد من قبل).", ephemeral=True)
+            return
+
+        is_opener = member.id == record.get("opener_id")
+        if not (is_opener or (isinstance(member, discord.Member) and _is_ticket_staff(member))):
+            await interaction.response.send_message("❌ غير صاحب الـ ticket ولا الإدارة يقدرو يسدوه.", ephemeral=True)
+            return
+
+        await interaction.response.send_message("🔒 غادي نسدو هاد الـ ticket من بعد 5 ثواني... كنجمعو transcript.")
+
+        channel = interaction.channel
+        guild = interaction.guild
+        ticket_id = record["id"]
+
+        # ═══════ تجميع transcript بسيط (نص) ═══════
+        lines = []
+        try:
+            async for msg in channel.history(limit=500, oldest_first=True):
+                ts = msg.created_at.strftime("%Y-%m-%d %H:%M:%S")
+                content = msg.content or "[بلا نص / embed / attachment]"
+                lines.append(f"[{ts}] {msg.author}: {content}")
+        except Exception as e:
+            lines.append(f"[خطأ فـ تجميع transcript: {e}]")
+
+        transcript_text = "\n".join(lines) if lines else "ماكاين حتى رسالة."
+        transcript_path = f"/tmp/ticket_{ticket_id}_transcript.txt"
+        try:
+            with open(transcript_path, "w", encoding="utf-8") as f:
+                f.write(transcript_text)
+        except Exception as e:
+            print(f"[TICKETS] خطأ فـ كتابة transcript: {e}")
+            transcript_path = None
+
+        log_channel_id = TICKET_LOGS_CHANNEL_ID or MOD_LOGS_CHANNEL_ID
+        log_channel = bot.get_channel(log_channel_id) if log_channel_id else None
+        if log_channel:
+            opener_id = record.get("opener_id")
+            claimed_by = record.get("claimed_by")
+            embed = discord.Embed(
+                title=f"🎫 Ticket #{ticket_id} — تسد",
+                color=discord.Color.dark_grey(),
+                timestamp=datetime.now()
+            )
+            embed.add_field(name="👤 صاحب الـ Ticket", value=f"<@{opener_id}>" if opener_id else "غير معروف", inline=False)
+            embed.add_field(name="🙋 استلمو", value=(f"<@{claimed_by}>" if claimed_by else "محدش استلمو"), inline=False)
+            embed.add_field(name="🔒 سداه", value=member.mention, inline=False)
+            embed.add_field(name="🕐 تحلق فـ", value=record.get("opened_at", "—"), inline=False)
+            embed.set_footer(text=f"{SERVER_NAME} | Ticket #{ticket_id}")
+            try:
+                if transcript_path:
+                    await log_channel.send(embed=embed, file=discord.File(transcript_path, filename=f"ticket-{ticket_id}-transcript.txt"))
+                else:
+                    await log_channel.send(embed=embed)
+            except Exception as e:
+                print(f"[TICKETS] خطأ فـ بعث الـ transcript: {e}")
+
+        if str(channel.id) in tickets_db.get("open", {}):
+            del tickets_db["open"][str(channel.id)]
+            save_tickets()
+
+        await asyncio.sleep(5)
+        try:
+            await channel.delete(reason=f"Ticket #{ticket_id} تسد من طرف {member}")
+        except Exception as e:
+            print(f"[TICKETS] خطأ فـ حذف الـ channel: {e}")
+
+
+class TicketPanelView(discord.ui.View):
+    """زر واحد "🎫 دير Ticket" — كيخلق channel خاص للعضو ملي يضغط عليه.
+    Persistent (timeout=None) باش يبقى خدام حتى بعد ريستارت البوت."""
+
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="🎫 دير Ticket", style=discord.ButtonStyle.success, custom_id="open_ticket_button")
+    async def open_ticket_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        member = interaction.user
+        guild = interaction.guild
+        if not guild or not isinstance(member, discord.Member):
+            await interaction.response.send_message("❌ وقع مشكل، عاود من جديد.", ephemeral=True)
+            return
+
+        if not TICKETS_CATEGORY_ID:
+            await interaction.response.send_message(
+                "❌ نظام الـ Tickets ماعادش معطي (`TICKETS_CATEGORY_ID` فارغة)، بلغ الإدارة.",
+                ephemeral=True
+            )
+            return
+
+        category = guild.get_channel(TICKETS_CATEGORY_ID)
+        if not category or not isinstance(category, discord.CategoryChannel):
+            await interaction.response.send_message(
+                "❌ ما لقيتش Category ديال الـ Tickets، بلغ الإدارة (`TICKETS_CATEGORY_ID`).",
+                ephemeral=True
+            )
+            return
+
+        existing_channel_id, existing_record = get_open_ticket_for_user(member.id)
+        if existing_channel_id:
+            existing_channel = guild.get_channel(int(existing_channel_id))
+            if existing_channel:
+                await interaction.response.send_message(
+                    f"⚠️ عندك ديجا ticket مفتوح: {existing_channel.mention}",
+                    ephemeral=True
+                )
+                return
+            else:
+                # الـ channel تحذاف بطريقة أخرى، نمسحو من السجل ونكملو
+                del tickets_db["open"][existing_channel_id]
+                save_tickets()
+
+        await interaction.response.send_message("⏳ كنخلق الـ ticket ديالك...", ephemeral=True)
+
+        ticket_id = tickets_db.get("next_id", 1)
+        tickets_db["next_id"] = ticket_id + 1
+
+        overwrites = {
+            guild.default_role: discord.PermissionOverwrite(view_channel=False),
+            member: discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True, attach_files=True),
+            guild.me: discord.PermissionOverwrite(view_channel=True, send_messages=True, manage_channels=True),
+        }
+        for rid in EXEMPT_ROLE_IDS:
+            role = guild.get_role(rid)
+            if role:
+                overwrites[role] = discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True)
+
+        safe_name = re.sub(r"[^a-z0-9\-]", "", member.name.lower().replace(" ", "-")) or "user"
+        channel_name = f"ticket-{ticket_id}-{safe_name}"[:90]
+
+        try:
+            new_channel = await guild.create_text_channel(
+                name=channel_name,
+                category=category,
+                overwrites=overwrites,
+                reason=f"Ticket #{ticket_id} فتحو {member}"
+            )
+        except discord.Forbidden:
+            await interaction.followup.send("❌ ما عنديش الصلاحية باش نخلق channel (Manage Channels)، بلغ الإدارة.", ephemeral=True)
+            return
+        except Exception as e:
+            await interaction.followup.send(f"❌ خطأ فـ خلق الـ ticket: {e}", ephemeral=True)
+            return
+
+        tickets_db.setdefault("open", {})[str(new_channel.id)] = {
+            "id": ticket_id,
+            "opener_id": member.id,
+            "opened_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "claimed_by": None,
+        }
+        save_tickets()
+
+        staff_mentions = " ".join(f"<@&{rid}>" for rid in EXEMPT_ROLE_IDS)
+        embed = discord.Embed(
+            title=f"🎫 Ticket #{ticket_id}",
+            description=(
+                f"مرحبا {member.mention}! شرح المشكل ولا السؤال ديالك هنا بالتفصيل، "
+                f"وواحد من الإدارة غادي يجاوبك فأقرب وقت.\n\n"
+                f"🙋 الإدارة تقدر تدير **Claim** باش تعرفك شكون كيتكلف بيك.\n"
+                f"🔒 ملي تخلص المشكل، اضغط **سد الـ Ticket** (نتا ولا الإدارة)."
+            ),
+            color=discord.Color.blurple(),
+            timestamp=datetime.now()
+        )
+        embed.set_footer(text=f"{SERVER_NAME} | Ticket #{ticket_id}")
+        await new_channel.send(content=f"{member.mention} {staff_mentions}", embed=embed, view=TicketControlView())
+
+        await interaction.followup.send(f"✅ تحلق الـ ticket ديالك: {new_channel.mention}", ephemeral=True)
+
+
+async def setup_tickets_panel(guild: discord.Guild):
+    if not TICKETS_PANEL_CHANNEL_ID:
+        return
+    channel = bot.get_channel(TICKETS_PANEL_CHANNEL_ID)
+    if not channel:
+        return
+    async for message in channel.history(limit=10):
+        if message.author == bot.user and message.components:
+            return
+    embed = discord.Embed(
+        title="🎫 الدعم / Support",
+        description=(
+            "عندك مشكل، سؤال، ولا بغيتي تبلغ عن شي حاجة بطريقة خاصة؟\n"
+            "اضغط على الزر تحت وغادي يتحلق ليك channel خاص بيك وبالإدارة غير حتى."
+        ),
+        color=discord.Color.blurple(),
+        timestamp=datetime.now()
+    )
+    embed.set_footer(text=f"{SERVER_NAME} | Ticket System")
+    await channel.send(embed=embed, view=TicketPanelView())
+
+
+@bot.command(name="setuptickets")
+@commands.has_permissions(administrator=True)
+async def setuptickets_cmd(ctx):
+    """كيصاوب/يعاود يصاوب رسالة اللوحة ديال Tickets فـ TICKETS_PANEL_CHANNEL_ID (Admin)"""
+    if not TICKETS_PANEL_CHANNEL_ID:
+        await ctx.send("❌ حط `TICKETS_PANEL_CHANNEL_ID` فالـ CONFIG أولاً.", delete_after=8)
+        return
+    if not TICKETS_CATEGORY_ID:
+        await ctx.send("⚠️ `TICKETS_CATEGORY_ID` فارغة — الزر غايبان ولكن ما غاديش يخدم حتى تحطها.", delete_after=10)
+    await setup_tickets_panel(ctx.guild)
+    await ctx.send("✅ رسالة اللوحة ديال Tickets تصاوبات (ولا كانت ديجا موجودة).", delete_after=8)
+
+
+@bot.command(name="closeticket")
+async def closeticket_cmd(ctx):
+    """كيسد ticket بأمر (بديل للزر) — خدام غير جوة channel ديال ticket"""
+    record = tickets_db.get("open", {}).get(str(ctx.channel.id))
+    if not record:
+        await ctx.send("❌ هاد الأمر خدام غير جوة channel ديال ticket.", delete_after=6)
+        return
+    is_opener = ctx.author.id == record.get("opener_id")
+    if not (is_opener or _is_ticket_staff(ctx.author)):
+        await ctx.send("❌ غير صاحب الـ ticket ولا الإدارة يقدرو يسدوه.", delete_after=6)
+        return
+
+    await ctx.send("🔒 غادي نسدو هاد الـ ticket من بعد 5 ثواني...")
+    ticket_id = record["id"]
+    channel = ctx.channel
+
+    lines = []
+    try:
+        async for msg in channel.history(limit=500, oldest_first=True):
+            ts = msg.created_at.strftime("%Y-%m-%d %H:%M:%S")
+            content = msg.content or "[بلا نص / embed / attachment]"
+            lines.append(f"[{ts}] {msg.author}: {content}")
+    except Exception as e:
+        lines.append(f"[خطأ فـ تجميع transcript: {e}]")
+
+    transcript_text = "\n".join(lines) if lines else "ماكاين حتى رسالة."
+    transcript_path = f"/tmp/ticket_{ticket_id}_transcript.txt"
+    try:
+        with open(transcript_path, "w", encoding="utf-8") as f:
+            f.write(transcript_text)
+    except Exception:
+        transcript_path = None
+
+    log_channel_id = TICKET_LOGS_CHANNEL_ID or MOD_LOGS_CHANNEL_ID
+    log_channel = bot.get_channel(log_channel_id) if log_channel_id else None
+    if log_channel:
+        opener_id = record.get("opener_id")
+        claimed_by = record.get("claimed_by")
+        embed = discord.Embed(
+            title=f"🎫 Ticket #{ticket_id} — تسد",
+            color=discord.Color.dark_grey(),
+            timestamp=datetime.now()
+        )
+        embed.add_field(name="👤 صاحب الـ Ticket", value=f"<@{opener_id}>" if opener_id else "غير معروف", inline=False)
+        embed.add_field(name="🙋 استلمو", value=(f"<@{claimed_by}>" if claimed_by else "محدش استلمو"), inline=False)
+        embed.add_field(name="🔒 سداه", value=ctx.author.mention, inline=False)
+        embed.add_field(name="🕐 تحلق فـ", value=record.get("opened_at", "—"), inline=False)
+        embed.set_footer(text=f"{SERVER_NAME} | Ticket #{ticket_id}")
+        try:
+            if transcript_path:
+                await log_channel.send(embed=embed, file=discord.File(transcript_path, filename=f"ticket-{ticket_id}-transcript.txt"))
+            else:
+                await log_channel.send(embed=embed)
+        except Exception as e:
+            print(f"[TICKETS] خطأ فـ بعث الـ transcript: {e}")
+
+    if str(channel.id) in tickets_db.get("open", {}):
+        del tickets_db["open"][str(channel.id)]
+        save_tickets()
+
+    await asyncio.sleep(5)
+    try:
+        await channel.delete(reason=f"Ticket #{ticket_id} تسد من طرف {ctx.author}")
+    except Exception as e:
+        print(f"[TICKETS] خطأ فـ حذف الـ channel: {e}")
+
+
 @bot.event
 async def on_member_join(member):
     guild_id = str(member.guild.id)
@@ -3653,6 +4005,12 @@ async def help(ctx):
         "`!unverify @user` — يرجعو @Unverified (Admin)"
     )
     embed.add_field(name="✅ تفعيل", value=verif_cmds, inline=False)
+    ticket_cmds = (
+        "`!setuptickets` — صاوب/عاود صاوب لوحة الـ Tickets (Admin)\n"
+        "🎫 ضغط على الزر فاللوحة → كيتحلق channel خاص\n"
+        "`!closeticket` — سد ticket بأمر (بديل للزر، جوة channel الـ ticket)"
+    )
+    embed.add_field(name="🎫 Tickets", value=ticket_cmds, inline=False)
     roles_cmds = (
         "`!setuproles` — صاوب رسالة اختيار الأدوار (Admin)\n"
         "`!listroles` — بين رسائل Reaction Roles الفعّالة (Admin)"
@@ -4250,6 +4608,7 @@ async def on_ready():
     print(f"⚠️ Warn Escalation: Mute@{MUTE_AFTER_WARNS} / Kick@{KICK_AFTER_WARNS} / Ban@{BAN_AFTER_WARNS}")
     print(f"📊 Stats Channel: {STATS_CHANNEL_ID if STATS_CHANNEL_ID else 'ماشي معطي بعد'} (كل {STATS_UPDATE_MINUTES} د)")
     print(f"👑 Administrators Channel: {ADMINISTRATORS_CHANNEL_ID if ADMINISTRATORS_CHANNEL_ID else 'ماشي معطي بعد'} (كل {ADMIN_LIST_UPDATE_MINUTES} د)")
+    print(f"🎫 Tickets: Panel={TICKETS_PANEL_CHANNEL_ID or 'ماشي معطي'} | Category={TICKETS_CATEGORY_ID or 'ماشي معطي'} | Logs={TICKET_LOGS_CHANNEL_ID or 'MOD_LOGS_CHANNEL_ID'}")
     print(f"⏰ Reminders: {len(reminders)} مبرمجين (كيتفقّد كل 30 ثانية)")
 
     await bot.change_presence(
@@ -4273,6 +4632,8 @@ async def on_ready():
 
     bot.add_view(RulesVerifyView())  # باش الأزرار يبقاو خدامين حتى بعد ريستارت البوت
     bot.add_view(RolePickerView())   # باش الـ Dropdown ديال الأدوار يبقى خدام حتى بعد ريستارت البوت
+    bot.add_view(TicketPanelView())    # باش زر "دير Ticket" يبقى خدام حتى بعد ريستارت البوت
+    bot.add_view(TicketControlView())  # باش أزرار Claim/Close يبقاو خدامين فكاع الـ tickets المفتوحة
 
     for guild in bot.guilds:
         # ملاحظة: ماعادش كنبعثو رسالة "تفعيل العضوية" القديمة (بالريأكشن ✅)
@@ -4280,6 +4641,8 @@ async def on_ready():
         await setup_rules_message(guild)
         if BLACKLIST_CHANNEL_ID:
             await setup_blacklist_message(guild)
+        if TICKETS_PANEL_CHANNEL_ID:
+            await setup_tickets_panel(guild)
 
         problems = check_role_hierarchy(guild)
         if problems:
