@@ -90,9 +90,9 @@ BLACKLIST_CHANNEL_ID = 1526858911477661786  # ← حط هنا ID ديال channe
 REPORTS_CHANNEL_ID = 1526884019105431562    # ← حط هنا ID ديال channel البلاغات (فين كتوصل البلاغات ديال !report)
 
 # ═══════ نظام Tickets (بدل/جنب !report — channels خاصة بكل مشكل) ═══════
-TICKETS_PANEL_CHANNEL_ID = 0   # ← channel فين غادي تبان رسالة "🎫 دير Ticket" بالزر
-TICKETS_CATEGORY_ID = 0        # ← ID ديال Category (فولدر) "Tickets" فين كيتخلقو الـ channels الخاصة
-TICKET_LOGS_CHANNEL_ID = 0     # ← channel فين كيتبعث ملخص/transcript الـ ticket ملي يتسد (إلا خليتها 0 غايستعمل MOD_LOGS_CHANNEL_ID)
+TICKETS_PANEL_CHANNEL_ID = 1532144216958959839   # ← channel فين غادي تبان رسالة "🎫 دير Ticket" بالزر
+TICKETS_CATEGORY_ID = 1532144108754440355        # ← ID ديال Category (فولدر) "Tickets" فين كيتخلقو الـ channels الخاصة
+TICKET_LOGS_CHANNEL_ID = 1532144316611428352     # ← channel فين كيتبعث ملخص/transcript الـ ticket ملي يتسد (إلا خليتها 0 غايستعمل MOD_LOGS_CHANNEL_ID)
 
 UNVERIFIED_ROLE_ID = 1526452828267085915
 MEMBER_ROLE_ID = 1526451890399739934
@@ -136,7 +136,7 @@ EXEMPT_ROLE_IDS = [
 ]
 
 # ═══════ لائحة الإدارة (Owner + Admins + Mods) فـ channel "Administrators" ═══════
-ADMINISTRATORS_CHANNEL_ID = 0  # ← حط هنا ID ديال channel "Administrators"
+ADMINISTRATORS_CHANNEL_ID = 1532115828450000967  # ← حط هنا ID ديال channel "Administrators"
 ADMIN_LIST_UPDATE_MINUTES = 30  # ← كل شحال ديال الدقائق كيتحدث المساج
 
 # الأدوار اللي غادي تبان فـ اللائحة، بالترتيب اللي بغيتي تبان بيه (من فوق لتحت).
