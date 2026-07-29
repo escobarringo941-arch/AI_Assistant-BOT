@@ -90,9 +90,9 @@ BLACKLIST_CHANNEL_ID = 1526858911477661786  # ← حط هنا ID ديال channe
 REPORTS_CHANNEL_ID = 1526884019105431562    # ← حط هنا ID ديال channel البلاغات (فين كتوصل البلاغات ديال !report)
 
 # ═══════ نظام Tickets (بدل/جنب !report — channels خاصة بكل مشكل) ═══════
-TICKETS_PANEL_CHANNEL_ID = 1532144216958959839   # ← channel فين غادي تبان رسالة "🎫 دير Ticket" بالزر
-TICKETS_CATEGORY_ID = 1532144108754440355        # ← ID ديال Category (فولدر) "Tickets" فين كيتخلقو الـ channels الخاصة
-TICKET_LOGS_CHANNEL_ID = 1532144316611428352     # ← channel فين كيتبعث ملخص/transcript الـ ticket ملي يتسد (إلا خليتها 0 غايستعمل MOD_LOGS_CHANNEL_ID)
+TICKETS_PANEL_CHANNEL_ID = 0   # ← channel فين غادي تبان رسالة "🎫 دير Ticket" بالزر
+TICKETS_CATEGORY_ID = 0        # ← ID ديال Category (فولدر) "Tickets" فين كيتخلقو الـ channels الخاصة
+TICKET_LOGS_CHANNEL_ID = 0     # ← channel فين كيتبعث ملخص/transcript الـ ticket ملي يتسد (إلا خليتها 0 غايستعمل MOD_LOGS_CHANNEL_ID)
 
 UNVERIFIED_ROLE_ID = 1526452828267085915
 MEMBER_ROLE_ID = 1526451890399739934
@@ -136,7 +136,7 @@ EXEMPT_ROLE_IDS = [
 ]
 
 # ═══════ لائحة الإدارة (Owner + Admins + Mods) فـ channel "Administrators" ═══════
-ADMINISTRATORS_CHANNEL_ID = 1532115828450000967  # ← حط هنا ID ديال channel "Administrators"
+ADMINISTRATORS_CHANNEL_ID = 0  # ← حط هنا ID ديال channel "Administrators"
 ADMIN_LIST_UPDATE_MINUTES = 30  # ← كل شحال ديال الدقائق كيتحدث المساج
 
 # الأدوار اللي غادي تبان فـ اللائحة، بالترتيب اللي بغيتي تبان بيه (من فوق لتحت).
@@ -162,6 +162,17 @@ banned_words_state = {"extra": [], "removed": []}  # كتتعمر من المل�
 
 SPAM_THRESHOLD = 5
 SPAM_INTERVAL = 5
+
+# ═══════ Anti-Raid Protection (كشف الهجوم الجماعي) ═══════
+ANTI_RAID_ENABLED = True
+RAID_JOIN_THRESHOLD = 10          # عدد الأعضاء الجداد
+RAID_JOIN_INTERVAL_SECONDS = 30   # فـ هاد المدة (بالثواني) → إلا توصلات = Raid محتمل
+RAID_ACTION = "kick"              # شنو يتدار فالعضو ملي يكون Raid Mode مفعل: "kick" ولا "ban"
+RAID_LOCKDOWN_DURATION_MINUTES = 30  # شحال كيدوم Lockdown قبل ما يرجع عادي أوتوماتيكياً (0 = يبقى حتى !unlockdown يدوي)
+
+# كشف الحسابات الجداد بزاف (كثير ما كتكون هي لي فراود) — كيبعث غير تنبيه،
+# ما كيديرش عقوبة تلقائية إلا كان Raid Mode مفعل
+RAID_MIN_ACCOUNT_AGE_HOURS = 24
 
 # ═══════ درجات العقوبة حسب عدد التحذيرات (سهل التعديل) ═══════
 # كل عضو كيبدا بلا تحذيرات. كل تحذير (Auto-Mod ولا !warn يدوي) كيزيد
@@ -239,6 +250,10 @@ learned_knowledge = []
 warns_db = {}
 spam_tracker = {}
 mute_tasks = {}
+
+# ═══════ Anti-Raid: تتبع الأعضاء الجداد + حالة الـ Lockdown ═══════
+recent_joins = defaultdict(list)  # {guild_id: [datetime, datetime, ...]}
+raid_state = {}                   # {guild_id: {"active": bool, "previous_verification_level": ..., "revert_task": Task}}
 
 # ═══════════════════════════════════════════════════════
 # ║   نظام Case ID (سجل كامل لكل عقوبة برقم فريد)          ║
@@ -2612,8 +2627,147 @@ async def closeticket_cmd(ctx):
         print(f"[TICKETS] خطأ فـ حذف الـ channel: {e}")
 
 
+async def trigger_raid_lockdown(guild: discord.Guild, reason: str, duration_minutes: int = None):
+    """كيصعد verification_level ديال السيرفر لأعلى درجة مؤقتاً، وكيبعث تنبيه للإدارة."""
+    state = raid_state.setdefault(guild.id, {})
+    if state.get("active"):
+        return False
+
+    state["active"] = True
+    state["previous_verification_level"] = guild.verification_level
+
+    try:
+        await guild.edit(verification_level=discord.VerificationLevel.highest, reason="Anti-Raid: Lockdown أوتوماتيكي")
+    except Exception as e:
+        print(f"[ANTI-RAID] خطأ فـ تصعيد verification level: {e}")
+
+    channel = bot.get_channel(MOD_LOGS_CHANNEL_ID)
+    if channel:
+        mentions = " ".join(f"<@&{rid}>" for rid in EXEMPT_ROLE_IDS)
+        embed = discord.Embed(
+            title="🚨🚨 Anti-Raid: Lockdown مفعل!",
+            description=(
+                f"{reason}\n\n"
+                f"✅ verification level تصعدات مؤقتاً لأعلى درجة.\n"
+                f"⚠️ كل عضو جديد غادي يتـ **{'حظر' if RAID_ACTION == 'ban' else 'طرد'}** تلقائياً حتى يتسد الـ Lockdown.\n"
+                f"استعمل `!unlockdown` باش تسدو يدوياً قبل الوقت، ولا `!raidstatus` باش تشوف الحالة."
+            ),
+            color=discord.Color.dark_red(),
+            timestamp=datetime.now()
+        )
+        try:
+            await channel.send(content=mentions or None, embed=embed)
+        except Exception as e:
+            print(f"[ANTI-RAID] خطأ فـ بعث التنبيه: {e}")
+
+    duration = RAID_LOCKDOWN_DURATION_MINUTES if duration_minutes is None else duration_minutes
+    if duration and duration > 0:
+        async def _auto_revert():
+            await asyncio.sleep(duration * 60)
+            if raid_state.get(guild.id, {}).get("active"):
+                await end_raid_lockdown(guild, reason="انتهت المدة أوتوماتيكياً")
+        state["revert_task"] = asyncio.create_task(_auto_revert())
+
+    return True
+
+
+async def end_raid_lockdown(guild: discord.Guild, reason: str = "يدوي") -> bool:
+    state = raid_state.get(guild.id)
+    if not state or not state.get("active"):
+        return False
+
+    prev_level = state.get("previous_verification_level", discord.VerificationLevel.medium)
+    try:
+        await guild.edit(verification_level=prev_level, reason="Anti-Raid: رجوع للحالة العادية")
+    except Exception as e:
+        print(f"[ANTI-RAID] خطأ فـ رجوع verification level: {e}")
+
+    state["active"] = False
+    task = state.get("revert_task")
+    if task and not task.done():
+        task.cancel()
+
+    channel = bot.get_channel(MOD_LOGS_CHANNEL_ID)
+    if channel:
+        embed = discord.Embed(
+            title="✅ Anti-Raid: Lockdown تسد",
+            description=f"**السبب:** {reason}\nverification level رجعت للحالة العادية.",
+            color=discord.Color.green(),
+            timestamp=datetime.now()
+        )
+        try:
+            await channel.send(embed=embed)
+        except Exception as e:
+            print(f"[ANTI-RAID] خطأ فـ بعث التنبيه: {e}")
+
+    return True
+
+
+async def _check_and_maybe_trigger_raid(guild: discord.Guild) -> bool:
+    """كتزيد join جديد لتتبع الأعضاء الجداد، وكتشوف واش عدد الانضمامات
+    الأخيرة وصل للعتبة (RAID_JOIN_THRESHOLD فـ RAID_JOIN_INTERVAL_SECONDS).
+    كترجع True إلا Lockdown تفعل دابا بالضبط (أول مرة)."""
+    now = datetime.now()
+    cutoff = now - timedelta(seconds=RAID_JOIN_INTERVAL_SECONDS)
+    joins = [t for t in recent_joins[guild.id] if t > cutoff]
+    joins.append(now)
+    recent_joins[guild.id] = joins
+
+    if len(joins) >= RAID_JOIN_THRESHOLD:
+        state = raid_state.get(guild.id, {})
+        if not state.get("active"):
+            await trigger_raid_lockdown(
+                guild,
+                reason=f"🚨 {len(joins)} عضو دخلو فـ آخر {RAID_JOIN_INTERVAL_SECONDS} ثانية (العتبة: {RAID_JOIN_THRESHOLD})."
+            )
+            return True
+    return False
+
+
 @bot.event
 async def on_member_join(member):
+    # ═══════════════════════════════════════════════════════
+    # ║              Anti-Raid Protection                       ║
+    # ═══════════════════════════════════════════════════════
+    if ANTI_RAID_ENABLED:
+        raid_triggered_now = await _check_and_maybe_trigger_raid(member.guild)
+        state = raid_state.get(member.guild.id, {})
+
+        if state.get("active"):
+            # Raid Mode مفعل → كل عضو جديد كيتطبق عليه RAID_ACTION مباشرة
+            try:
+                if RAID_ACTION == "ban":
+                    await member.ban(reason="Anti-Raid: Lockdown مفعل، عضو جديد تلقائياً")
+                    action_label = "🚫 حظر تلقائي (Anti-Raid)"
+                    color = discord.Color.dark_red()
+                else:
+                    await member.kick(reason="Anti-Raid: Lockdown مفعل، عضو جديد تلقائياً")
+                    action_label = "👢 طرد تلقائي (Anti-Raid)"
+                    color = discord.Color.orange()
+
+                await log_case(
+                    member.guild, action_label, action_label.split(" ")[0], color,
+                    target=member, moderator=None,
+                    reason="انضم خلال فترة Anti-Raid Lockdown",
+                )
+            except discord.Forbidden:
+                print(f"[ANTI-RAID] ❌ ماقدرتش نطبق {RAID_ACTION} على {member} — صلاحية ناقصة")
+            except Exception as e:
+                print(f"[ANTI-RAID] خطأ: {e}")
+            return  # ما نكملوش الترحيب/استرجاع الرولات لعضو تفلتر
+
+        # تنبيه بسيط (بلا عقوبة) إلا كان الحساب جديد بزاف — حتى ملي Raid Mode ماشي مفعل
+        account_age = datetime.now(member.created_at.tzinfo) - member.created_at
+        if account_age < timedelta(hours=RAID_MIN_ACCOUNT_AGE_HOURS):
+            await log_action(
+                member.guild,
+                "⚠️ حساب جديد بزاف",
+                f"**المستخدم:** {member.mention} ({member.name})\n"
+                f"**عمر الحساب:** {account_age}\n"
+                f"غير تنبيه — ماتديرش شي حاجة يدوياً إلا شكيتي فيه.",
+                discord.Color.orange()
+            )
+
     guild_id = str(member.guild.id)
     user_id = str(member.id)
     saved_role_ids = member_roles_data.get(guild_id, {}).get(user_id)
@@ -3617,6 +3771,64 @@ async def unmuteall_cmd(ctx):
     )
 
 
+# ═══════════════════════════════════════════════════════
+# ║        Anti-Raid — أوامر التحكم اليدوي (Admin/Owner)     ║
+# ═══════════════════════════════════════════════════════
+
+@bot.command(name="lockdown")
+@commands.has_permissions(administrator=True)
+async def lockdown_cmd(ctx, duration_minutes: int = None):
+    """كيفعّل Anti-Raid Lockdown يدوياً (بلا ماتوصل عتبة الانضمامات) — Admin/Owner"""
+    started = await trigger_raid_lockdown(
+        ctx.guild,
+        reason=f"🔒 Lockdown يدوي من طرف {ctx.author.mention}.",
+        duration_minutes=duration_minutes
+    )
+    if started:
+        dur_txt = f"{duration_minutes} دقيقة" if duration_minutes else (
+            f"{RAID_LOCKDOWN_DURATION_MINUTES} دقيقة" if RAID_LOCKDOWN_DURATION_MINUTES else "حتى `!unlockdown` يدوي"
+        )
+        await ctx.send(f"🔒 Lockdown تفعل. غادي يدوم: {dur_txt}.")
+    else:
+        await ctx.send("⚠️ Lockdown مفعل ديجا.", delete_after=6)
+
+
+@bot.command(name="unlockdown")
+@commands.has_permissions(administrator=True)
+async def unlockdown_cmd(ctx):
+    """كيسد Anti-Raid Lockdown يدوياً ويرجع verification level للحالة العادية — Admin/Owner"""
+    ended = await end_raid_lockdown(ctx.guild, reason=f"يدوي من طرف {ctx.author.mention}")
+    if ended:
+        await ctx.send("✅ Lockdown تسد، الوضعية رجعت عادية.")
+    else:
+        await ctx.send("ℹ️ ماكاين حتى Lockdown مفعل دابا.", delete_after=6)
+
+
+@bot.command(name="raidstatus")
+@commands.has_permissions(kick_members=True)
+async def raidstatus_cmd(ctx):
+    """كيبين الحالة ديال Anti-Raid دابا (مفعل ولا لا، عدد الانضمامات الأخيرة)"""
+    state = raid_state.get(ctx.guild.id, {})
+    now = datetime.now()
+    cutoff = now - timedelta(seconds=RAID_JOIN_INTERVAL_SECONDS)
+    recent = [t for t in recent_joins.get(ctx.guild.id, []) if t > cutoff]
+
+    embed = discord.Embed(
+        title="🚨 Anti-Raid Status",
+        color=discord.Color.red() if state.get("active") else discord.Color.green(),
+        timestamp=datetime.now()
+    )
+    embed.add_field(name="الحالة", value="🔒 Lockdown مفعل" if state.get("active") else "✅ عادي", inline=False)
+    embed.add_field(
+        name="الانضمامات الأخيرة",
+        value=f"{len(recent)} / {RAID_JOIN_THRESHOLD} (فـ آخر {RAID_JOIN_INTERVAL_SECONDS}ث)",
+        inline=False
+    )
+    embed.add_field(name="العمل ملي يتفعل Lockdown", value="🚫 حظر" if RAID_ACTION == "ban" else "👢 طرد", inline=False)
+    embed.set_footer(text=f"{SERVER_NAME} | Anti-Raid Protection")
+    await ctx.send(embed=embed)
+
+
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def clearoldverify(ctx):
@@ -4011,6 +4223,12 @@ async def help(ctx):
         "`!closeticket` — سد ticket بأمر (بديل للزر، جوة channel الـ ticket)"
     )
     embed.add_field(name="🎫 Tickets", value=ticket_cmds, inline=False)
+    raid_cmds = (
+        "`!lockdown [دقائق]` — فعّل Anti-Raid Lockdown يدوياً (Admin)\n"
+        "`!unlockdown` — سد الـ Lockdown يدوياً (Admin)\n"
+        "`!raidstatus` — شوف الحالة دابا"
+    )
+    embed.add_field(name="🚨 Anti-Raid", value=raid_cmds, inline=False)
     roles_cmds = (
         "`!setuproles` — صاوب رسالة اختيار الأدوار (Admin)\n"
         "`!listroles` — بين رسائل Reaction Roles الفعّالة (Admin)"
@@ -4609,6 +4827,7 @@ async def on_ready():
     print(f"📊 Stats Channel: {STATS_CHANNEL_ID if STATS_CHANNEL_ID else 'ماشي معطي بعد'} (كل {STATS_UPDATE_MINUTES} د)")
     print(f"👑 Administrators Channel: {ADMINISTRATORS_CHANNEL_ID if ADMINISTRATORS_CHANNEL_ID else 'ماشي معطي بعد'} (كل {ADMIN_LIST_UPDATE_MINUTES} د)")
     print(f"🎫 Tickets: Panel={TICKETS_PANEL_CHANNEL_ID or 'ماشي معطي'} | Category={TICKETS_CATEGORY_ID or 'ماشي معطي'} | Logs={TICKET_LOGS_CHANNEL_ID or 'MOD_LOGS_CHANNEL_ID'}")
+    print(f"🚨 Anti-Raid: {'نشط' if ANTI_RAID_ENABLED else 'معطل'} (عتبة: {RAID_JOIN_THRESHOLD} فـ {RAID_JOIN_INTERVAL_SECONDS}ث | عمل: {RAID_ACTION})")
     print(f"⏰ Reminders: {len(reminders)} مبرمجين (كيتفقّد كل 30 ثانية)")
 
     await bot.change_presence(
