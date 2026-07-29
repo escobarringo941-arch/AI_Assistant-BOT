@@ -3897,7 +3897,7 @@ async def build_admin_list_embed(guild: discord.Guild) -> discord.Embed:
         title="👑 لائحة الإدارة",
         description=(
             "هادي لائحة الـ Owner والـ Admins والـ Moderators ديال السيرفر.\n"
-            "إلا بغيتي تدير report، دير tag لواحد من هادو حسب الحالة ديالك."
+            "إلا بغيتي تدير report، و !report دير tag لواحد من هادو حسب الحالة ديالك."
         ),
         color=discord.Color.gold(),
         timestamp=datetime.now()
