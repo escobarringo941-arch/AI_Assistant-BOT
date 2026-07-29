@@ -136,7 +136,7 @@ EXEMPT_ROLE_IDS = [
 ]
 
 # ═══════ لائحة الإدارة (Owner + Admins + Mods) فـ channel "Administrators" ═══════
-ADMINISTRATORS_CHANNEL_ID = 0  # ← حط هنا ID ديال channel "Administrators"
+ADMINISTRATORS_CHANNEL_ID = 1532115828450000967  # ← حط هنا ID ديال channel "Administrators"
 ADMIN_LIST_UPDATE_MINUTES = 30  # ← كل شحال ديال الدقائق كيتحدث المساج
 
 # الأدوار اللي غادي تبان فـ اللائحة، بالترتيب اللي بغيتي تبان بيه (من فوق لتحت).
