@@ -106,7 +106,7 @@ REPORTS_CHANNEL_ID = 1526884019105431562    # ← حط هنا ID ديال channe
 
 # ═══════ نظام Tickets (بدل/جنب !report — channels خاصة بكل مشكل) ═══════
 TICKETS_PANEL_CHANNEL_ID = 1532144216958959839   # ← channel فين غادي تبان رسالة "🎫 دير Ticket" بالزر
-TICKETS_CATEGORY_ID = 1532144216958959839        # ← ID ديال Category (فولدر) "Tickets" فين كيتخلقو الـ channels الخاصة
+TICKETS_CATEGORY_ID = 1532144108754440355        # ← ID ديال Category (فولدر) "Tickets" فين كيتخلقو الـ channels الخاصة
 TICKET_LOGS_CHANNEL_ID = 1532144316611428352     # ← channel فين كيتبعث ملخص/transcript الـ ticket ملي يتسد (إلا خليتها 0 غايستعمل MOD_LOGS_CHANNEL_ID)
 
 UNVERIFIED_ROLE_ID = 1526452828267085915
@@ -2740,9 +2740,12 @@ async def _check_and_maybe_trigger_raid(guild: discord.Guild) -> bool:
 
 
 def _load_font(size: int, bold: bool = True):
-    """كتحاول تلقى font جميلة (DejaVu/Liberation)، وإلا رجعت للـ font الافتراضي ديال Pillow
-    (بسيط ولكن كيخدم فأي بيئة حتى بلا فونط مثبتة)."""
+    """كتحاول تلقى font جميلة، بالأولوية للفونط اللي حطينا فـ assets/fonts/
+    (باش تخدم فأي بيئة، حتى Railway/python-slim اللي ماعندهاش فونطات النظام).
+    إلا ماكانتش، كتجرب فونطات النظام، وإلا رجعت للـ font الافتراضي ديال Pillow."""
+    project_dir = os.path.dirname(os.path.abspath(__file__))
     candidates = [
+        os.path.join(project_dir, "assets", "fonts", "DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf"),
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
         "DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf",
