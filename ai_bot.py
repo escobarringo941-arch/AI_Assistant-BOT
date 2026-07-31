@@ -37,7 +37,7 @@ TARGET_CHANNEL_ID = 1526384339670270012
 WELCOME_CHANNEL_ID = 1524957892925456545
 
 # ═══════ Welcome Cards (صورة ترحيبية مخصصة لكل عضو جديد) ═══════
-WELCOME_CARD_ENABLED = True
+WELCOME_CARD_ENABLED = False
 WELCOME_CARD_BACKGROUND_PATH = None  # ← حط هنا path ديال صورة (مثلا "assets/welcome_bg.png")، None = خلفية بتدرج لوني افتراضي
 WELCOME_CARD_ACCENT_RGB = (88, 101, 242)  # لون Discord Blurple، تقدر تبدلو بأي لون RGB (R, G, B)
 WELCOME_CARD_ACCENT2_RGB = (235, 90, 180)  # لون ثاني للتدرج القطري (وردي/بنفسجي بشكل افتراضي)
