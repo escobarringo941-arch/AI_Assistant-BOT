@@ -189,6 +189,35 @@ RAID_LOCKDOWN_DURATION_MINUTES = 30  # شحال كيدوم Lockdown قبل ما 
 # ما كيديرش عقوبة تلقائية إلا كان Raid Mode مفعل
 RAID_MIN_ACCOUNT_AGE_HOURS = 24
 
+# ═══════ Leveling System (XP + Levels + رولات أوتوماتيكية) ═══════
+LEVELING_ENABLED = True
+XP_MIN_PER_MESSAGE = 15
+XP_MAX_PER_MESSAGE = 25
+XP_COOLDOWN_SECONDS = 60   # ماخذيش XP مرة أخرى من نفس العضو قبل ما تعدي هاد المدة
+LEVEL_UP_CHANNEL_ID = 1532872432778743978    # ← channel فين كيتبعث "مبروك وصلتي لـ Level X" (0 = نفس channel لي هضر فيه العضو)
+LEVELS_INFO_CHANNEL_ID = 1532613980466446387  # ← channel فين غادي تبان رسالة شرح نظام الـ Leveling + لائحة كاع المستويات ورولاتهم
+
+# رولات أوتوماتيكية عند مستويات معينة: {level: role_id}
+# العضو كيحتفظ بكل الرولات السابقة (تراكمية، ماشي بديل)
+# ⚠️ بدل كل 0 برقم الـ Role ID الحقيقي ديالك (Server Settings → Roles → كليك يمين → Copy Role ID)
+LEVEL_ROLES = {
+    5: 1532874771287507135,
+    10: 1532877605366268116,
+    15: 1532877729052233988,
+    20: 1532877833125232740,
+    25: 1532877955414360336,
+    30: 1532877995306651853,
+    35: 1532878086893207653,
+    40: 1532878137430380674,
+    45: 1532878260428341390,
+    50: 1532878348752261331,
+    60: 1532878501278126251,
+    70: 1532878632371097881,
+    80: 1532878710745596064,
+    90: 1532878803075076106,
+    100: 1532878888986738869,
+}
+
 # ═══════ درجات العقوبة حسب عدد التحذيرات (سهل التعديل) ═══════
 # كل عضو كيبدا بلا تحذيرات. كل تحذير (Auto-Mod ولا !warn يدوي) كيزيد
 # العداد ديالو بـ 1. من غير ما يوصل لعتبة، ما كتوقع حتى عقوبة.
@@ -339,6 +368,60 @@ def get_open_ticket_for_user(user_id: int):
 
 
 load_tickets()
+
+# ═══════════════════════════════════════════════════════
+# ║              Leveling System (XP + Levels)               ║
+# ═══════════════════════════════════════════════════════
+LEVELS_FILE = os.path.join(DATA_DIR, "levels.json")
+levels_db = {}  # {guild_id (str): {user_id (str): {"xp": int, "level": int}}}
+xp_cooldowns = {}  # {(guild_id, user_id): datetime آخر مرة خذا XP}
+
+
+def load_levels():
+    global levels_db
+    try:
+        with open(LEVELS_FILE, "r", encoding="utf-8") as f:
+            levels_db = json.load(f)
+        print(f"[LEVELS] تحمل بيانات {sum(len(v) for v in levels_db.values())} عضو")
+    except FileNotFoundError:
+        print("[LEVELS] ماكاينش بيانات سابقة، غادي نبداو من الصفر")
+    except Exception as e:
+        print(f"[LEVELS] خطأ فـ التحميل: {e}")
+
+
+def save_levels():
+    try:
+        with open(LEVELS_FILE, "w", encoding="utf-8") as f:
+            json.dump(levels_db, f, ensure_ascii=False)
+    except Exception as e:
+        print(f"[LEVELS] خطأ فـ الحفظ: {e}")
+
+
+def xp_needed_for_level(level: int) -> int:
+    """صيغة كتخلي كل مستوى محتاج XP أكثر من لي قبلو (بحال MEE6 تقريباً).
+    من بعد Level 30، كتزاد صعوبة إضافية (نمو أسرع) باش المستويات العالية
+    يبقاو يستاهلو أكثر وقت/جهد."""
+    base = 5 * (level ** 2) + 50 * level + 100
+    if level >= 30:
+        extra_levels = level - 30
+        base += 15 * (extra_levels ** 2) + 200 * extra_levels
+    return base
+
+
+def get_user_level_data(guild_id: int, user_id: int) -> dict:
+    g = levels_db.setdefault(str(guild_id), {})
+    return g.setdefault(str(user_id), {"xp": 0, "level": 0})
+
+
+def total_xp_earned(data: dict) -> int:
+    """XP الكلية اللي ربحها العضو من بداياتو (مجموع كل المستويات السابقة + التقدم الحالي)"""
+    total = data["xp"]
+    for lvl in range(data["level"]):
+        total += xp_needed_for_level(lvl)
+    return total
+
+
+load_levels()
 
 # ═══════════════════════════════════════════════════════
 # ║   سجل المحتوى المنشور (باش ما يتعاودش تا شي حاجة)      ║
@@ -2575,6 +2658,57 @@ async def setuptickets_cmd(ctx):
     await ctx.send("✅ رسالة اللوحة ديال Tickets تصاوبات (ولا كانت ديجا موجودة).", delete_after=8)
 
 
+async def setup_levels_info_message(guild: discord.Guild):
+    """كتصاوب رسالة تشرح نظام الـ Leveling كامل + لائحة كاع المستويات
+    ورولاتهم، فـ LEVELS_INFO_CHANNEL_ID."""
+    if not LEVELS_INFO_CHANNEL_ID:
+        return
+    channel = bot.get_channel(LEVELS_INFO_CHANNEL_ID)
+    if not channel:
+        return
+    async for message in channel.history(limit=10):
+        if message.author == bot.user and message.embeds and message.embeds[0].title and "نظام المستويات" in message.embeds[0].title:
+            return
+
+    embed = discord.Embed(
+        title="📊 نظام المستويات (Leveling System)",
+        description=(
+            f"كل ما تهضر فالشات، كتربح **XP** ({XP_MIN_PER_MESSAGE}-{XP_MAX_PER_MESSAGE} نقطة فكل رسالة)، "
+            f"مع فترة انتظار {XP_COOLDOWN_SECONDS} ثانية بين كل رسالة وأخرى (باش محدش يقدر يسبام باش يربح نقط).\n\n"
+            f"كل ما تجمع XP كفاية، كتطلع **Level** جديد. من **Level 30** لفوق، كل مستوى كيصعب أكثر بشكل ملحوظ — "
+            f"يعني الوصول لمستويات عالية كيستاهل جهد حقيقي! 💪\n\n"
+            f"**الأوامر:**\n"
+            f"`!rank [@user]` — شوف المستوى والـ XP ديالك ولا ديال عضو آخر\n"
+            f"`!leaderboard` — أفضل 10 أعضاء نشيطين فالسيرفر"
+        ),
+        color=discord.Color.gold(),
+        timestamp=datetime.now()
+    )
+
+    if LEVEL_ROLES:
+        sorted_levels = sorted(LEVEL_ROLES.items(), key=lambda x: int(x[0]))
+        lines = []
+        for lvl, role_id in sorted_levels:
+            role = guild.get_role(role_id) if role_id else None
+            role_display = role.mention if role else "⚠️ الرول ماعادش معطي بعد"
+            lines.append(f"**Level {lvl}** → {role_display}")
+        embed.add_field(name="🎁 الرولات حسب المستوى (تراكمية)", value="\n".join(lines), inline=False)
+
+    embed.set_footer(text=f"{SERVER_NAME} | Leveling System")
+    await channel.send(embed=embed)
+
+
+@bot.command(name="setuplevels")
+@commands.has_permissions(administrator=True)
+async def setuplevels_cmd(ctx):
+    """كيصاوب/يعاود يصاوب رسالة شرح نظام الـ Leveling فـ LEVELS_INFO_CHANNEL_ID (Admin)"""
+    if not LEVELS_INFO_CHANNEL_ID:
+        await ctx.send("❌ حط `LEVELS_INFO_CHANNEL_ID` فالـ CONFIG أولاً.", delete_after=8)
+        return
+    await setup_levels_info_message(ctx.guild)
+    await ctx.send("✅ رسالة شرح نظام الـ Leveling تصاوبات (ولا كانت ديجا موجودة).", delete_after=8)
+
+
 @bot.command(name="closeticket")
 async def closeticket_cmd(ctx):
     """كيسد ticket بأمر (بديل للزر) — خدام غير جوة channel ديال ticket"""
@@ -3171,6 +3305,62 @@ async def on_message_edit(before, after):
     )
 
 
+async def process_message_xp(message: discord.Message):
+    """كتزيد XP للعضو ملي يهضر، وكتشوف واش صعد لمستوى جديد (ممكن أكثر من مستوى
+    فمرة وحدة إلا خذا XP كثيرة). كتعطي الرولات ديال LEVEL_ROLES تلقائياً."""
+    if not LEVELING_ENABLED or not message.guild:
+        return
+
+    key = (message.guild.id, message.author.id)
+    now = datetime.now()
+    last = xp_cooldowns.get(key)
+    if last and (now - last).total_seconds() < XP_COOLDOWN_SECONDS:
+        return
+    xp_cooldowns[key] = now
+
+    data = get_user_level_data(message.guild.id, message.author.id)
+    gained = random.randint(XP_MIN_PER_MESSAGE, XP_MAX_PER_MESSAGE)
+    data["xp"] += gained
+
+    leveled_up = False
+    while data["xp"] >= xp_needed_for_level(data["level"]):
+        data["xp"] -= xp_needed_for_level(data["level"])
+        data["level"] += 1
+        leveled_up = True
+
+    save_levels()
+
+    if not leveled_up:
+        return
+
+    new_level = data["level"]
+
+    # ═══════ رولات أوتوماتيكية (تراكمية) ═══════
+    roles_added = []
+    if isinstance(message.author, discord.Member):
+        for lvl, role_id in LEVEL_ROLES.items():
+            if int(lvl) <= new_level:
+                role = message.guild.get_role(role_id)
+                if role and role not in message.author.roles:
+                    try:
+                        await message.author.add_roles(role, reason=f"وصل لـ Level {new_level}")
+                        roles_added.append(role.mention)
+                    except discord.Forbidden:
+                        pass
+
+    target_channel = bot.get_channel(LEVEL_UP_CHANNEL_ID) if LEVEL_UP_CHANNEL_ID else message.channel
+    if target_channel:
+        desc = f"🎉 {message.author.mention} وصل/ات لـ **Level {new_level}**!"
+        if roles_added:
+            desc += f"\n🎁 حصل/ات على: {', '.join(roles_added)}"
+        embed = discord.Embed(description=desc, color=discord.Color.gold(), timestamp=datetime.now())
+        embed.set_thumbnail(url=message.author.display_avatar.url)
+        try:
+            await target_channel.send(embed=embed)
+        except Exception as e:
+            print(f"[LEVELS] خطأ فـ بعث رسالة Level Up: {e}")
+
+
 @bot.event
 async def on_message(message):
     if message.author == bot.user:
@@ -3180,6 +3370,7 @@ async def on_message(message):
     await bot.process_commands(message)
     if message.content.startswith("!"):
         return
+    await process_message_xp(message)
     msg_lower = message.content.lower()
     gender = detect_gender(message.author.name, message.author.display_name)
 
@@ -4029,6 +4220,97 @@ async def testwelcome_cmd(ctx, member: discord.Member = None, returning: bool = 
     await ctx.send(content=f"🖼️ هاكذا غادي تبان الكارطة (تجريبي، ماشي رسالة حقيقية):", file=file)
 
 
+# ═══════════════════════════════════════════════════════
+# ║              Leveling System — أوامر                     ║
+# ═══════════════════════════════════════════════════════
+
+def _progress_bar(current: int, needed: int, length: int = 20) -> str:
+    ratio = max(0, min(1, current / needed)) if needed else 0
+    filled = int(length * ratio)
+    return "🟩" * filled + "⬛" * (length - filled)
+
+
+@bot.command(name="rank")
+async def rank_cmd(ctx, member: discord.Member = None):
+    """كيبين المستوى والـ XP ديال عضو (نتا ولا شخص آخر)"""
+    if not LEVELING_ENABLED:
+        await ctx.send("❌ نظام Leveling معطل دابا (`LEVELING_ENABLED = False`).", delete_after=6)
+        return
+
+    member = member or ctx.author
+    data = get_user_level_data(ctx.guild.id, member.id)
+    needed = xp_needed_for_level(data["level"])
+
+    # ═══════ حساب الترتيب (Rank) بين كل الأعضاء ═══════
+    guild_data = levels_db.get(str(ctx.guild.id), {})
+    ranking = sorted(
+        guild_data.items(),
+        key=lambda item: total_xp_earned(item[1]),
+        reverse=True
+    )
+    rank_position = next((i + 1 for i, (uid, _) in enumerate(ranking) if uid == str(member.id)), None)
+
+    embed = discord.Embed(
+        title=f"📊 المستوى ديال {member.display_name}",
+        color=discord.Color.gold(),
+        timestamp=datetime.now()
+    )
+    embed.set_thumbnail(url=member.display_avatar.url)
+    embed.add_field(name="🏆 Level", value=str(data["level"]), inline=True)
+    embed.add_field(name="🥇 الترتيب", value=f"#{rank_position}" if rank_position else "—", inline=True)
+    embed.add_field(name="✨ XP", value=f"{data['xp']} / {needed}", inline=True)
+    embed.add_field(name="التقدم", value=_progress_bar(data["xp"], needed), inline=False)
+    embed.set_footer(text=f"{SERVER_NAME} | Leveling System")
+    await ctx.send(embed=embed)
+
+
+@bot.command(name="leaderboard", aliases=["lb", "top"])
+async def leaderboard_cmd(ctx):
+    """كيبين أفضل 10 أعضاء نشيطين فالسيرفر (الأكثر XP)"""
+    if not LEVELING_ENABLED:
+        await ctx.send("❌ نظام Leveling معطل دابا (`LEVELING_ENABLED = False`).", delete_after=6)
+        return
+
+    guild_data = levels_db.get(str(ctx.guild.id), {})
+    if not guild_data:
+        await ctx.send("ماكاين حتى عضو ربح XP دابا.")
+        return
+
+    ranking = sorted(
+        guild_data.items(),
+        key=lambda item: total_xp_earned(item[1]),
+        reverse=True
+    )[:10]
+
+    medals = ["🥇", "🥈", "🥉"]
+    lines = []
+    for i, (user_id, data) in enumerate(ranking):
+        prefix = medals[i] if i < len(medals) else f"#{i + 1}"
+        member = ctx.guild.get_member(int(user_id))
+        name = member.mention if member else f"<@{user_id}> (خرج من السيرفر)"
+        lines.append(f"{prefix} {name} — Level {data['level']} ({total_xp_earned(data)} XP)")
+
+    embed = discord.Embed(
+        title="🏆 لائحة الشرف (Leaderboard)",
+        description="\n".join(lines),
+        color=discord.Color.gold(),
+        timestamp=datetime.now()
+    )
+    embed.set_footer(text=f"{SERVER_NAME} | Leveling System")
+    await ctx.send(embed=embed)
+
+
+@bot.command(name="setlevel")
+@commands.has_permissions(administrator=True)
+async def setlevel_cmd(ctx, member: discord.Member, level: int):
+    """كيحط عضو مباشرة فمستوى معين (Admin) — مفيد إلا بغيتي تصحح غلط ولا تعطي مستوى بداية"""
+    data = get_user_level_data(ctx.guild.id, member.id)
+    data["level"] = max(0, level)
+    data["xp"] = 0
+    save_levels()
+    await ctx.send(f"✅ {member.mention} تحط فـ Level {data['level']}.")
+
+
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def clearoldverify(ctx):
@@ -4434,6 +4716,13 @@ async def help(ctx):
         value="`!testwelcome [@عضو]` — جرب شكل الكارطة الترحيبية هنا فالشات (Admin)",
         inline=False
     )
+    level_cmds = (
+        "`!rank [@user]` — شوف المستوى والـ XP ديالك ولا ديال عضو آخر\n"
+        "`!leaderboard` (`!lb`, `!top`) — أفضل 10 أعضاء نشيطين\n"
+        "`!setlevel @user <رقم>` — حط عضو فمستوى معين يدوياً (Admin)\n"
+        "`!setuplevels` — صاوب/عاود صاوب رسالة شرح النظام (Admin)"
+    )
+    embed.add_field(name="📊 Leveling", value=level_cmds, inline=False)
     roles_cmds = (
         "`!setuproles` — صاوب رسالة اختيار الأدوار (Admin)\n"
         "`!listroles` — بين رسائل Reaction Roles الفعّالة (Admin)"
@@ -5034,6 +5323,7 @@ async def on_ready():
     print(f"🎫 Tickets: Panel={TICKETS_PANEL_CHANNEL_ID or 'ماشي معطي'} | Category={TICKETS_CATEGORY_ID or 'ماشي معطي'} | Logs={TICKET_LOGS_CHANNEL_ID or 'MOD_LOGS_CHANNEL_ID'}")
     print(f"🚨 Anti-Raid: {'نشط' if ANTI_RAID_ENABLED else 'معطل'} (عتبة: {RAID_JOIN_THRESHOLD} فـ {RAID_JOIN_INTERVAL_SECONDS}ث | عمل: {RAID_ACTION})")
     print(f"🖼️ Welcome Cards: {'نشط' if (WELCOME_CARD_ENABLED and PIL_AVAILABLE) else ('معطل (Pillow ماشي مثبت)' if not PIL_AVAILABLE else 'معطل')}")
+    print(f"📊 Leveling: {'نشط' if LEVELING_ENABLED else 'معطل'} ({XP_MIN_PER_MESSAGE}-{XP_MAX_PER_MESSAGE} XP/رسالة، cooldown {XP_COOLDOWN_SECONDS}ث)")
     print(f"⏰ Reminders: {len(reminders)} مبرمجين (كيتفقّد كل 30 ثانية)")
 
     await bot.change_presence(
@@ -5068,6 +5358,8 @@ async def on_ready():
             await setup_blacklist_message(guild)
         if TICKETS_PANEL_CHANNEL_ID:
             await setup_tickets_panel(guild)
+        if LEVELS_INFO_CHANNEL_ID:
+            await setup_levels_info_message(guild)
 
         problems = check_role_hierarchy(guild)
         if problems:
