@@ -294,6 +294,7 @@ learned_knowledge = []
 warns_db = {}
 spam_tracker = {}
 mute_tasks = {}
+_slash_synced = False  # باش ما نعاودوش sync ديال Slash Commands كل مرة on_ready يتلاق (reconnect)
 
 # ═══════ Anti-Raid: تتبع الأعضاء الجداد + حالة الـ Lockdown ═══════
 recent_joins = defaultdict(list)  # {guild_id: [datetime, datetime, ...]}
@@ -2645,7 +2646,7 @@ async def setup_tickets_panel(guild: discord.Guild):
     await channel.send(embed=embed, view=TicketPanelView())
 
 
-@bot.command(name="setuptickets")
+@bot.hybrid_command(name="setuptickets")
 @commands.has_permissions(administrator=True)
 async def setuptickets_cmd(ctx):
     """كيصاوب/يعاود يصاوب رسالة اللوحة ديال Tickets فـ TICKETS_PANEL_CHANNEL_ID (Admin)"""
@@ -2698,7 +2699,7 @@ async def setup_levels_info_message(guild: discord.Guild):
     await channel.send(embed=embed)
 
 
-@bot.command(name="setuplevels")
+@bot.hybrid_command(name="setuplevels")
 @commands.has_permissions(administrator=True)
 async def setuplevels_cmd(ctx):
     """كيصاوب/يعاود يصاوب رسالة شرح نظام الـ Leveling فـ LEVELS_INFO_CHANNEL_ID (Admin)"""
@@ -2709,7 +2710,7 @@ async def setuplevels_cmd(ctx):
     await ctx.send("✅ رسالة شرح نظام الـ Leveling تصاوبات (ولا كانت ديجا موجودة).", delete_after=8)
 
 
-@bot.command(name="closeticket")
+@bot.hybrid_command(name="closeticket")
 async def closeticket_cmd(ctx):
     """كيسد ticket بأمر (بديل للزر) — خدام غير جوة channel ديال ticket"""
     record = tickets_db.get("open", {}).get(str(ctx.channel.id))
@@ -3517,9 +3518,9 @@ async def on_message(message):
     await message.reply(response[:MAX_REPLY_LENGTH], mention_author=False)
 
 
-@bot.command()
+@bot.hybrid_command()
 @commands.has_permissions(kick_members=True)
-async def kick(ctx, member: discord.Member, *, reason="ما ذكرش سبب"):
+async def kick(ctx, member: discord.Member, *, reason: str = "ما ذكرش سبب"):
     if OWNER_ID and member.id == OWNER_ID:
         await ctx.send("❌ ما نقدرش نمس فـ Owner ديال السيرفر!")
         return
@@ -3548,9 +3549,9 @@ async def kick(ctx, member: discord.Member, *, reason="ما ذكرش سبب"):
         await ctx.send(f"❌ خطأ: {str(e)}")
 
 
-@bot.command()
+@bot.hybrid_command()
 @commands.has_permissions(ban_members=True)
-async def ban(ctx, member: discord.Member, *, reason="ما ذكرش سبب"):
+async def ban(ctx, member: discord.Member, *, reason: str = "ما ذكرش سبب"):
     if OWNER_ID and member.id == OWNER_ID:
         await ctx.send("❌ ما نقدرش نمس فـ Owner ديال السيرفر!")
         return
@@ -3579,7 +3580,7 @@ async def ban(ctx, member: discord.Member, *, reason="ما ذكرش سبب"):
         await ctx.send(f"❌ خطأ: {str(e)}")
 
 
-@bot.command()
+@bot.hybrid_command()
 @commands.has_permissions(ban_members=True)
 async def unban(ctx, user_id: int):
     try:
@@ -3603,7 +3604,7 @@ async def unban(ctx, user_id: int):
         await ctx.send("❌ ما عنديش الصلاحية!")
 
 
-@bot.command()
+@bot.hybrid_command()
 @commands.has_permissions(manage_messages=True)
 async def clear(ctx, amount: int = 10):
     if amount < 1 or amount > 100:
@@ -3626,9 +3627,9 @@ async def clear(ctx, amount: int = 10):
         await ctx.send("❌ ما عنديش الصلاحية!")
 
 
-@bot.command()
+@bot.hybrid_command()
 @commands.has_permissions(moderate_members=True)
-async def mute(ctx, member: discord.Member, duration: int = 5, *, reason="ما ذكرش سبب"):
+async def mute(ctx, member: discord.Member, duration: int = 5, *, reason: str = "ما ذكرش سبب"):
     if OWNER_ID and member.id == OWNER_ID:
         await ctx.send("❌ ما نقدرش نمس فـ Owner ديال السيرفر!")
         return
@@ -3666,7 +3667,7 @@ async def mute(ctx, member: discord.Member, duration: int = 5, *, reason="ما �
         await ctx.send("❌ ما عنديش الصلاحية!")
 
 
-@bot.command()
+@bot.hybrid_command()
 @commands.has_permissions(moderate_members=True)
 async def unmute(ctx, member: discord.Member):
     muted_role = ctx.guild.get_role(MUTED_ROLE_ID)
@@ -3694,7 +3695,7 @@ async def unmute(ctx, member: discord.Member):
         await ctx.send("❌ ما عنديش الصلاحية!")
 
 
-@bot.command()
+@bot.hybrid_command()
 @commands.cooldown(1, 60, commands.BucketType.user)
 async def report(ctx, member: Optional[discord.Member] = None, *, reason: str = "ماكاينش تفاصيل"):
     """أي عضو يقدر يبلغ عن مخالفة (بحال البوت ما تدخلش أوتوماتيكياً)"""
@@ -3748,9 +3749,9 @@ async def report_error(ctx, error):
         pass
 
 
-@bot.command()
+@bot.hybrid_command()
 @commands.has_permissions(kick_members=True)
-async def warn(ctx, member: discord.Member, *, reason):
+async def warn(ctx, member: discord.Member, *, reason: str):
     if OWNER_ID and member.id == OWNER_ID:
         await ctx.send("❌ ما نقدرش نمس فـ Owner ديال السيرفر!")
         return
@@ -3783,9 +3784,9 @@ async def warn(ctx, member: discord.Member, *, reason):
         await ctx.send("❌ ما قدرتش نطبق العقوبة (تأكد من صلاحيات وترتيب الأدوار ديال البوت)!")
 
 
-@bot.command()
+@bot.hybrid_command()
 @commands.has_permissions(kick_members=True)
-async def warns(ctx, member: discord.Member = None):
+async def warns(ctx, member: Optional[discord.Member] = None):
     member = member or ctx.author
     user_warns = get_warns(str(member.id))
     embed = discord.Embed(
@@ -3810,7 +3811,7 @@ async def warns(ctx, member: discord.Member = None):
     await ctx.send(embed=embed)
 
 
-@bot.command()
+@bot.hybrid_command()
 @commands.has_permissions(kick_members=True)
 async def unwarn(ctx, member: discord.Member):
     clear_warns(str(member.id))
@@ -3842,7 +3843,7 @@ CASE_ACTION_COLORS = {
 }
 
 
-@bot.command(name="case")
+@bot.hybrid_command(name="case")
 @commands.has_permissions(kick_members=True)
 async def case_cmd(ctx, case_id: int):
     """كيبين التفاصيل الكاملة ديال Case معين برقمو"""
@@ -3871,9 +3872,9 @@ async def case_cmd(ctx, case_id: int):
     await ctx.send(embed=embed)
 
 
-@bot.command(name="history")
+@bot.hybrid_command(name="history")
 @commands.has_permissions(kick_members=True)
-async def history_cmd(ctx, member: discord.Member = None):
+async def history_cmd(ctx, member: Optional[discord.Member] = None):
     """كيبين كاع الـ Cases ديال عضو معين، الأحدث فالأول (آخر 15)"""
     member = member or ctx.author
     user_cases = get_cases_for_user(member.id)
@@ -4144,7 +4145,7 @@ async def unmuteall_cmd(ctx):
 # ║        Anti-Raid — أوامر التحكم اليدوي (Admin/Owner)     ║
 # ═══════════════════════════════════════════════════════
 
-@bot.command(name="lockdown")
+@bot.hybrid_command(name="lockdown")
 @commands.has_permissions(administrator=True)
 async def lockdown_cmd(ctx, duration_minutes: int = None):
     """كيفعّل Anti-Raid Lockdown يدوياً (بلا ماتوصل عتبة الانضمامات) — Admin/Owner"""
@@ -4162,7 +4163,7 @@ async def lockdown_cmd(ctx, duration_minutes: int = None):
         await ctx.send("⚠️ Lockdown مفعل ديجا.", delete_after=6)
 
 
-@bot.command(name="unlockdown")
+@bot.hybrid_command(name="unlockdown")
 @commands.has_permissions(administrator=True)
 async def unlockdown_cmd(ctx):
     """كيسد Anti-Raid Lockdown يدوياً ويرجع verification level للحالة العادية — Admin/Owner"""
@@ -4173,7 +4174,7 @@ async def unlockdown_cmd(ctx):
         await ctx.send("ℹ️ ماكاين حتى Lockdown مفعل دابا.", delete_after=6)
 
 
-@bot.command(name="raidstatus")
+@bot.hybrid_command(name="raidstatus")
 @commands.has_permissions(kick_members=True)
 async def raidstatus_cmd(ctx):
     """كيبين الحالة ديال Anti-Raid دابا (مفعل ولا لا، عدد الانضمامات الأخيرة)"""
@@ -4198,9 +4199,9 @@ async def raidstatus_cmd(ctx):
     await ctx.send(embed=embed)
 
 
-@bot.command(name="testwelcome")
+@bot.hybrid_command(name="testwelcome")
 @commands.has_permissions(administrator=True)
-async def testwelcome_cmd(ctx, member: discord.Member = None, returning: bool = False):
+async def testwelcome_cmd(ctx, member: Optional[discord.Member] = None, returning: bool = False):
     """كيبعث Welcome Card تجريبية هنا فالشات بلا ما تحتاج عضو يدخل بصح للسيرفر (Admin).
     استعمال: !testwelcome [@عضو] [true/false للـ returning]"""
     member = member or ctx.author
@@ -4230,8 +4231,8 @@ def _progress_bar(current: int, needed: int, length: int = 20) -> str:
     return "🟩" * filled + "⬛" * (length - filled)
 
 
-@bot.command(name="rank")
-async def rank_cmd(ctx, member: discord.Member = None):
+@bot.hybrid_command(name="rank")
+async def rank_cmd(ctx, member: Optional[discord.Member] = None):
     """كيبين المستوى والـ XP ديال عضو (نتا ولا شخص آخر)"""
     if not LEVELING_ENABLED:
         await ctx.send("❌ نظام Leveling معطل دابا (`LEVELING_ENABLED = False`).", delete_after=6)
@@ -4264,7 +4265,7 @@ async def rank_cmd(ctx, member: discord.Member = None):
     await ctx.send(embed=embed)
 
 
-@bot.command(name="leaderboard", aliases=["lb", "top"])
+@bot.hybrid_command(name="leaderboard", aliases=["lb", "top"])
 async def leaderboard_cmd(ctx):
     """كيبين أفضل 10 أعضاء نشيطين فالسيرفر (الأكثر XP)"""
     if not LEVELING_ENABLED:
@@ -4300,7 +4301,7 @@ async def leaderboard_cmd(ctx):
     await ctx.send(embed=embed)
 
 
-@bot.command(name="setlevel")
+@bot.hybrid_command(name="setlevel")
 @commands.has_permissions(administrator=True)
 async def setlevel_cmd(ctx, member: discord.Member, level: int):
     """كيحط عضو مباشرة فمستوى معين (Admin) — مفيد إلا بغيتي تصحح غلط ولا تعطي مستوى بداية"""
@@ -4311,7 +4312,7 @@ async def setlevel_cmd(ctx, member: discord.Member, level: int):
     await ctx.send(f"✅ {member.mention} تحط فـ Level {data['level']}.")
 
 
-@bot.command()
+@bot.hybrid_command()
 @commands.has_permissions(administrator=True)
 async def clearoldverify(ctx):
     """كيمسح رسالة/رسائل 'تفعيل العضوية' القديمة (بالريأكشن ✅) من verify channel"""
@@ -4331,14 +4332,14 @@ async def clearoldverify(ctx):
     await ctx.send(f"✅ تمسحو {deleted} رسالة/رسائل قديمة." if deleted else "ماكاينش شي رسالة قديمة باش تتمسح.", delete_after=8)
 
 
-@bot.command()
+@bot.hybrid_command()
 @commands.has_permissions(administrator=True)
 async def setupverify(ctx):
     await setup_verify_message(ctx.guild)
     await ctx.send("✅ تم صاوب رسالة التفعيل!", delete_after=5)
 
 
-@bot.command()
+@bot.hybrid_command()
 @commands.has_permissions(administrator=True)
 async def setupblacklist(ctx):
     """يصاوب رسالة الممنوعات والعقوبات فـ Blacklist channel"""
@@ -4349,7 +4350,7 @@ async def setupblacklist(ctx):
     await ctx.send("✅ تم صاوب رسالة Blacklist!", delete_after=5)
 
 
-@bot.command()
+@bot.hybrid_command()
 @commands.has_permissions(administrator=True)
 async def setuprules(ctx):
     """يصاوب رسالة القوانين + زرارات كنوافق/كنرفض فـ rules channel"""
@@ -4357,7 +4358,7 @@ async def setuprules(ctx):
     await ctx.send("✅ تم صاوب رسالة القوانين بالأزرار!", delete_after=5)
 
 
-@bot.command()
+@bot.hybrid_command()
 @commands.has_permissions(administrator=True)
 async def setuproles(ctx):
     """يصاوب رسالة اختيار الأدوار بـ Dropdown Menus (خاصك تعمر PICK_ROLES فـ config أولاً)"""
@@ -4393,7 +4394,7 @@ async def setuproles(ctx):
     await ctx.send("✅ تصاوبات رسالة الأدوار!", delete_after=5)
 
 
-@bot.command()
+@bot.hybrid_command()
 @commands.has_permissions(administrator=True)
 async def listroles(ctx):
     """يبين لائحة الأدوار المعمرة دابا فـ PICK_ROLES"""
@@ -4418,7 +4419,7 @@ async def listroles(ctx):
     await ctx.send(embed=embed)
 
 
-@bot.command()
+@bot.hybrid_command()
 @commands.has_permissions(administrator=True)
 async def verify(ctx, member: discord.Member):
     unverified_role = ctx.guild.get_role(UNVERIFIED_ROLE_ID)
@@ -4458,7 +4459,7 @@ async def verify(ctx, member: discord.Member):
         pass
 
 
-@bot.command()
+@bot.hybrid_command()
 @commands.has_permissions(administrator=True)
 async def checkroles(ctx):
     """كيتأكد أن role ديال البوت قادر يعطي Member/Unverified/Muted"""
@@ -4479,7 +4480,7 @@ async def checkroles(ctx):
     await ctx.send(embed=embed)
 
 
-@bot.command()
+@bot.hybrid_command()
 @commands.has_permissions(administrator=True)
 async def unverify(ctx, member: discord.Member):
     member_role = ctx.guild.get_role(MEMBER_ROLE_ID)
@@ -4506,7 +4507,7 @@ async def unverify(ctx, member: discord.Member):
     )
 
 
-@bot.command()
+@bot.hybrid_command()
 async def ping(ctx):
     latency = round(bot.latency * 1000)
     embed = discord.Embed(
@@ -4519,7 +4520,7 @@ async def ping(ctx):
     await ctx.send(embed=embed)
 
 
-@bot.command()
+@bot.hybrid_command()
 async def info(ctx):
     embed = discord.Embed(
         title="🤖 معلومات GGMW9",
@@ -4628,7 +4629,7 @@ async def remind_cmd(ctx, channel: Optional[discord.TextChannel] = None, *, rest
     await ctx.send(embed=embed)
 
 
-@bot.command(name="reminders", aliases=["تذكيراتي"])
+@bot.hybrid_command(name="reminders", aliases=["تذكيراتي"])
 async def reminders_cmd(ctx):
     """كيبين التذكيرات المبرمجة ديال الشخص اللي طلب الأمر"""
     user_id = str(ctx.author.id)
@@ -4650,7 +4651,7 @@ async def reminders_cmd(ctx):
     await ctx.send(embed=embed)
 
 
-@bot.command(name="delreminder", aliases=["حذف_تذكير"])
+@bot.hybrid_command(name="delreminder", aliases=["حذف_تذكير"])
 async def delreminder_cmd(ctx, reminder_id: int):
     """كيحيد تذكير (غير ديال الشخص اللي صاوبو)"""
     user_id = str(ctx.author.id)
@@ -4663,11 +4664,14 @@ async def delreminder_cmd(ctx, reminder_id: int):
     await ctx.send(f"✅ تحذاف التذكير #{reminder_id}.", delete_after=10)
 
 
-@bot.command()
+@bot.hybrid_command()
 async def help(ctx):
     embed = discord.Embed(
         title="📋 قائمة أوامر GGMW9",
-        description="**GGMW9** — بوت AI مغربي + Moderation + Verification + Auto-Info",
+        description=(
+            "**GGMW9** — بوت AI مغربي + Moderation + Verification + Auto-Info\n"
+            "💡 معظم الأوامر خدامة بجوج: بـ `!` (بحال `!kick`) أو بـ `/` (بحال `/kick`)."
+        ),
         color=discord.Color.blue(),
         timestamp=datetime.now()
     )
@@ -4772,7 +4776,7 @@ async def help(ctx):
     await ctx.send(embed=embed)
 
 
-@bot.command()
+@bot.hybrid_command()
 async def chat(ctx, *, message: str):
     user_id = str(ctx.author.id)
     response = await ask_ai(user_id, ctx.author.name, ctx.author.display_name, message)
@@ -5373,6 +5377,18 @@ async def on_ready():
                 "\n\nاستعمل `!checkroles` بعد ما تصلح باش تتأكد.",
                 discord.Color.orange()
             )
+
+    # ═══════ Slash Commands (/) — sync مرة وحدة فقط (on_ready يقدر يتكرر عند reconnect) ═══════
+    global _slash_synced
+    if not _slash_synced:
+        try:
+            for guild in bot.guilds:
+                bot.tree.copy_global_to(guild=guild)
+                await bot.tree.sync(guild=guild)
+            print(f"✅ Slash Commands (/) تزامنو مع {len(bot.guilds)} سيرفر (فوريين).")
+        except Exception as e:
+            print(f"⚠️ خطأ فـ sync ديال Slash Commands: {e}")
+        _slash_synced = True
 
 
 if __name__ == "__main__":
