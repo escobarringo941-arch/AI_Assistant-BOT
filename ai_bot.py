@@ -6,10 +6,19 @@ import random
 import asyncio
 import json
 import re
+import io
+import math
 from typing import Optional
 from datetime import datetime, timedelta
 from discord.ext import commands, tasks
 from collections import defaultdict
+
+try:
+    from PIL import Image, ImageDraw, ImageFont, ImageOps, ImageFilter
+    PIL_AVAILABLE = True
+except ImportError:
+    PIL_AVAILABLE = False
+    print("⚠️ Pillow ماشي مثبت — Welcome Cards (الصور) غادي تكون معطلة. دير: pip install Pillow")
 
 # ═══════ باش print() يطلع مباشرة فـ logs (Railway/containers كيعملو buffer) ═══════
 sys.stdout.reconfigure(line_buffering=True)
@@ -26,6 +35,12 @@ os.makedirs(DATA_DIR, exist_ok=True)
 
 TARGET_CHANNEL_ID = 1526384339670270012
 WELCOME_CHANNEL_ID = 1524957892925456545
+
+# ═══════ Welcome Cards (صورة ترحيبية مخصصة لكل عضو جديد) ═══════
+WELCOME_CARD_ENABLED = True
+WELCOME_CARD_BACKGROUND_PATH = None  # ← حط هنا path ديال صورة (مثلا "assets/welcome_bg.png")، None = خلفية بتدرج لوني افتراضي
+WELCOME_CARD_ACCENT_RGB = (88, 101, 242)  # لون Discord Blurple، تقدر تبدلو بأي لون RGB (R, G, B)
+WELCOME_CARD_ACCENT2_RGB = (235, 90, 180)  # لون ثاني للتدرج القطري (وردي/بنفسجي بشكل افتراضي)
 SERVER_NAME = "GGMW9"
 
 # ═══════ STATUS المباشر ديال السيرفر (كل 30 دقيقة) ═══════
@@ -91,7 +106,7 @@ REPORTS_CHANNEL_ID = 1526884019105431562    # ← حط هنا ID ديال channe
 
 # ═══════ نظام Tickets (بدل/جنب !report — channels خاصة بكل مشكل) ═══════
 TICKETS_PANEL_CHANNEL_ID = 1532144216958959839   # ← channel فين غادي تبان رسالة "🎫 دير Ticket" بالزر
-TICKETS_CATEGORY_ID = 1532144108754440355        # ← ID ديال Category (فولدر) "Tickets" فين كيتخلقو الـ channels الخاصة
+TICKETS_CATEGORY_ID = 1532144216958959839        # ← ID ديال Category (فولدر) "Tickets" فين كيتخلقو الـ channels الخاصة
 TICKET_LOGS_CHANNEL_ID = 1532144316611428352     # ← channel فين كيتبعث ملخص/transcript الـ ticket ملي يتسد (إلا خليتها 0 غايستعمل MOD_LOGS_CHANNEL_ID)
 
 UNVERIFIED_ROLE_ID = 1526452828267085915
@@ -2724,6 +2739,154 @@ async def _check_and_maybe_trigger_raid(guild: discord.Guild) -> bool:
     return False
 
 
+def _load_font(size: int, bold: bool = True):
+    """كتحاول تلقى font جميلة (DejaVu/Liberation)، وإلا رجعت للـ font الافتراضي ديال Pillow
+    (بسيط ولكن كيخدم فأي بيئة حتى بلا فونط مثبتة)."""
+    candidates = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf",
+    ]
+    for path in candidates:
+        try:
+            return ImageFont.truetype(path, size)
+        except Exception:
+            continue
+    return ImageFont.load_default()
+
+
+async def generate_welcome_card(member: discord.Member, member_count: int, returning: bool = False) -> Optional[io.BytesIO]:
+    """كتصاوب صورة ترحيبية مخصصة (Welcome Card) فيها صورة العضو + اسمو + رقمو
+    فالسيرفر. كترجع None إلا Pillow ماشي متوفرة أو وقع خطأ (باش الكود اللي
+    كيسطاها يرجع للـ embed العادي بلا ما يطيح البوت)."""
+    if not PIL_AVAILABLE or not WELCOME_CARD_ENABLED:
+        return None
+
+    try:
+        W, H = 1100, 420
+        accent = WELCOME_CARD_ACCENT_RGB
+        accent2 = WELCOME_CARD_ACCENT2_RGB
+        dark = (13, 13, 18)
+
+        # ═══════ الخلفية ═══════
+        if WELCOME_CARD_BACKGROUND_PATH and os.path.exists(WELCOME_CARD_BACKGROUND_PATH):
+            bg = Image.open(WELCOME_CARD_BACKGROUND_PATH).convert("RGB")
+            bg = ImageOps.fit(bg, (W, H), method=Image.LANCZOS).convert("RGBA")
+        else:
+            # تدرج لوني قطري (diagonal) بين لونين، ممزوج مع الأسود باش يبان depth
+            bg = Image.new("RGB", (W, H), dark)
+            px = bg.load()
+            diag = math.hypot(W, H)
+            mix = 0.55
+            for y in range(H):
+                for x in range(0, W, 2):
+                    t = max(0, min(1, (x + y) / diag))
+                    r = int((accent[0] * (1 - t) + accent2[0] * t) * mix + dark[0] * (1 - mix))
+                    g = int((accent[1] * (1 - t) + accent2[1] * t) * mix + dark[1] * (1 - mix))
+                    b = int((accent[2] * (1 - t) + accent2[2] * t) * mix + dark[2] * (1 - mix))
+                    px[x, y] = (r, g, b)
+                    if x + 1 < W:
+                        px[x + 1, y] = (r, g, b)
+            bg = bg.convert("RGBA")
+
+            # نقط زخرفية خفيفة (texture) فوق الخلفية
+            dots = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+            ddraw = ImageDraw.Draw(dots)
+            spacing = 34
+            for yy in range(0, H, spacing):
+                for xx in range(0, W, spacing):
+                    ddraw.ellipse((xx, yy, xx + 2, yy + 2), fill=(255, 255, 255, 18))
+            bg = Image.alpha_composite(bg, dots)
+
+        # طبقة غامقة شفافة باش النص يبان مزيان فوق أي خلفية
+        overlay = Image.new("RGBA", (W, H), (0, 0, 0, 60))
+        card = Image.alpha_composite(bg, overlay)
+
+        # إطار (frame) خفيف مضيء حول الكارطة
+        frame = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        ImageDraw.Draw(frame).rounded_rectangle((6, 6, W - 6, H - 6), radius=28, outline=(255, 255, 255, 60), width=3)
+        card = Image.alpha_composite(card, frame)
+        draw = ImageDraw.Draw(card)
+
+        # ═══════ صورة العضو (Avatar) دائرية مع ظل + حلقة بتدرج ═══════
+        avatar_size = 200
+        avatar_x, avatar_y = 70, (H - avatar_size) // 2
+
+        # ظل ناعم تحت الصورة
+        shadow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        pad = 14
+        ImageDraw.Draw(shadow).ellipse(
+            (avatar_x - pad, avatar_y - pad + 10, avatar_x + avatar_size + pad, avatar_y + avatar_size + pad + 10),
+            fill=(0, 0, 0, 120)
+        )
+        shadow = shadow.filter(ImageFilter.GaussianBlur(12))
+        card = Image.alpha_composite(card, shadow)
+        draw = ImageDraw.Draw(card)
+
+        # حلقة بتدرج لوني حول الصورة (رسم أقواس ملونة متدرجة)
+        ring_pad = 10
+        ring_box = (avatar_x - ring_pad, avatar_y - ring_pad, avatar_x + avatar_size + ring_pad, avatar_y + avatar_size + ring_pad)
+        steps = 40
+        for i in range(steps):
+            t = i / steps
+            r = int(accent[0] * (1 - t) + accent2[0] * t)
+            g = int(accent[1] * (1 - t) + accent2[1] * t)
+            b = int(accent[2] * (1 - t) + accent2[2] * t)
+            start = 360 * (i / steps) - 90
+            end = 360 * ((i + 1) / steps) - 90
+            draw.arc(ring_box, start=start, end=end, fill=(r, g, b, 255), width=8)
+        draw.ellipse(ring_box, outline=(255, 255, 255, 90), width=2)
+
+        try:
+            avatar_bytes = await member.display_avatar.replace(size=256, format="png").read()
+            avatar_img = Image.open(io.BytesIO(avatar_bytes)).convert("RGBA")
+        except Exception:
+            avatar_img = Image.new("RGBA", (256, 256), accent + (255,))
+        avatar_img = ImageOps.fit(avatar_img, (avatar_size, avatar_size), method=Image.LANCZOS)
+
+        mask = Image.new("L", (avatar_size, avatar_size), 0)
+        ImageDraw.Draw(mask).ellipse((0, 0, avatar_size, avatar_size), fill=255)
+        card.paste(avatar_img, (avatar_x, avatar_y), mask)
+        draw = ImageDraw.Draw(card)
+
+        # ═══════ badge صغيرة فوق الاسم ═══════
+        text_x = avatar_x + avatar_size + 55
+        badge_font = _load_font(20, bold=True)
+        badge_text = "🔁 رجع للسيرفر" if returning else "✨ عضو جديد"
+        bbox = draw.textbbox((0, 0), badge_text, font=badge_font)
+        btw, bth = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        badge_pad_x, badge_pad_y = 18, 10
+        badge_y = 78
+        draw.rounded_rectangle(
+            (text_x, badge_y, text_x + btw + badge_pad_x * 2, badge_y + bth + badge_pad_y * 2),
+            radius=16, fill=(255, 255, 255, 235)
+        )
+        draw.text((text_x + badge_pad_x, badge_y + badge_pad_y - 2), badge_text, font=badge_font, fill=accent + (255,))
+
+        # ═══════ اسم العضو (كبير، بارز، بظل خفيف) ═══════
+        name_font = _load_font(56, bold=True)
+        display_name = member.display_name
+        if len(display_name) > 18:
+            display_name = display_name[:17] + "…"
+        name_y = badge_y + bth + badge_pad_y * 2 + 22
+        draw.text((text_x + 2, name_y + 2), display_name, font=name_font, fill=(0, 0, 0, 90))
+        draw.text((text_x, name_y), display_name, font=name_font, fill=(255, 255, 255, 255))
+
+        # ═══════ subtitle (اسم السيرفر + رقم العضو) ═══════
+        sub_font = _load_font(24, bold=False)
+        sub_y = name_y + 70
+        sub_text = f"{SERVER_NAME}  •  العضو رقم #{member_count}"
+        draw.text((text_x, sub_y), sub_text, font=sub_font, fill=(230, 230, 235, 230))
+
+        buffer = io.BytesIO()
+        card.convert("RGB").save(buffer, format="PNG")
+        buffer.seek(0)
+        return buffer
+    except Exception as e:
+        print(f"[WELCOME_CARD] خطأ فـ صنع الصورة: {e}")
+        return None
+
+
 @bot.event
 async def on_member_join(member):
     # ═══════════════════════════════════════════════════════
@@ -2795,9 +2958,15 @@ async def on_member_join(member):
                 color=discord.Color.blue(),
                 timestamp=datetime.now()
             )
-            embed.set_thumbnail(url=member.display_avatar.url)
             embed.set_footer(text="GGMW9 | Welcome Back")
-            await welcome_channel.send(embed=embed)
+            card_buffer = await generate_welcome_card(member, member.guild.member_count, returning=True)
+            if card_buffer:
+                file = discord.File(card_buffer, filename="welcome.png")
+                embed.set_image(url="attachment://welcome.png")
+                await welcome_channel.send(embed=embed, file=file)
+            else:
+                embed.set_thumbnail(url=member.display_avatar.url)
+                await welcome_channel.send(embed=embed)
 
         await log_action(
             member.guild,
@@ -2830,9 +2999,15 @@ async def on_member_join(member):
             color=discord.Color.orange(),
             timestamp=datetime.now()
         )
-        embed.set_thumbnail(url=member.display_avatar.url)
         embed.set_footer(text="GGMW9 | Verification System")
-        await welcome_channel.send(embed=embed)
+        card_buffer = await generate_welcome_card(member, member.guild.member_count, returning=False)
+        if card_buffer:
+            file = discord.File(card_buffer, filename="welcome.png")
+            embed.set_image(url="attachment://welcome.png")
+            await welcome_channel.send(embed=embed, file=file)
+        else:
+            embed.set_thumbnail(url=member.display_avatar.url)
+            await welcome_channel.send(embed=embed)
     try:
         welcome_dm = discord.Embed(
             title=f"👋 مرحبا بيك | أهلاً بك | Welcome | Bienvenue",
@@ -3829,6 +4004,28 @@ async def raidstatus_cmd(ctx):
     await ctx.send(embed=embed)
 
 
+@bot.command(name="testwelcome")
+@commands.has_permissions(administrator=True)
+async def testwelcome_cmd(ctx, member: discord.Member = None, returning: bool = False):
+    """كيبعث Welcome Card تجريبية هنا فالشات بلا ما تحتاج عضو يدخل بصح للسيرفر (Admin).
+    استعمال: !testwelcome [@عضو] [true/false للـ returning]"""
+    member = member or ctx.author
+    if not PIL_AVAILABLE:
+        await ctx.send("❌ Pillow ماشي مثبتة، الصورة ماغاديش تتصاوب. دير `pip install Pillow`.")
+        return
+    if not WELCOME_CARD_ENABLED:
+        await ctx.send("⚠️ `WELCOME_CARD_ENABLED = False` فالـ CONFIG، حطها `True` باش تجرب.")
+        return
+
+    card_buffer = await generate_welcome_card(member, ctx.guild.member_count, returning=returning)
+    if not card_buffer:
+        await ctx.send("❌ وقع خطأ فـ صنع الصورة، شوف الـ logs ديال البوت (`[WELCOME_CARD]`).")
+        return
+
+    file = discord.File(card_buffer, filename="welcome.png")
+    await ctx.send(content=f"🖼️ هاكذا غادي تبان الكارطة (تجريبي، ماشي رسالة حقيقية):", file=file)
+
+
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def clearoldverify(ctx):
@@ -4229,6 +4426,11 @@ async def help(ctx):
         "`!raidstatus` — شوف الحالة دابا"
     )
     embed.add_field(name="🚨 Anti-Raid", value=raid_cmds, inline=False)
+    embed.add_field(
+        name="🖼️ Welcome Card",
+        value="`!testwelcome [@عضو]` — جرب شكل الكارطة الترحيبية هنا فالشات (Admin)",
+        inline=False
+    )
     roles_cmds = (
         "`!setuproles` — صاوب رسالة اختيار الأدوار (Admin)\n"
         "`!listroles` — بين رسائل Reaction Roles الفعّالة (Admin)"
@@ -4828,6 +5030,7 @@ async def on_ready():
     print(f"👑 Administrators Channel: {ADMINISTRATORS_CHANNEL_ID if ADMINISTRATORS_CHANNEL_ID else 'ماشي معطي بعد'} (كل {ADMIN_LIST_UPDATE_MINUTES} د)")
     print(f"🎫 Tickets: Panel={TICKETS_PANEL_CHANNEL_ID or 'ماشي معطي'} | Category={TICKETS_CATEGORY_ID or 'ماشي معطي'} | Logs={TICKET_LOGS_CHANNEL_ID or 'MOD_LOGS_CHANNEL_ID'}")
     print(f"🚨 Anti-Raid: {'نشط' if ANTI_RAID_ENABLED else 'معطل'} (عتبة: {RAID_JOIN_THRESHOLD} فـ {RAID_JOIN_INTERVAL_SECONDS}ث | عمل: {RAID_ACTION})")
+    print(f"🖼️ Welcome Cards: {'نشط' if (WELCOME_CARD_ENABLED and PIL_AVAILABLE) else ('معطل (Pillow ماشي مثبت)' if not PIL_AVAILABLE else 'معطل')}")
     print(f"⏰ Reminders: {len(reminders)} مبرمجين (كيتفقّد كل 30 ثانية)")
 
     await bot.change_presence(
