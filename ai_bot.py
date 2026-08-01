@@ -111,9 +111,13 @@ TICKET_LOGS_CHANNEL_ID = 1532144316611428352     # ← channel فين كيتبع
 
 # ═══════ نظام Applications (طلبات الانضمام لفريق الإدارة/Staff) ═══════
 APPLICATIONS_PANEL_CHANNEL_ID = 1532910298585890927     # ← حط هنا ID ديال channel فين غادي تبان رسالة "📋 قدم طلب" بالزر
-APPLICATIONS_REVIEW_CHANNEL_ID = 1532910345352515666    # ← حط هنا ID ديال channel فين كتوصل الطلبات باش الإدارة تقبل/ترفض
+APPLICATIONS_REVIEW_CHANNEL_ID = 1532910345352515666    # ← حط هنا ID ديال channel فين كتوصل الطلبات (خاصك تحطو Private، يشوفو غير Owner+Admins فـ Discord)
 APPLICATION_ACCEPTED_ROLE_ID = 1532910587301068930      # ← (اختياري) رول كيتعطى أوتوماتيكياً ملي يتقبل الطلب — خليها 0 إلا مابغيتيش
 APPLICATIONS_COOLDOWN_HOURS = 168     # ← شحال ديال الساعات خاص العضو يصبر بعد الرفض قبل ما يقدر يعاود يقدم (168 = أسبوع)
+# ═══════ شكون يقدر يقبل/يرفض الطلبات (Owner + هاد الأدوار فقط — Moderators ماشي معنيين) ═══════
+APPLICATIONS_REVIEWER_ROLE_IDS = [
+    1525712399456272495,  # نفس role "Admin"
+]
 
 # ═══════ نظام Suggestions (اقتراحات الأعضاء) ═══════
 SUGGESTIONS_CHANNEL_ID = 1532913868509155358            # ← حط هنا ID ديال channel فين كيتبعثو الاقتراحات
@@ -2773,10 +2777,18 @@ async def setuptickets_cmd(ctx):
 # ═══════════════════════════════════════════════════════
 
 def _is_staff_reviewer(member: discord.Member) -> bool:
-    """كيتأكد بلي العضو عندو صلاحية يقبل/يرفض طلبات ولا اقتراحات (Owner + الأدوار المعفية)"""
+    """كيتأكد بلي العضو عندو صلاحية يقبل/يرفض اقتراحات (Owner + الأدوار المعفية، شامل Moderators)"""
     if OWNER_ID and member.id == OWNER_ID:
         return True
     return any(role.id in EXEMPT_ROLE_IDS for role in member.roles)
+
+
+def _is_application_reviewer(member: discord.Member) -> bool:
+    """كيتأكد بلي العضو عندو صلاحية يقبل/يرفض طلبات Applications — Owner
+    و APPLICATIONS_REVIEWER_ROLE_IDS (Admins) بوحدهم، Moderators ماشي معنيين."""
+    if OWNER_ID and member.id == OWNER_ID:
+        return True
+    return any(role.id in APPLICATIONS_REVIEWER_ROLE_IDS for role in member.roles)
 
 
 class ApplicationModal(discord.ui.Modal, title="📋 طلب انضمام لفريق الإدارة"):
@@ -2820,8 +2832,11 @@ class ApplicationModal(discord.ui.Modal, title="📋 طلب انضمام لفر�
         embed.add_field(name="💬 علاش بغيتي تكون Staff", value=self.why.value, inline=False)
         embed.set_footer(text=f"{SERVER_NAME} | Application #{app_id} | Pending")
 
+        reviewer_mentions = " ".join(f"<@&{rid}>" for rid in APPLICATIONS_REVIEWER_ROLE_IDS)
         try:
-            review_msg = await review_channel.send(embed=embed, view=ApplicationReviewView())
+            review_msg = await review_channel.send(
+                content=reviewer_mentions or None, embed=embed, view=ApplicationReviewView()
+            )
         except Exception as e:
             await interaction.response.send_message(f"❌ خطأ فـ بعث الطلب: {e}", ephemeral=True)
             return
@@ -2897,8 +2912,8 @@ class ApplicationReviewView(discord.ui.View):
 
     async def _decide(self, interaction: discord.Interaction, accepted: bool):
         member = interaction.user
-        if not isinstance(member, discord.Member) or not _is_staff_reviewer(member):
-            await interaction.response.send_message("❌ هاد الزر خاص غير بالإدارة.", ephemeral=True)
+        if not isinstance(member, discord.Member) or not _is_application_reviewer(member):
+            await interaction.response.send_message("❌ هاد الزر خاص غير بـ Owner والـ Admins.", ephemeral=True)
             return
 
         app_id, record = find_application_by_message_id(interaction.message.id)
@@ -2998,7 +3013,10 @@ async def setupapplications_cmd(ctx):
 @bot.hybrid_command(name="applications")
 @commands.has_permissions(administrator=True)
 async def applications_cmd(ctx):
-    """كيبين لائحة الطلبات اللي مازال Pending (Admin)"""
+    """كيبين لائحة الطلبات اللي مازال Pending (Owner + Admins فقط)"""
+    if not _is_application_reviewer(ctx.author):
+        await ctx.send("❌ هاد الأمر خاص غير بـ Owner والـ Admins.", delete_after=5)
+        return
     pending = [
         (app_id, r) for app_id, r in applications_db.get("applications", {}).items()
         if r.get("status") == "pending"
