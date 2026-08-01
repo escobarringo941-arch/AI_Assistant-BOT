@@ -109,6 +109,15 @@ TICKETS_PANEL_CHANNEL_ID = 1532144216958959839   # ← channel فين غادي �
 TICKETS_CATEGORY_ID = 1532144108754440355        # ← ID ديال Category (فولدر) "Tickets" فين كيتخلقو الـ channels الخاصة
 TICKET_LOGS_CHANNEL_ID = 1532144316611428352     # ← channel فين كيتبعث ملخص/transcript الـ ticket ملي يتسد (إلا خليتها 0 غايستعمل MOD_LOGS_CHANNEL_ID)
 
+# ═══════ نظام Applications (طلبات الانضمام لفريق الإدارة/Staff) ═══════
+APPLICATIONS_PANEL_CHANNEL_ID = 1532910298585890927     # ← حط هنا ID ديال channel فين غادي تبان رسالة "📋 قدم طلب" بالزر
+APPLICATIONS_REVIEW_CHANNEL_ID = 1532910345352515666    # ← حط هنا ID ديال channel فين كتوصل الطلبات باش الإدارة تقبل/ترفض
+APPLICATION_ACCEPTED_ROLE_ID = 1532910587301068930      # ← (اختياري) رول كيتعطى أوتوماتيكياً ملي يتقبل الطلب — خليها 0 إلا مابغيتيش
+APPLICATIONS_COOLDOWN_HOURS = 168     # ← شحال ديال الساعات خاص العضو يصبر بعد الرفض قبل ما يقدر يعاود يقدم (168 = أسبوع)
+
+# ═══════ نظام Suggestions (اقتراحات الأعضاء) ═══════
+SUGGESTIONS_CHANNEL_ID = 1532913868509155358            # ← حط هنا ID ديال channel فين كيتبعثو الاقتراحات
+
 UNVERIFIED_ROLE_ID = 1526452828267085915
 MEMBER_ROLE_ID = 1526451890399739934
 MUTED_ROLE_ID = 1526468718534590574
@@ -372,6 +381,103 @@ def get_open_ticket_for_user(user_id: int):
 
 
 load_tickets()
+
+# ═══════════════════════════════════════════════════════
+# ║   نظام Applications (طلبات الانضمام لفريق الإدارة)      ║
+# ═══════════════════════════════════════════════════════
+APPLICATIONS_FILE = os.path.join(DATA_DIR, "applications.json")
+# applications: {"1": {applicant_id, answers, status, review_message_id, review_channel_id, submitted_at, decided_by, decided_at}}
+# last_rejected: {user_id (str): "YYYY-MM-DD HH:MM:SS"} — باش نحسبو الـ cooldown
+applications_db = {"next_id": 1, "applications": {}, "last_rejected": {}}
+
+
+def load_applications():
+    global applications_db
+    try:
+        with open(APPLICATIONS_FILE, "r", encoding="utf-8") as f:
+            applications_db = json.load(f)
+        applications_db.setdefault("last_rejected", {})
+        print(f"[APPLICATIONS] تحمل {len(applications_db.get('applications', {}))} طلب محفوظ")
+    except FileNotFoundError:
+        print("[APPLICATIONS] ماكاينش طلبات سابقة، غادي نبداو من Application #1")
+    except Exception as e:
+        print(f"[APPLICATIONS] خطأ فـ التحميل: {e}")
+
+
+def save_applications():
+    try:
+        with open(APPLICATIONS_FILE, "w", encoding="utf-8") as f:
+            json.dump(applications_db, f, ensure_ascii=False)
+    except Exception as e:
+        print(f"[APPLICATIONS] خطأ فـ الحفظ: {e}")
+
+
+def find_application_by_message_id(message_id: int):
+    """كترجع (app_id, record) ديال الطلب اللي رسالة المراجعة ديالو هي هاد الـ message_id، وإلا (None, None)"""
+    for app_id, record in applications_db.get("applications", {}).items():
+        if record.get("review_message_id") == message_id:
+            return app_id, record
+    return None, None
+
+
+def get_pending_application_for_user(user_id: int):
+    for app_id, record in applications_db.get("applications", {}).items():
+        if record.get("applicant_id") == user_id and record.get("status") == "pending":
+            return app_id, record
+    return None, None
+
+
+def application_cooldown_remaining(user_id: int) -> Optional[timedelta]:
+    """كترجع الوقت الباقي فالـ cooldown (Timedelta) إلا العضو مازال ما يقدرش يعاود يقدم، وإلا None"""
+    last = applications_db.get("last_rejected", {}).get(str(user_id))
+    if not last:
+        return None
+    try:
+        elapsed = datetime.now() - datetime.fromisoformat(last)
+    except Exception:
+        return None
+    remaining = timedelta(hours=APPLICATIONS_COOLDOWN_HOURS) - elapsed
+    return remaining if remaining.total_seconds() > 0 else None
+
+
+load_applications()
+
+# ═══════════════════════════════════════════════════════
+# ║              نظام Suggestions (اقتراحات الأعضاء)        ║
+# ═══════════════════════════════════════════════════════
+SUGGESTIONS_FILE = os.path.join(DATA_DIR, "suggestions.json")
+# suggestions: {"1": {author_id, text, status, message_id, channel_id, created_at, decided_by, decided_at, reason}}
+suggestions_db = {"next_id": 1, "suggestions": {}}
+
+
+def load_suggestions():
+    global suggestions_db
+    try:
+        with open(SUGGESTIONS_FILE, "r", encoding="utf-8") as f:
+            suggestions_db = json.load(f)
+        print(f"[SUGGESTIONS] تحمل {len(suggestions_db.get('suggestions', {}))} اقتراح محفوظ")
+    except FileNotFoundError:
+        print("[SUGGESTIONS] ماكاينش اقتراحات سابقة، غادي نبداو من Suggestion #1")
+    except Exception as e:
+        print(f"[SUGGESTIONS] خطأ فـ التحميل: {e}")
+
+
+def save_suggestions():
+    try:
+        with open(SUGGESTIONS_FILE, "w", encoding="utf-8") as f:
+            json.dump(suggestions_db, f, ensure_ascii=False)
+    except Exception as e:
+        print(f"[SUGGESTIONS] خطأ فـ الحفظ: {e}")
+
+
+def find_suggestion_by_message_id(message_id: int):
+    for sug_id, record in suggestions_db.get("suggestions", {}).items():
+        if record.get("message_id") == message_id:
+            return sug_id, record
+    return None, None
+
+
+load_suggestions()
 
 # ═══════════════════════════════════════════════════════
 # ║              Leveling System (XP + Levels)               ║
@@ -2662,6 +2768,363 @@ async def setuptickets_cmd(ctx):
     await ctx.send("✅ رسالة اللوحة ديال Tickets تصاوبات (ولا كانت ديجا موجودة).", delete_after=8)
 
 
+# ═══════════════════════════════════════════════════════
+# ║   Phase 7 — نظام Applications (طلبات الانضمام للإدارة)  ║
+# ═══════════════════════════════════════════════════════
+
+def _is_staff_reviewer(member: discord.Member) -> bool:
+    """كيتأكد بلي العضو عندو صلاحية يقبل/يرفض طلبات ولا اقتراحات (Owner + الأدوار المعفية)"""
+    if OWNER_ID and member.id == OWNER_ID:
+        return True
+    return any(role.id in EXEMPT_ROLE_IDS for role in member.roles)
+
+
+class ApplicationModal(discord.ui.Modal, title="📋 طلب انضمام لفريق الإدارة"):
+    age = discord.ui.TextInput(label="شحال عندك من عام؟", placeholder="مثلا: 18", max_length=10)
+    experience = discord.ui.TextInput(
+        label="عندك تجربة سابقة كموديراتور/أدمن؟",
+        style=discord.TextStyle.paragraph, required=False, max_length=500,
+        placeholder="اكتب 'لا' إلا ماعندكش، ولا فين ومنين إلا عندك"
+    )
+    why = discord.ui.TextInput(
+        label="علاش بغيتي تكون Staff فهاد السيرفر؟",
+        style=discord.TextStyle.paragraph, max_length=700
+    )
+    availability = discord.ui.TextInput(
+        label="فوقاش/شحال من ساعة كتكون متواجد؟",
+        max_length=150, placeholder="مثلا: كل نهار من 6 مغرب لـ 11 ليل"
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        applicant = interaction.user
+        app_id = applications_db.get("next_id", 1)
+
+        review_channel_id = APPLICATIONS_REVIEW_CHANNEL_ID or MOD_LOGS_CHANNEL_ID
+        review_channel = bot.get_channel(review_channel_id) if review_channel_id else None
+        if not review_channel:
+            await interaction.response.send_message(
+                "❌ وقع مشكل تقني (channel المراجعة ماعادش معطي)، بلغ الإدارة.", ephemeral=True
+            )
+            return
+
+        embed = discord.Embed(
+            title=f"📋 طلب انضمام #{app_id}",
+            color=discord.Color.blurple(),
+            timestamp=datetime.now()
+        )
+        embed.set_author(name=str(applicant), icon_url=applicant.display_avatar.url)
+        embed.add_field(name="👤 المتقدم", value=applicant.mention, inline=False)
+        embed.add_field(name="🎂 العمر", value=self.age.value or "—", inline=True)
+        embed.add_field(name="🕐 التواجد", value=self.availability.value or "—", inline=True)
+        embed.add_field(name="📜 تجربة سابقة", value=self.experience.value or "بلا تجربة", inline=False)
+        embed.add_field(name="💬 علاش بغيتي تكون Staff", value=self.why.value, inline=False)
+        embed.set_footer(text=f"{SERVER_NAME} | Application #{app_id} | Pending")
+
+        try:
+            review_msg = await review_channel.send(embed=embed, view=ApplicationReviewView())
+        except Exception as e:
+            await interaction.response.send_message(f"❌ خطأ فـ بعث الطلب: {e}", ephemeral=True)
+            return
+
+        applications_db["next_id"] = app_id + 1
+        applications_db.setdefault("applications", {})[str(app_id)] = {
+            "applicant_id": applicant.id,
+            "answers": {
+                "age": self.age.value, "experience": self.experience.value,
+                "why": self.why.value, "availability": self.availability.value,
+            },
+            "status": "pending",
+            "review_message_id": review_msg.id,
+            "review_channel_id": review_msg.channel.id,
+            "submitted_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "decided_by": None,
+            "decided_at": None,
+        }
+        save_applications()
+
+        await interaction.response.send_message(
+            f"✅ تم بعث طلبك (#{app_id})! غادي تجاوبك الإدارة بالـ DM ملي يشوفو فيه.", ephemeral=True
+        )
+
+
+class ApplicationPanelView(discord.ui.View):
+    """زر واحد "📋 قدم طلب" — كيحل Modal للعضو باش يعمر معلوماتو. Persistent
+    (timeout=None) باش يبقى خدام حتى بعد ريستارت البوت."""
+
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="📋 قدم طلب Staff", style=discord.ButtonStyle.primary, custom_id="open_application_button")
+    async def open_application_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        member = interaction.user
+        if not isinstance(member, discord.Member):
+            await interaction.response.send_message("❌ وقع مشكل، عاود من جديد.", ephemeral=True)
+            return
+
+        pending_id, _ = get_pending_application_for_user(member.id)
+        if pending_id:
+            await interaction.response.send_message(
+                f"⚠️ عندك ديجا طلب مبعوث (#{pending_id}) مازال كيتسنى المراجعة.", ephemeral=True
+            )
+            return
+
+        remaining = application_cooldown_remaining(member.id)
+        if remaining:
+            hours_left = int(remaining.total_seconds() // 3600) + 1
+            await interaction.response.send_message(
+                f"⏳ طلبك السابق تُرفض، خاصك تصبر تقريباً {hours_left} ساعة قبل ما تعاود تقدم.", ephemeral=True
+            )
+            return
+
+        await interaction.response.send_modal(ApplicationModal())
+
+
+class ApplicationReviewView(discord.ui.View):
+    """أزرار القبول/الرفض جوة review channel. Persistent — كتلقى الطلب بواسطة
+    message id ديال الرسالة اللي فيها الأزرار (بحال TicketControlView كيلقى
+    الـ ticket بواسطة channel id)."""
+
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="✅ قبول", style=discord.ButtonStyle.success, custom_id="app_accept_button")
+    async def accept_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._decide(interaction, accepted=True)
+
+    @discord.ui.button(label="❌ رفض", style=discord.ButtonStyle.danger, custom_id="app_reject_button")
+    async def reject_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._decide(interaction, accepted=False)
+
+    async def _decide(self, interaction: discord.Interaction, accepted: bool):
+        member = interaction.user
+        if not isinstance(member, discord.Member) or not _is_staff_reviewer(member):
+            await interaction.response.send_message("❌ هاد الزر خاص غير بالإدارة.", ephemeral=True)
+            return
+
+        app_id, record = find_application_by_message_id(interaction.message.id)
+        if not record:
+            await interaction.response.send_message("❌ ماكاينش هاد الطلب فالسجل ديالنا.", ephemeral=True)
+            return
+        if record.get("status") != "pending":
+            await interaction.response.send_message("⚠️ هاد الطلب تدار فيه قرار من قبل.", ephemeral=True)
+            return
+
+        record["status"] = "accepted" if accepted else "rejected"
+        record["decided_by"] = member.id
+        record["decided_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        if not accepted:
+            applications_db.setdefault("last_rejected", {})[str(record["applicant_id"])] = record["decided_at"]
+        save_applications()
+
+        guild = interaction.guild
+        applicant = guild.get_member(record["applicant_id"]) if guild else None
+
+        embed = interaction.message.embeds[0]
+        embed.color = discord.Color.green() if accepted else discord.Color.red()
+        embed.add_field(
+            name="✅ القرار" if accepted else "❌ القرار",
+            value=f"{'تقبل' if accepted else 'تُرفض'} من طرف {member.mention}",
+            inline=False
+        )
+        embed.set_footer(text=f"{SERVER_NAME} | Application #{app_id} | {'Accepted' if accepted else 'Rejected'}")
+
+        for child in self.children:
+            child.disabled = True
+        await interaction.response.edit_message(embed=embed, view=self)
+
+        if applicant:
+            try:
+                if accepted:
+                    if APPLICATION_ACCEPTED_ROLE_ID:
+                        role = guild.get_role(APPLICATION_ACCEPTED_ROLE_ID)
+                        if role:
+                            await applicant.add_roles(role, reason=f"Application #{app_id} تقبل")
+                    await applicant.send(
+                        f"🎉 مبروك! طلبك (#{app_id}) باش تكون Staff فـ **{SERVER_NAME}** تقبل! "
+                        f"الإدارة غادي تتواصل معاك قريب."
+                    )
+                else:
+                    await applicant.send(
+                        f"❌ طلبك (#{app_id}) باش تكون Staff فـ **{SERVER_NAME}** تُرفض هاد المرة. "
+                        f"تقدر تعاود تقدم من بعد {APPLICATIONS_COOLDOWN_HOURS} ساعة."
+                    )
+            except Exception:
+                pass
+
+        if guild:
+            await log_action(
+                guild,
+                f"📋 Application #{app_id} — {'قبول' if accepted else 'رفض'}",
+                f"**المتقدم:** <@{record['applicant_id']}>\n**القرار من طرف:** {member.mention}",
+                discord.Color.green() if accepted else discord.Color.red()
+            )
+
+
+async def setup_applications_panel(guild: discord.Guild):
+    if not APPLICATIONS_PANEL_CHANNEL_ID:
+        return
+    channel = bot.get_channel(APPLICATIONS_PANEL_CHANNEL_ID)
+    if not channel:
+        return
+    async for message in channel.history(limit=10):
+        if message.author == bot.user and message.components:
+            return
+    embed = discord.Embed(
+        title="📋 قدم لفريق الإدارة",
+        description=(
+            "بغيتي تكون جزء من فريق الإدارة ديال السيرفر؟ اضغط على الزر تحت وعمر الاستمارة.\n"
+            "غادي تجاوبك الإدارة بالـ DM ملي يشوفو الطلب ديالك."
+        ),
+        color=discord.Color.blurple(),
+        timestamp=datetime.now()
+    )
+    embed.set_footer(text=f"{SERVER_NAME} | Staff Applications")
+    await channel.send(embed=embed, view=ApplicationPanelView())
+
+
+@bot.hybrid_command(name="setupapplications")
+@commands.has_permissions(administrator=True)
+async def setupapplications_cmd(ctx):
+    """كيصاوب/يعاود يصاوب رسالة اللوحة ديال Applications فـ APPLICATIONS_PANEL_CHANNEL_ID (Admin)"""
+    if not APPLICATIONS_PANEL_CHANNEL_ID:
+        await ctx.send("❌ حط `APPLICATIONS_PANEL_CHANNEL_ID` فالـ CONFIG أولاً.", delete_after=8)
+        return
+    if not APPLICATIONS_REVIEW_CHANNEL_ID:
+        await ctx.send("⚠️ `APPLICATIONS_REVIEW_CHANNEL_ID` فارغة — غايستعمل MOD_LOGS_CHANNEL_ID بدلها.", delete_after=10)
+    await setup_applications_panel(ctx.guild)
+    await ctx.send("✅ رسالة اللوحة ديال Applications تصاوبات (ولا كانت ديجا موجودة).", delete_after=8)
+
+
+@bot.hybrid_command(name="applications")
+@commands.has_permissions(administrator=True)
+async def applications_cmd(ctx):
+    """كيبين لائحة الطلبات اللي مازال Pending (Admin)"""
+    pending = [
+        (app_id, r) for app_id, r in applications_db.get("applications", {}).items()
+        if r.get("status") == "pending"
+    ]
+    if not pending:
+        await ctx.send("✅ ماكاين حتى طلب معلق دابا.")
+        return
+    lines = [f"**#{app_id}** — <@{r['applicant_id']}> (بعث فـ {r.get('submitted_at', '—')})"
+              for app_id, r in sorted(pending, key=lambda x: int(x[0]))]
+    embed = discord.Embed(
+        title=f"📋 الطلبات المعلقة ({len(pending)})",
+        description="\n".join(lines),
+        color=discord.Color.blurple()
+    )
+    embed.set_footer(text=f"{SERVER_NAME} | Applications")
+    await ctx.send(embed=embed)
+
+
+# ═══════════════════════════════════════════════════════
+# ║   Phase 7 — نظام Suggestions (اقتراحات الأعضاء)         ║
+# ═══════════════════════════════════════════════════════
+
+class SuggestionReviewView(discord.ui.View):
+    """أزرار قبول/رفض الاقتراح، بنفس المنطق ديال ApplicationReviewView. Persistent."""
+
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="✅ مقبول", style=discord.ButtonStyle.success, custom_id="suggestion_accept_button")
+    async def accept_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._decide(interaction, accepted=True)
+
+    @discord.ui.button(label="❌ مرفوض", style=discord.ButtonStyle.danger, custom_id="suggestion_reject_button")
+    async def reject_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._decide(interaction, accepted=False)
+
+    async def _decide(self, interaction: discord.Interaction, accepted: bool):
+        member = interaction.user
+        if not isinstance(member, discord.Member) or not _is_staff_reviewer(member):
+            await interaction.response.send_message("❌ هاد الزر خاص غير بالإدارة.", ephemeral=True)
+            return
+
+        sug_id, record = find_suggestion_by_message_id(interaction.message.id)
+        if not record:
+            await interaction.response.send_message("❌ ماكاينش هاد الاقتراح فالسجل ديالنا.", ephemeral=True)
+            return
+        if record.get("status") != "pending":
+            await interaction.response.send_message("⚠️ هاد الاقتراح تدار فيه قرار من قبل.", ephemeral=True)
+            return
+
+        record["status"] = "accepted" if accepted else "rejected"
+        record["decided_by"] = member.id
+        record["decided_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        save_suggestions()
+
+        embed = interaction.message.embeds[0]
+        embed.color = discord.Color.green() if accepted else discord.Color.red()
+        embed.set_footer(
+            text=f"{SERVER_NAME} | Suggestion #{sug_id} | "
+                 f"{'✅ Accepted' if accepted else '❌ Rejected'} من طرف {member.display_name}"
+        )
+        for child in self.children:
+            child.disabled = True
+        await interaction.response.edit_message(embed=embed, view=self)
+
+        guild = interaction.guild
+        author = guild.get_member(record["author_id"]) if guild else None
+        if author:
+            try:
+                if accepted:
+                    await author.send(f"🎉 الاقتراح ديالك (#{sug_id}) تقبل من طرف الإدارة فـ **{SERVER_NAME}**!")
+                else:
+                    await author.send(f"❌ الاقتراح ديالك (#{sug_id}) تُرفض هاد المرة فـ **{SERVER_NAME}**.")
+            except Exception:
+                pass
+
+
+@bot.hybrid_command(name="suggest")
+async def suggest_cmd(ctx, *, idea: str):
+    """كيبعث اقتراح جديد للإدارة، والأعضاء يقدرو يصوتو عليه بـ 👍/👎"""
+    if not SUGGESTIONS_CHANNEL_ID:
+        await ctx.send("❌ نظام الاقتراحات ماعادش معطي (`SUGGESTIONS_CHANNEL_ID` فارغة)، بلغ الإدارة.", delete_after=8)
+        return
+    channel = bot.get_channel(SUGGESTIONS_CHANNEL_ID)
+    if not channel:
+        await ctx.send("❌ ما لقيتش channel الاقتراحات، بلغ الإدارة.", delete_after=8)
+        return
+
+    sug_id = suggestions_db.get("next_id", 1)
+
+    embed = discord.Embed(
+        title=f"💡 اقتراح #{sug_id}",
+        description=idea[:1000],
+        color=discord.Color.blurple(),
+        timestamp=datetime.now()
+    )
+    embed.set_author(name=str(ctx.author), icon_url=ctx.author.display_avatar.url)
+    embed.set_footer(text=f"{SERVER_NAME} | Suggestion #{sug_id} | Pending")
+
+    try:
+        msg = await channel.send(embed=embed, view=SuggestionReviewView())
+        await msg.add_reaction("👍")
+        await msg.add_reaction("👎")
+    except Exception as e:
+        await ctx.send(f"❌ خطأ فـ بعث الاقتراح: {e}", delete_after=8)
+        return
+
+    suggestions_db["next_id"] = sug_id + 1
+    suggestions_db.setdefault("suggestions", {})[str(sug_id)] = {
+        "author_id": ctx.author.id,
+        "text": idea,
+        "status": "pending",
+        "message_id": msg.id,
+        "channel_id": msg.channel.id,
+        "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "decided_by": None,
+        "decided_at": None,
+    }
+    save_suggestions()
+
+    if channel.id != ctx.channel.id:
+        await ctx.send(f"✅ تم بعث الاقتراح ديالك (#{sug_id}) فـ {channel.mention}!", delete_after=8)
+    else:
+        await ctx.send(f"✅ تم بعث الاقتراح ديالك (#{sug_id})!", delete_after=5)
+
+
 async def setup_levels_info_message(guild: discord.Guild):
     """كتصاوب رسالة تشرح نظام الـ Leveling كامل + لائحة كاع المستويات
     ورولاتهم، فـ LEVELS_INFO_CHANNEL_ID."""
@@ -4711,6 +5174,19 @@ async def help(ctx):
         "`/closeticket` — سد ticket بأمر (بديل للزر، جوة channel الـ ticket)"
     )
     embed.add_field(name="🎫 Tickets", value=ticket_cmds, inline=False)
+    application_cmds = (
+        "📋 ضغط على الزر فاللوحة → عمر الاستمارة (Modal)\n"
+        "`/setupapplications` — صاوب/عاود صاوب لوحة الـ Applications (Admin)\n"
+        "`/applications` — بين الطلبات المعلقة (Admin)\n"
+        "✅/❌ أزرار قبول/رفض فـ channel المراجعة (Staff)"
+    )
+    embed.add_field(name="📋 Applications", value=application_cmds, inline=False)
+    suggestion_cmds = (
+        "`/suggest <فكرة>` — بعث اقتراح جديد\n"
+        "👍/👎 صوّت على الاقتراحات ديال الآخرين\n"
+        "✅/❌ أزرار قبول/رفض (Staff)"
+    )
+    embed.add_field(name="💡 Suggestions", value=suggestion_cmds, inline=False)
     raid_cmds = (
         "`/lockdown [دقائق]` — فعّل Anti-Raid Lockdown يدوياً (Admin)\n"
         "`/unlockdown` — سد الـ Lockdown يدوياً (Admin)\n"
@@ -5327,6 +5803,8 @@ async def on_ready():
     print(f"📊 Stats Channel: {STATS_CHANNEL_ID if STATS_CHANNEL_ID else 'ماشي معطي بعد'} (كل {STATS_UPDATE_MINUTES} د)")
     print(f"👑 Administrators Channel: {ADMINISTRATORS_CHANNEL_ID if ADMINISTRATORS_CHANNEL_ID else 'ماشي معطي بعد'} (كل {ADMIN_LIST_UPDATE_MINUTES} د)")
     print(f"🎫 Tickets: Panel={TICKETS_PANEL_CHANNEL_ID or 'ماشي معطي'} | Category={TICKETS_CATEGORY_ID or 'ماشي معطي'} | Logs={TICKET_LOGS_CHANNEL_ID or 'MOD_LOGS_CHANNEL_ID'}")
+    print(f"📋 Applications: Panel={APPLICATIONS_PANEL_CHANNEL_ID or 'ماشي معطي'} | Review={APPLICATIONS_REVIEW_CHANNEL_ID or 'MOD_LOGS_CHANNEL_ID'} | Cooldown={APPLICATIONS_COOLDOWN_HOURS}h")
+    print(f"💡 Suggestions: Channel={SUGGESTIONS_CHANNEL_ID or 'ماشي معطي'}")
     print(f"🚨 Anti-Raid: {'نشط' if ANTI_RAID_ENABLED else 'معطل'} (عتبة: {RAID_JOIN_THRESHOLD} فـ {RAID_JOIN_INTERVAL_SECONDS}ث | عمل: {RAID_ACTION})")
     print(f"🖼️ Welcome Cards: {'نشط' if (WELCOME_CARD_ENABLED and PIL_AVAILABLE) else ('معطل (Pillow ماشي مثبت)' if not PIL_AVAILABLE else 'معطل')}")
     print(f"📊 Leveling: {'نشط' if LEVELING_ENABLED else 'معطل'} ({XP_MIN_PER_MESSAGE}-{XP_MAX_PER_MESSAGE} XP/رسالة، cooldown {XP_COOLDOWN_SECONDS}ث)")
@@ -5355,6 +5833,9 @@ async def on_ready():
     bot.add_view(RolePickerView())   # باش الـ Dropdown ديال الأدوار يبقى خدام حتى بعد ريستارت البوت
     bot.add_view(TicketPanelView())    # باش زر "دير Ticket" يبقى خدام حتى بعد ريستارت البوت
     bot.add_view(TicketControlView())  # باش أزرار Claim/Close يبقاو خدامين فكاع الـ tickets المفتوحة
+    bot.add_view(ApplicationPanelView())   # باش زر "قدم طلب Staff" يبقى خدام حتى بعد ريستارت البوت
+    bot.add_view(ApplicationReviewView())  # باش أزرار قبول/رفض الطلبات يبقاو خدامين
+    bot.add_view(SuggestionReviewView())   # باش أزرار قبول/رفض الاقتراحات يبقاو خدامين
 
     for guild in bot.guilds:
         # ملاحظة: ماعادش كنبعثو رسالة "تفعيل العضوية" القديمة (بالريأكشن ✅)
@@ -5364,6 +5845,8 @@ async def on_ready():
             await setup_blacklist_message(guild)
         if TICKETS_PANEL_CHANNEL_ID:
             await setup_tickets_panel(guild)
+        if APPLICATIONS_PANEL_CHANNEL_ID:
+            await setup_applications_panel(guild)
         if LEVELS_INFO_CHANNEL_ID:
             await setup_levels_info_message(guild)
 
