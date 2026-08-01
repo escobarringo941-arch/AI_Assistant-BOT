@@ -11,6 +11,7 @@ import math
 from typing import Optional
 from datetime import datetime, timedelta
 from discord.ext import commands, tasks
+from discord import app_commands
 from collections import defaultdict
 
 try:
@@ -121,6 +122,11 @@ APPLICATIONS_REVIEWER_ROLE_IDS = [
 
 # ═══════ نظام Suggestions (اقتراحات الأعضاء) ═══════
 SUGGESTIONS_CHANNEL_ID = 1532913868509155358            # ← حط هنا ID ديال channel فين كيتبعثو الاقتراحات
+
+# ═══════ نظام Birthdays (أعياد الميلاد) ═══════
+BIRTHDAY_ANNOUNCE_CHANNEL_ID = 1533241235630854224   # ← حط هنا ID ديال channel فين كيتبعث تهنئة عيد الميلاد
+BIRTHDAY_ROLE_ID = 1533241332473008229               # ← (اختياري) رول 🎂 كيتعطى نهار عيد الميلاد وكيتحيد الغد — خليها 0 إلا مابغيتيش
+BIRTHDAY_ANNOUNCE_HOUR = 9         # ← فأي ساعة (UTC، من 0 لـ 23) كيتبعث التهنئة كل نهار
 
 UNVERIFIED_ROLE_ID = 1526452828267085915
 MEMBER_ROLE_ID = 1526451890399739934
@@ -482,6 +488,38 @@ def find_suggestion_by_message_id(message_id: int):
 
 
 load_suggestions()
+
+# ═══════════════════════════════════════════════════════
+# ║        Phase 8 — نظام Birthdays (أعياد الميلاد)         ║
+# ═══════════════════════════════════════════════════════
+BIRTHDAYS_FILE = os.path.join(DATA_DIR, "birthdays.json")
+# birthdays: {"<user_id>": {"day": int, "month": int, "last_announced_year": int|null}}
+# role_holders: [user_id, ...] — العضاء اللي عندهم الرول ديال اليوم دابا، باش نحيدوه غدا
+birthdays_db = {"birthdays": {}, "role_holders": []}
+
+
+def load_birthdays():
+    global birthdays_db
+    try:
+        with open(BIRTHDAYS_FILE, "r", encoding="utf-8") as f:
+            birthdays_db = json.load(f)
+        birthdays_db.setdefault("role_holders", [])
+        print(f"[BIRTHDAYS] تحمل {len(birthdays_db.get('birthdays', {}))} عيد ميلاد محفوظ")
+    except FileNotFoundError:
+        print("[BIRTHDAYS] ماكاينش أعياد ميلاد محفوظين من قبل")
+    except Exception as e:
+        print(f"[BIRTHDAYS] خطأ فـ التحميل: {e}")
+
+
+def save_birthdays():
+    try:
+        with open(BIRTHDAYS_FILE, "w", encoding="utf-8") as f:
+            json.dump(birthdays_db, f, ensure_ascii=False)
+    except Exception as e:
+        print(f"[BIRTHDAYS] خطأ فـ الحفظ: {e}")
+
+
+load_birthdays()
 
 # ═══════════════════════════════════════════════════════
 # ║              Leveling System (XP + Levels)               ║
@@ -2760,6 +2798,7 @@ async def setup_tickets_panel(guild: discord.Guild):
 
 
 @bot.hybrid_command(name="setuptickets")
+@app_commands.default_permissions(administrator=True)
 @commands.has_permissions(administrator=True)
 async def setuptickets_cmd(ctx):
     """كيصاوب/يعاود يصاوب رسالة اللوحة ديال Tickets فـ TICKETS_PANEL_CHANNEL_ID (Admin)"""
@@ -2998,6 +3037,7 @@ async def setup_applications_panel(guild: discord.Guild):
 
 
 @bot.hybrid_command(name="setupapplications")
+@app_commands.default_permissions(administrator=True)
 @commands.has_permissions(administrator=True)
 async def setupapplications_cmd(ctx):
     """كيصاوب/يعاود يصاوب رسالة اللوحة ديال Applications فـ APPLICATIONS_PANEL_CHANNEL_ID (Admin)"""
@@ -3011,6 +3051,7 @@ async def setupapplications_cmd(ctx):
 
 
 @bot.hybrid_command(name="applications")
+@app_commands.default_permissions(administrator=True)
 @commands.has_permissions(administrator=True)
 async def applications_cmd(ctx):
     """كيبين لائحة الطلبات اللي مازال Pending (Owner + Admins فقط)"""
@@ -3143,6 +3184,170 @@ async def suggest_cmd(ctx, *, idea: str):
         await ctx.send(f"✅ تم بعث الاقتراح ديالك (#{sug_id})!", delete_after=5)
 
 
+# ═══════════════════════════════════════════════════════
+# ║        Phase 8 — أوامر نظام Birthdays                   ║
+# ═══════════════════════════════════════════════════════
+
+@bot.hybrid_command(name="setbirthday")
+async def setbirthday_cmd(ctx, day: int, month: int):
+    """سجل عيد ميلادك (اليوم والشهر بوحدهم، بلا عام) باش السيرفر يهنيك"""
+    try:
+        # كنستعملو عام كبيسة (2024) باش فبراير 29 يخدم زوين
+        datetime(2024, month, day)
+    except (ValueError, TypeError):
+        await ctx.send("❌ التاريخ ماشي صحيح. اكتب مثلا `/setbirthday day:15 month:8`.", delete_after=8)
+        return
+
+    birthdays_db.setdefault("birthdays", {})[str(ctx.author.id)] = {
+        "day": day, "month": month, "last_announced_year": None
+    }
+    save_birthdays()
+    await ctx.send(f"🎂 تم تسجيل عيد ميلادك: **{day:02d}/{month:02d}**! غادي نهنيوك نهار عيد ميلادك.", delete_after=10)
+
+
+@bot.hybrid_command(name="removebirthday")
+async def removebirthday_cmd(ctx):
+    """حيد عيد الميلاد ديالك من السجل"""
+    removed = birthdays_db.get("birthdays", {}).pop(str(ctx.author.id), None)
+    if removed:
+        save_birthdays()
+        await ctx.send("🗑️ تم حيد عيد الميلاد ديالك من السجل.", delete_after=8)
+    else:
+        await ctx.send("⚠️ ماعندكش عيد ميلاد مسجل أصلاً.", delete_after=8)
+
+
+@bot.hybrid_command(name="birthday")
+async def birthday_cmd(ctx, member: Optional[discord.Member] = None):
+    """بين عيد الميلاد ديالك ولا ديال عضو آخر"""
+    target = member or ctx.author
+    record = birthdays_db.get("birthdays", {}).get(str(target.id))
+    if not record:
+        if target == ctx.author:
+            await ctx.send("⚠️ ماعندكش عيد ميلاد مسجل. استعمل `/setbirthday`.", delete_after=8)
+        else:
+            await ctx.send(f"⚠️ {target.mention} ماعندوش عيد ميلاد مسجل.", delete_after=8)
+        return
+    await ctx.send(f"🎂 عيد ميلاد {target.mention}: **{record['day']:02d}/{record['month']:02d}**")
+
+
+@bot.hybrid_command(name="birthdays")
+async def birthdays_cmd(ctx):
+    """بين لائحة أقرب 10 أعياد ميلاد جاية فالسيرفر"""
+    today = datetime.now()
+    today_date = today.date()
+    entries = []
+    for user_id, record in birthdays_db.get("birthdays", {}).items():
+        member = ctx.guild.get_member(int(user_id)) if ctx.guild else None
+        if not member:
+            continue
+        day, month = record["day"], record["month"]
+        try:
+            this_year_date = datetime(today.year, month, day).date()
+        except ValueError:
+            continue  # 29 فبراير فعام ماشي كبيسة
+        next_date = this_year_date if this_year_date >= today_date else datetime(today.year + 1, month, day).date()
+        days_left = (next_date - today_date).days
+        entries.append((days_left, member, day, month))
+
+    if not entries:
+        await ctx.send("📭 ماكاين حتى عيد ميلاد مسجل دابا فالسيرفر.")
+        return
+
+    entries.sort(key=lambda x: x[0])
+    lines = []
+    for days_left, member, day, month in entries[:10]:
+        when = "🎉 اليوم!" if days_left == 0 else f"بعد {days_left} يوم"
+        lines.append(f"**{day:02d}/{month:02d}** — {member.mention} ({when})")
+
+    embed = discord.Embed(
+        title="🎂 أقرب أعياد الميلاد",
+        description="\n".join(lines),
+        color=discord.Color.pink()
+    )
+    embed.set_footer(text=f"{SERVER_NAME} | Birthdays")
+    await ctx.send(embed=embed)
+
+
+async def check_and_announce_birthdays():
+    """كتشيك كل الأعياد المسجلة، كتهني اللي عيد ميلادهم اليوم، وكتحيد الرول
+    ديال البارح. كتصاوب فحالها من tasks.loop تحت (birthday_loop)."""
+    channel = bot.get_channel(BIRTHDAY_ANNOUNCE_CHANNEL_ID) if BIRTHDAY_ANNOUNCE_CHANNEL_ID else None
+    guild = channel.guild if channel else (bot.guilds[0] if bot.guilds else None)
+    if not guild:
+        return
+    now = datetime.now()
+
+    # 1) حيد الرول ديال البارح من اللي بقاو فـ role_holders
+    if BIRTHDAY_ROLE_ID and birthdays_db.get("role_holders"):
+        role = guild.get_role(BIRTHDAY_ROLE_ID)
+        if role:
+            for user_id in list(birthdays_db["role_holders"]):
+                member = guild.get_member(int(user_id))
+                if member and role in member.roles:
+                    try:
+                        await member.remove_roles(role, reason="عيد الميلاد سالي")
+                    except Exception:
+                        pass
+        birthdays_db["role_holders"] = []
+
+    # 2) شوف شكون عيد ميلادو اليوم
+    changed = False
+    for user_id, record in birthdays_db.get("birthdays", {}).items():
+        if record.get("day") != now.day or record.get("month") != now.month:
+            continue
+        if record.get("last_announced_year") == now.year:
+            continue  # تهنى ديجا هاد العام
+
+        member = guild.get_member(int(user_id))
+        record["last_announced_year"] = now.year
+        changed = True
+        if not member:
+            continue
+
+        if channel:
+            embed = discord.Embed(
+                title="🎉🎂 عيد ميلاد سعيد!",
+                description=f"كاع السيرفر كيهني {member.mention} بعيد ميلادو! 🥳🎈",
+                color=discord.Color.pink()
+            )
+            embed.set_thumbnail(url=member.display_avatar.url)
+            try:
+                await channel.send(content=member.mention, embed=embed)
+            except Exception:
+                pass
+
+        if BIRTHDAY_ROLE_ID:
+            role = guild.get_role(BIRTHDAY_ROLE_ID)
+            if role:
+                try:
+                    await member.add_roles(role, reason="عيد ميلاد اليوم")
+                    birthdays_db.setdefault("role_holders", []).append(user_id)
+                except Exception:
+                    pass
+
+    if changed:
+        save_birthdays()
+
+
+@tasks.loop(minutes=60)
+async def birthday_loop():
+    if not birthdays_db.get("birthdays") and not birthdays_db.get("role_holders"):
+        return
+    if datetime.now().hour != BIRTHDAY_ANNOUNCE_HOUR:
+        return
+    await check_and_announce_birthdays()
+
+
+@birthday_loop.before_loop
+async def before_birthday_loop():
+    await bot.wait_until_ready()
+
+
+@birthday_loop.error
+async def birthday_loop_error(error):
+    print(f"[BIRTHDAYS] خطأ فـ birthday_loop: {error}")
+
+
 async def setup_levels_info_message(guild: discord.Guild):
     """كتصاوب رسالة تشرح نظام الـ Leveling كامل + لائحة كاع المستويات
     ورولاتهم، فـ LEVELS_INFO_CHANNEL_ID."""
@@ -3184,6 +3389,7 @@ async def setup_levels_info_message(guild: discord.Guild):
 
 
 @bot.hybrid_command(name="setuplevels")
+@app_commands.default_permissions(administrator=True)
 @commands.has_permissions(administrator=True)
 async def setuplevels_cmd(ctx):
     """كيصاوب/يعاود يصاوب رسالة شرح نظام الـ Leveling فـ LEVELS_INFO_CHANNEL_ID (Admin)"""
@@ -4002,6 +4208,7 @@ async def on_message(message):
 
 
 @bot.hybrid_command()
+@app_commands.default_permissions(kick_members=True)
 @commands.has_permissions(kick_members=True)
 async def kick(ctx, member: discord.Member, *, reason: str = "ما ذكرش سبب"):
     if OWNER_ID and member.id == OWNER_ID:
@@ -4033,6 +4240,7 @@ async def kick(ctx, member: discord.Member, *, reason: str = "ما ذكرش سب
 
 
 @bot.hybrid_command()
+@app_commands.default_permissions(ban_members=True)
 @commands.has_permissions(ban_members=True)
 async def ban(ctx, member: discord.Member, *, reason: str = "ما ذكرش سبب"):
     if OWNER_ID and member.id == OWNER_ID:
@@ -4064,6 +4272,7 @@ async def ban(ctx, member: discord.Member, *, reason: str = "ما ذكرش سب�
 
 
 @bot.hybrid_command()
+@app_commands.default_permissions(ban_members=True)
 @commands.has_permissions(ban_members=True)
 async def unban(ctx, user_id: int):
     try:
@@ -4088,6 +4297,7 @@ async def unban(ctx, user_id: int):
 
 
 @bot.hybrid_command()
+@app_commands.default_permissions(manage_messages=True)
 @commands.has_permissions(manage_messages=True)
 async def clear(ctx, amount: int = 10):
     if amount < 1 or amount > 100:
@@ -4111,6 +4321,7 @@ async def clear(ctx, amount: int = 10):
 
 
 @bot.hybrid_command()
+@app_commands.default_permissions(moderate_members=True)
 @commands.has_permissions(moderate_members=True)
 async def mute(ctx, member: discord.Member, duration: int = 5, *, reason: str = "ما ذكرش سبب"):
     if OWNER_ID and member.id == OWNER_ID:
@@ -4151,6 +4362,7 @@ async def mute(ctx, member: discord.Member, duration: int = 5, *, reason: str = 
 
 
 @bot.hybrid_command()
+@app_commands.default_permissions(moderate_members=True)
 @commands.has_permissions(moderate_members=True)
 async def unmute(ctx, member: discord.Member):
     muted_role = ctx.guild.get_role(MUTED_ROLE_ID)
@@ -4233,6 +4445,7 @@ async def report_error(ctx, error):
 
 
 @bot.hybrid_command()
+@app_commands.default_permissions(kick_members=True)
 @commands.has_permissions(kick_members=True)
 async def warn(ctx, member: discord.Member, *, reason: str):
     if OWNER_ID and member.id == OWNER_ID:
@@ -4268,6 +4481,7 @@ async def warn(ctx, member: discord.Member, *, reason: str):
 
 
 @bot.hybrid_command()
+@app_commands.default_permissions(kick_members=True)
 @commands.has_permissions(kick_members=True)
 async def warns(ctx, member: Optional[discord.Member] = None):
     member = member or ctx.author
@@ -4295,6 +4509,7 @@ async def warns(ctx, member: Optional[discord.Member] = None):
 
 
 @bot.hybrid_command()
+@app_commands.default_permissions(kick_members=True)
 @commands.has_permissions(kick_members=True)
 async def unwarn(ctx, member: discord.Member):
     clear_warns(str(member.id))
@@ -4327,6 +4542,7 @@ CASE_ACTION_COLORS = {
 
 
 @bot.hybrid_command(name="case")
+@app_commands.default_permissions(kick_members=True)
 @commands.has_permissions(kick_members=True)
 async def case_cmd(ctx, case_id: int):
     """كيبين التفاصيل الكاملة ديال Case معين برقمو"""
@@ -4356,6 +4572,7 @@ async def case_cmd(ctx, case_id: int):
 
 
 @bot.hybrid_command(name="history")
+@app_commands.default_permissions(kick_members=True)
 @commands.has_permissions(kick_members=True)
 async def history_cmd(ctx, member: Optional[discord.Member] = None):
     """كيبين كاع الـ Cases ديال عضو معين، الأحدث فالأول (آخر 15)"""
@@ -4400,6 +4617,7 @@ async def history_cmd(ctx, member: Optional[discord.Member] = None):
 # ما يشوف واش تزادت/تحيدت شي كلمة، وواش شكون دارها.
 
 @bot.hybrid_command(name="addword")
+@app_commands.default_permissions(administrator=True)
 async def addword_cmd(ctx, *, word: str = ""):
     await _delete_trigger_silently(ctx)
     if not is_owner(ctx):
@@ -4419,6 +4637,7 @@ async def addword_cmd(ctx, *, word: str = ""):
 
 
 @bot.hybrid_command(name="removeword")
+@app_commands.default_permissions(administrator=True)
 async def removeword_cmd(ctx, *, word: str = ""):
     await _delete_trigger_silently(ctx)
     if not is_owner(ctx):
@@ -4438,6 +4657,7 @@ async def removeword_cmd(ctx, *, word: str = ""):
 
 
 @bot.hybrid_command(name="addaction")
+@app_commands.default_permissions(administrator=True)
 async def addaction_cmd(ctx, *, phrase: str = ""):
     """كتزيد عبارة/سلوك ممنوع (بحال كلمة، غير كتقدر تكون جملة كاملة)،
     وكيتبع نفس آلية الحذف/التحذير ديال BANNED_WORDS."""
@@ -4456,6 +4676,7 @@ async def addaction_cmd(ctx, *, phrase: str = ""):
 
 
 @bot.hybrid_command(name="removeaction")
+@app_commands.default_permissions(administrator=True)
 async def removeaction_cmd(ctx, *, phrase: str = ""):
     await _delete_trigger_silently(ctx)
     if not is_owner(ctx):
@@ -4471,6 +4692,7 @@ async def removeaction_cmd(ctx, *, phrase: str = ""):
 
 
 @bot.hybrid_command(name="listbanned")
+@app_commands.default_permissions(administrator=True)
 async def listbanned_cmd(ctx):
     """كيبعث اللائحة الكاملة بـ DM للـ Owner فقط (حتى الأدمن ما شايفينهاش)"""
     await _delete_trigger_silently(ctx)
@@ -4498,6 +4720,7 @@ async def listbanned_cmd(ctx):
 # العادية فوق حسب الصلاحيات ديال الـ role ديالهم بحال ماكانو.
 
 @bot.hybrid_command(name="ownerkick")
+@app_commands.default_permissions(administrator=True)
 async def ownerkick_cmd(ctx, member: discord.Member, *, reason="ما ذكرش سبب"):
     if not is_owner(ctx):
         return
@@ -4518,6 +4741,7 @@ async def ownerkick_cmd(ctx, member: discord.Member, *, reason="ما ذكرش س
 
 
 @bot.hybrid_command(name="ownerban")
+@app_commands.default_permissions(administrator=True)
 async def ownerban_cmd(ctx, member: discord.Member, *, reason="ما ذكرش سبب"):
     if not is_owner(ctx):
         return
@@ -4538,6 +4762,7 @@ async def ownerban_cmd(ctx, member: discord.Member, *, reason="ما ذكرش س�
 
 
 @bot.hybrid_command(name="ownermute")
+@app_commands.default_permissions(administrator=True)
 async def ownermute_cmd(ctx, member: discord.Member, duration: int = 5, *, reason="ما ذكرش سبب"):
     if not is_owner(ctx):
         return
@@ -4566,6 +4791,7 @@ async def ownermute_cmd(ctx, member: discord.Member, duration: int = 5, *, reaso
 
 
 @bot.hybrid_command(name="muteall")
+@app_commands.default_permissions(administrator=True)
 async def muteall_cmd(ctx, *, reason="Server Lockdown (Owner)"):
     """كتكتم كاع الأعضاء فالسيرفر (ما عدا Owner والأدوار المعفية) — Owner فقط"""
     if not is_owner(ctx):
@@ -4596,6 +4822,7 @@ async def muteall_cmd(ctx, *, reason="Server Lockdown (Owner)"):
 
 
 @bot.hybrid_command(name="unmuteall")
+@app_commands.default_permissions(administrator=True)
 async def unmuteall_cmd(ctx):
     """كتفك الكتم على كاع الأعضاء المكتومين — Owner فقط"""
     if not is_owner(ctx):
@@ -4629,6 +4856,7 @@ async def unmuteall_cmd(ctx):
 # ═══════════════════════════════════════════════════════
 
 @bot.hybrid_command(name="lockdown")
+@app_commands.default_permissions(administrator=True)
 @commands.has_permissions(administrator=True)
 async def lockdown_cmd(ctx, duration_minutes: int = None):
     """كيفعّل Anti-Raid Lockdown يدوياً (بلا ماتوصل عتبة الانضمامات) — Admin/Owner"""
@@ -4647,6 +4875,7 @@ async def lockdown_cmd(ctx, duration_minutes: int = None):
 
 
 @bot.hybrid_command(name="unlockdown")
+@app_commands.default_permissions(administrator=True)
 @commands.has_permissions(administrator=True)
 async def unlockdown_cmd(ctx):
     """كيسد Anti-Raid Lockdown يدوياً ويرجع verification level للحالة العادية — Admin/Owner"""
@@ -4658,6 +4887,7 @@ async def unlockdown_cmd(ctx):
 
 
 @bot.hybrid_command(name="raidstatus")
+@app_commands.default_permissions(kick_members=True)
 @commands.has_permissions(kick_members=True)
 async def raidstatus_cmd(ctx):
     """كيبين الحالة ديال Anti-Raid دابا (مفعل ولا لا، عدد الانضمامات الأخيرة)"""
@@ -4683,6 +4913,7 @@ async def raidstatus_cmd(ctx):
 
 
 @bot.hybrid_command(name="testwelcome")
+@app_commands.default_permissions(administrator=True)
 @commands.has_permissions(administrator=True)
 async def testwelcome_cmd(ctx, member: Optional[discord.Member] = None, returning: bool = False):
     """كيبعث Welcome Card تجريبية هنا فالشات بلا ما تحتاج عضو يدخل بصح للسيرفر (Admin).
@@ -4785,6 +5016,7 @@ async def leaderboard_cmd(ctx):
 
 
 @bot.hybrid_command(name="setlevel")
+@app_commands.default_permissions(administrator=True)
 @commands.has_permissions(administrator=True)
 async def setlevel_cmd(ctx, member: discord.Member, level: int):
     """كيحط عضو مباشرة فمستوى معين (Admin) — مفيد إلا بغيتي تصحح غلط ولا تعطي مستوى بداية"""
@@ -4796,6 +5028,7 @@ async def setlevel_cmd(ctx, member: discord.Member, level: int):
 
 
 @bot.hybrid_command()
+@app_commands.default_permissions(administrator=True)
 @commands.has_permissions(administrator=True)
 async def clearoldverify(ctx):
     """كيمسح رسالة/رسائل 'تفعيل العضوية' القديمة (بالريأكشن ✅) من verify channel"""
@@ -4816,6 +5049,7 @@ async def clearoldverify(ctx):
 
 
 @bot.hybrid_command()
+@app_commands.default_permissions(administrator=True)
 @commands.has_permissions(administrator=True)
 async def setupverify(ctx):
     await setup_verify_message(ctx.guild)
@@ -4823,6 +5057,7 @@ async def setupverify(ctx):
 
 
 @bot.hybrid_command()
+@app_commands.default_permissions(administrator=True)
 @commands.has_permissions(administrator=True)
 async def setupblacklist(ctx):
     """يصاوب رسالة الممنوعات والعقوبات فـ Blacklist channel"""
@@ -4834,6 +5069,7 @@ async def setupblacklist(ctx):
 
 
 @bot.hybrid_command()
+@app_commands.default_permissions(administrator=True)
 @commands.has_permissions(administrator=True)
 async def setuprules(ctx):
     """يصاوب رسالة القوانين + زرارات كنوافق/كنرفض فـ rules channel"""
@@ -4842,6 +5078,7 @@ async def setuprules(ctx):
 
 
 @bot.hybrid_command()
+@app_commands.default_permissions(administrator=True)
 @commands.has_permissions(administrator=True)
 async def setuproles(ctx):
     """يصاوب رسالة اختيار الأدوار بـ Dropdown Menus (خاصك تعمر PICK_ROLES فـ config أولاً)"""
@@ -4878,6 +5115,7 @@ async def setuproles(ctx):
 
 
 @bot.hybrid_command()
+@app_commands.default_permissions(administrator=True)
 @commands.has_permissions(administrator=True)
 async def listroles(ctx):
     """يبين لائحة الأدوار المعمرة دابا فـ PICK_ROLES"""
@@ -4903,6 +5141,7 @@ async def listroles(ctx):
 
 
 @bot.hybrid_command()
+@app_commands.default_permissions(administrator=True)
 @commands.has_permissions(administrator=True)
 async def verify(ctx, member: discord.Member):
     unverified_role = ctx.guild.get_role(UNVERIFIED_ROLE_ID)
@@ -4943,6 +5182,7 @@ async def verify(ctx, member: discord.Member):
 
 
 @bot.hybrid_command()
+@app_commands.default_permissions(administrator=True)
 @commands.has_permissions(administrator=True)
 async def checkroles(ctx):
     """كيتأكد أن role ديال البوت قادر يعطي Member/Unverified/Muted"""
@@ -4964,6 +5204,7 @@ async def checkroles(ctx):
 
 
 @bot.hybrid_command()
+@app_commands.default_permissions(administrator=True)
 @commands.has_permissions(administrator=True)
 async def unverify(ctx, member: discord.Member):
     member_role = ctx.guild.get_role(MEMBER_ROLE_ID)
@@ -5205,6 +5446,13 @@ async def help(ctx):
         "✅/❌ أزرار قبول/رفض (Staff)"
     )
     embed.add_field(name="💡 Suggestions", value=suggestion_cmds, inline=False)
+    birthday_cmds = (
+        "`/setbirthday <يوم> <شهر>` — سجل عيد ميلادك\n"
+        "`/birthday [@عضو]` — بين عيد ميلادك ولا ديال عضو\n"
+        "`/birthdays` — أقرب 10 أعياد ميلاد جاية\n"
+        "`/removebirthday` — حيد عيد ميلادك من السجل"
+    )
+    embed.add_field(name="🎂 Birthdays", value=birthday_cmds, inline=False)
     raid_cmds = (
         "`/lockdown [دقائق]` — فعّل Anti-Raid Lockdown يدوياً (Admin)\n"
         "`/unlockdown` — سد الـ Lockdown يدوياً (Admin)\n"
@@ -5280,6 +5528,7 @@ async def chat(ctx, *, message: str):
 
 
 @bot.hybrid_command()
+@app_commands.default_permissions(administrator=True)
 @owner_only()
 async def نسيني(ctx):
     user_id = str(ctx.author.id)
@@ -5291,6 +5540,7 @@ async def نسيني(ctx):
 
 
 @bot.hybrid_command()
+@app_commands.default_permissions(administrator=True)
 @owner_only()
 async def ذاكرة(ctx):
     user_id = str(ctx.author.id)
@@ -5299,6 +5549,7 @@ async def ذاكرة(ctx):
 
 
 @bot.hybrid_command()
+@app_commands.default_permissions(administrator=True)
 @owner_only()
 async def انعلمك(ctx, *, knowledge: str):
     learned_knowledge.append(knowledge)
@@ -5310,6 +5561,7 @@ async def انعلمك(ctx, *, knowledge: str):
 
 
 @bot.hybrid_command()
+@app_commands.default_permissions(administrator=True)
 @owner_only()
 async def انعلمك_شي_حاجة_جديدة(ctx, *, knowledge: str):
     await انعلمك(ctx, knowledge=knowledge)
@@ -5320,6 +5572,7 @@ async def انعلمك_شي_حاجة_جديدة(ctx, *, knowledge: str):
 # ═══════════════════════════════════════════════════════
 
 @bot.hybrid_command()
+@app_commands.default_permissions(administrator=True)
 @owner_only()
 async def testinfo(ctx, category: str = "all"):
     """
@@ -5823,6 +6076,7 @@ async def on_ready():
     print(f"🎫 Tickets: Panel={TICKETS_PANEL_CHANNEL_ID or 'ماشي معطي'} | Category={TICKETS_CATEGORY_ID or 'ماشي معطي'} | Logs={TICKET_LOGS_CHANNEL_ID or 'MOD_LOGS_CHANNEL_ID'}")
     print(f"📋 Applications: Panel={APPLICATIONS_PANEL_CHANNEL_ID or 'ماشي معطي'} | Review={APPLICATIONS_REVIEW_CHANNEL_ID or 'MOD_LOGS_CHANNEL_ID'} | Cooldown={APPLICATIONS_COOLDOWN_HOURS}h")
     print(f"💡 Suggestions: Channel={SUGGESTIONS_CHANNEL_ID or 'ماشي معطي'}")
+    print(f"🎂 Birthdays: Channel={BIRTHDAY_ANNOUNCE_CHANNEL_ID or 'ماشي معطي'} | Role={BIRTHDAY_ROLE_ID or 'بلا رول'} | Hour={BIRTHDAY_ANNOUNCE_HOUR}:00 UTC")
     print(f"🚨 Anti-Raid: {'نشط' if ANTI_RAID_ENABLED else 'معطل'} (عتبة: {RAID_JOIN_THRESHOLD} فـ {RAID_JOIN_INTERVAL_SECONDS}ث | عمل: {RAID_ACTION})")
     print(f"🖼️ Welcome Cards: {'نشط' if (WELCOME_CARD_ENABLED and PIL_AVAILABLE) else ('معطل (Pillow ماشي مثبت)' if not PIL_AVAILABLE else 'معطل')}")
     print(f"📊 Leveling: {'نشط' if LEVELING_ENABLED else 'معطل'} ({XP_MIN_PER_MESSAGE}-{XP_MAX_PER_MESSAGE} XP/رسالة، cooldown {XP_COOLDOWN_SECONDS}ث)")
@@ -5846,6 +6100,9 @@ async def on_ready():
 
     if not check_reminders.is_running():
         check_reminders.start()
+
+    if not birthday_loop.is_running():
+        birthday_loop.start()
 
     bot.add_view(RulesVerifyView())  # باش الأزرار يبقاو خدامين حتى بعد ريستارت البوت
     bot.add_view(RolePickerView())   # باش الـ Dropdown ديال الأدوار يبقى خدام حتى بعد ريستارت البوت
