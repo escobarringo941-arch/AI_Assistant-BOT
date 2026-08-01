@@ -124,9 +124,27 @@ APPLICATIONS_REVIEWER_ROLE_IDS = [
 SUGGESTIONS_CHANNEL_ID = 1532913868509155358            # ← حط هنا ID ديال channel فين كيتبعثو الاقتراحات
 
 # ═══════ نظام Birthdays (أعياد الميلاد) ═══════
-BIRTHDAY_ANNOUNCE_CHANNEL_ID = 1533241235630854224   # ← حط هنا ID ديال channel فين كيتبعث تهنئة عيد الميلاد
+BIRTHDAY_ANNOUNCE_CHANNEL_ID = 1533241235630854224   # ← حط هنا ID ديال channel فين كيتبعث تهنئة عيد الميلاد (بحال #general)
 BIRTHDAY_ROLE_ID = 1533241332473008229               # ← (اختياري) رول 🎂 كيتعطى نهار عيد الميلاد وكيتحيد الغد — خليها 0 إلا مابغيتيش
 BIRTHDAY_ANNOUNCE_HOUR = 9         # ← فأي ساعة (UTC، من 0 لـ 23) كيتبعث التهنئة كل نهار
+
+# ═══════ رولات الأبراج — كيتعطى أوتوماتيكياً ملي العضو يدير /setbirthday حسب التاريخ ═══════
+# ⚠️ بدل كل 0 برقم الـ Role ID الحقيقي ديالك (Server Settings → Roles → كليك يمين → Copy Role ID)
+# خلي شي واحد 0 إلا مابغيتيش رول لهاد البرج (البوت غايتخطاه بلا مشكل)
+ZODIAC_ROLE_IDS = {
+    "aries": 1533244997858492426,        # ♈ الحمل (21 مارس - 19 أبريل)
+    "taurus": 1533245155782561904,       # ♉ الثور (20 أبريل - 20 ماي)
+    "gemini": 1533245357805404260,       # ♊ الجوزاء (21 ماي - 20 يونيو)
+    "cancer": 1533245304789274744,       # ♋ السرطان (21 يونيو - 22 يوليوز)
+    "leo": 1533245515871948952,          # ♌ الأسد (23 يوليوز - 22 غشت)
+    "virgo": 1533245580615352380,        # ♍ العذراء (23 غشت - 22 شتنبر)
+    "libra": 1533245685141340354,        # ♎ الميزان (23 شتنبر - 22 أكتوبر)
+    "scorpio": 1533245753252905070,      # ♏ العقرب (23 أكتوبر - 21 نونبر)
+    "sagittarius": 1533245801088684145,  # ♐ القوس (22 نونبر - 21 دجنبر)
+    "capricorn": 1533245849964908614,    # ♑ الجدي (22 دجنبر - 19 يناير)
+    "aquarius": 1533245909561901249,     # ♒ الدلو (20 يناير - 18 فبراير)
+    "pisces": 1533245967275393137,       # ♓ الحوت (19 فبراير - 20 مارس)
+}
 
 UNVERIFIED_ROLE_ID = 1526452828267085915
 MEMBER_ROLE_ID = 1526451890399739934
@@ -520,6 +538,58 @@ def save_birthdays():
 
 
 load_birthdays()
+
+# ═══════ حساب البرج من التاريخ (يوم/شهر) ═══════
+ZODIAC_SIGNS = [
+    # (key, الاسم بالعربية, emoji, (شهر البداية, يوم البداية), (شهر النهاية, يوم النهاية))
+    ("capricorn", "الجدي", "♑", (12, 22), (1, 19)),
+    ("aquarius", "الدلو", "♒", (1, 20), (2, 18)),
+    ("pisces", "الحوت", "♓", (2, 19), (3, 20)),
+    ("aries", "الحمل", "♈", (3, 21), (4, 19)),
+    ("taurus", "الثور", "♉", (4, 20), (5, 20)),
+    ("gemini", "الجوزاء", "♊", (5, 21), (6, 20)),
+    ("cancer", "السرطان", "♋", (6, 21), (7, 22)),
+    ("leo", "الأسد", "♌", (7, 23), (8, 22)),
+    ("virgo", "العذراء", "♍", (8, 23), (9, 22)),
+    ("libra", "الميزان", "♎", (9, 23), (10, 22)),
+    ("scorpio", "العقرب", "♏", (10, 23), (11, 21)),
+    ("sagittarius", "القوس", "♐", (11, 22), (12, 21)),
+]
+
+
+def get_zodiac_sign(day: int, month: int):
+    """كترجع (key, الاسم بالعربية, emoji) ديال البرج حسب اليوم والشهر، وإلا (None, None, None)"""
+    for key, label, emoji, start, end in ZODIAC_SIGNS:
+        start_month, start_day = start
+        end_month, end_day = end
+        if start_month == end_month:
+            if month == start_month and start_day <= day <= end_day:
+                return key, label, emoji
+        else:
+            # البرج كيمتد عبر شهرين (بحال الجدي: 22 دجنبر - 19 يناير)
+            if (month == start_month and day >= start_day) or (month == end_month and day <= end_day):
+                return key, label, emoji
+    return None, None, None
+
+
+async def sync_zodiac_role(member: discord.Member, zodiac_key: Optional[str]):
+    """كتبدل رول البرج ديال العضو: كتحيد أي رول برج قديم عندو (إلا بدل التاريخ)
+    وكتعطيه الرول الجديد المطابق للبرج ديالو."""
+    all_zodiac_role_ids = {rid for rid in ZODIAC_ROLE_IDS.values() if rid}
+    if not all_zodiac_role_ids:
+        return
+    new_role_id = ZODIAC_ROLE_IDS.get(zodiac_key) if zodiac_key else None
+    to_remove = [r for r in member.roles if r.id in all_zodiac_role_ids and r.id != new_role_id]
+    try:
+        if to_remove:
+            await member.remove_roles(*to_remove, reason="تبديل رول البرج")
+        if new_role_id:
+            new_role = member.guild.get_role(new_role_id)
+            if new_role and new_role not in member.roles:
+                await member.add_roles(new_role, reason="رول البرج حسب عيد الميلاد")
+    except Exception:
+        pass
+
 
 # ═══════════════════════════════════════════════════════
 # ║              Leveling System (XP + Levels)               ║
@@ -3190,7 +3260,7 @@ async def suggest_cmd(ctx, *, idea: str):
 
 @bot.hybrid_command(name="setbirthday")
 async def setbirthday_cmd(ctx, day: int, month: int):
-    """سجل عيد ميلادك (اليوم والشهر بوحدهم، بلا عام) باش السيرفر يهنيك"""
+    """سجل عيد ميلادك (اليوم والشهر بوحدهم، بلا عام) — البوت غايعطيك رول البرج أوتوماتيكياً"""
     try:
         # كنستعملو عام كبيسة (2024) باش فبراير 29 يخدم زوين
         datetime(2024, month, day)
@@ -3198,19 +3268,35 @@ async def setbirthday_cmd(ctx, day: int, month: int):
         await ctx.send("❌ التاريخ ماشي صحيح. اكتب مثلا `/setbirthday day:15 month:8`.", delete_after=8)
         return
 
+    zodiac_key, zodiac_label, zodiac_emoji = get_zodiac_sign(day, month)
+
     birthdays_db.setdefault("birthdays", {})[str(ctx.author.id)] = {
-        "day": day, "month": month, "last_announced_year": None
+        "day": day, "month": month, "last_announced_year": None, "zodiac": zodiac_key
     }
     save_birthdays()
-    await ctx.send(f"🎂 تم تسجيل عيد ميلادك: **{day:02d}/{month:02d}**! غادي نهنيوك نهار عيد ميلادك.", delete_after=10)
+
+    zodiac_note = ""
+    if isinstance(ctx.author, discord.Member):
+        await sync_zodiac_role(ctx.author, zodiac_key)
+        if zodiac_key and ZODIAC_ROLE_IDS.get(zodiac_key):
+            zodiac_note = f"\n{zodiac_emoji} عطيناك رول برج **{zodiac_label}**!"
+        elif zodiac_key:
+            zodiac_note = f"\n{zodiac_emoji} البرج ديالك هو **{zodiac_label}** (الرول ديالو ماعادش معطي فالإعدادات)."
+
+    await ctx.send(
+        f"🎂 تم تسجيل عيد ميلادك: **{day:02d}/{month:02d}**! غادي نهنيوك نهار عيد ميلادك.{zodiac_note}",
+        delete_after=15
+    )
 
 
 @bot.hybrid_command(name="removebirthday")
 async def removebirthday_cmd(ctx):
-    """حيد عيد الميلاد ديالك من السجل"""
+    """حيد عيد الميلاد ديالك من السجل (وكيحيد رول البرج زيادة)"""
     removed = birthdays_db.get("birthdays", {}).pop(str(ctx.author.id), None)
     if removed:
         save_birthdays()
+        if isinstance(ctx.author, discord.Member):
+            await sync_zodiac_role(ctx.author, None)  # كيحيد أي رول برج عندو بلا مايعطي جديد
         await ctx.send("🗑️ تم حيد عيد الميلاد ديالك من السجل.", delete_after=8)
     else:
         await ctx.send("⚠️ ماعندكش عيد ميلاد مسجل أصلاً.", delete_after=8)
@@ -3218,7 +3304,7 @@ async def removebirthday_cmd(ctx):
 
 @bot.hybrid_command(name="birthday")
 async def birthday_cmd(ctx, member: Optional[discord.Member] = None):
-    """بين عيد الميلاد ديالك ولا ديال عضو آخر"""
+    """بين عيد الميلاد ديالك ولا ديال عضو آخر (والبرج ديالو)"""
     target = member or ctx.author
     record = birthdays_db.get("birthdays", {}).get(str(target.id))
     if not record:
@@ -3227,7 +3313,13 @@ async def birthday_cmd(ctx, member: Optional[discord.Member] = None):
         else:
             await ctx.send(f"⚠️ {target.mention} ماعندوش عيد ميلاد مسجل.", delete_after=8)
         return
-    await ctx.send(f"🎂 عيد ميلاد {target.mention}: **{record['day']:02d}/{record['month']:02d}**")
+
+    zodiac_key = record.get("zodiac")
+    zodiac_line = ""
+    if zodiac_key:
+        _, zodiac_label, zodiac_emoji = get_zodiac_sign(record["day"], record["month"])
+        zodiac_line = f"\n{zodiac_emoji} البرج: **{zodiac_label}**"
+    await ctx.send(f"🎂 عيد ميلاد {target.mention}: **{record['day']:02d}/{record['month']:02d}**{zodiac_line}")
 
 
 @bot.hybrid_command(name="birthdays")
@@ -3305,14 +3397,28 @@ async def check_and_announce_birthdays():
             continue
 
         if channel:
+            zodiac_key = record.get("zodiac")
+            zodiac_line = ""
+            if zodiac_key:
+                _, zodiac_label, zodiac_emoji = get_zodiac_sign(record["day"], record["month"])
+                if zodiac_label:
+                    zodiac_line = f"\n{zodiac_emoji} البرج: **{zodiac_label}**"
+
             embed = discord.Embed(
                 title="🎉🎂 عيد ميلاد سعيد!",
-                description=f"كاع السيرفر كيهني {member.mention} بعيد ميلادو! 🥳🎈",
-                color=discord.Color.pink()
+                description=(
+                    f"### 🎊 اليوم عيد ميلاد {member.mention}! 🎊\n"
+                    f"كاع أعضاء **{SERVER_NAME}** كيهنيوك بهاد اليوم السعيد! 🥳🎈🎁"
+                    f"{zodiac_line}"
+                ),
+                color=discord.Color.pink(),
+                timestamp=datetime.now()
             )
-            embed.set_thumbnail(url=member.display_avatar.url)
+            embed.set_author(name=str(member), icon_url=member.display_avatar.url)
+            embed.set_image(url=member.display_avatar.replace(size=512).url)  # الصورة كبيرة وواضحة
+            embed.set_footer(text=f"{SERVER_NAME} | Happy Birthday 🎂 | ID: {member.id}")
             try:
-                await channel.send(content=member.mention, embed=embed)
+                await channel.send(content=f"🎉🎂 {member.mention} عيد ميلادك سعيد! 🎂🎉", embed=embed)
             except Exception:
                 pass
 
@@ -5447,10 +5553,10 @@ async def help(ctx):
     )
     embed.add_field(name="💡 Suggestions", value=suggestion_cmds, inline=False)
     birthday_cmds = (
-        "`/setbirthday <يوم> <شهر>` — سجل عيد ميلادك\n"
-        "`/birthday [@عضو]` — بين عيد ميلادك ولا ديال عضو\n"
+        "`/setbirthday <يوم> <شهر>` — سجل عيد ميلادك (كيعطيك رول البرج أوتوماتيكياً ♈)\n"
+        "`/birthday [@عضو]` — بين عيد ميلادك ولا ديال عضو (والبرج)\n"
         "`/birthdays` — أقرب 10 أعياد ميلاد جاية\n"
-        "`/removebirthday` — حيد عيد ميلادك من السجل"
+        "`/removebirthday` — حيد عيد ميلادك من السجل (وحيد رول البرج)"
     )
     embed.add_field(name="🎂 Birthdays", value=birthday_cmds, inline=False)
     raid_cmds = (
