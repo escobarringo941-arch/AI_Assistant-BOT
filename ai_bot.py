@@ -102,9 +102,9 @@ MOD_LOGS_CHANNEL_ID = 1526470164235681832
 VERIFY_CHANNEL_ID = 1526481352264781854
 RULES_CHANNEL_ID = 1526474691789721700
 BLACKLIST_CHANNEL_ID = 1526858911477661786  # ← حط هنا ID ديال channel "Blacklist things"
-REPORTS_CHANNEL_ID = 1526884019105431562    # ← حط هنا ID ديال channel البلاغات (فين كتوصل البلاغات ديال !report)
+REPORTS_CHANNEL_ID = 1526884019105431562    # ← حط هنا ID ديال channel البلاغات (فين كتوصل البلاغات ديال /report)
 
-# ═══════ نظام Tickets (بدل/جنب !report — channels خاصة بكل مشكل) ═══════
+# ═══════ نظام Tickets (بدل/جنب /report — channels خاصة بكل مشكل) ═══════
 TICKETS_PANEL_CHANNEL_ID = 1532144216958959839   # ← channel فين غادي تبان رسالة "🎫 دير Ticket" بالزر
 TICKETS_CATEGORY_ID = 1532144108754440355        # ← ID ديال Category (فولدر) "Tickets" فين كيتخلقو الـ channels الخاصة
 TICKET_LOGS_CHANNEL_ID = 1532144316611428352     # ← channel فين كيتبعث ملخص/transcript الـ ticket ملي يتسد (إلا خليتها 0 غايستعمل MOD_LOGS_CHANNEL_ID)
@@ -168,7 +168,7 @@ BANNED_WORDS = [
 
 # ═══════ لائحة ديناميكية: كلمات وأفعال ممنوعة كتزاد/كتحيد بالأوامر ═══════
 # BANNED_WORDS فوق هي القائمة الأساسية المكتوبة فالكود. أي كلمة/عبارة كتزاد
-# ولا كتحيد بالأوامر (!addword, !addaction) كتتسجل فـ BANNED_LISTS_FILE
+# ولا كتحيد بالأوامر (/addword, /addaction) كتتسجل فـ BANNED_LISTS_FILE
 # باش تبقى محفوظة حتى بعد ريستارت البوت. BANNED_ACTIONS هي عبارات/سلوكيات
 # ممنوعة زيادة على الكلمات، وكتتبع نفس آلية الحذف/التحذير ديال BANNED_WORDS.
 BANNED_LISTS_FILE = os.path.join(DATA_DIR, "banned_lists.json")
@@ -183,7 +183,7 @@ ANTI_RAID_ENABLED = True
 RAID_JOIN_THRESHOLD = 10          # عدد الأعضاء الجداد
 RAID_JOIN_INTERVAL_SECONDS = 30   # فـ هاد المدة (بالثواني) → إلا توصلات = Raid محتمل
 RAID_ACTION = "kick"              # شنو يتدار فالعضو ملي يكون Raid Mode مفعل: "kick" ولا "ban"
-RAID_LOCKDOWN_DURATION_MINUTES = 30  # شحال كيدوم Lockdown قبل ما يرجع عادي أوتوماتيكياً (0 = يبقى حتى !unlockdown يدوي)
+RAID_LOCKDOWN_DURATION_MINUTES = 30  # شحال كيدوم Lockdown قبل ما يرجع عادي أوتوماتيكياً (0 = يبقى حتى /unlockdown يدوي)
 
 # كشف الحسابات الجداد بزاف (كثير ما كتكون هي لي فراود) — كيبعث غير تنبيه،
 # ما كيديرش عقوبة تلقائية إلا كان Raid Mode مفعل
@@ -219,7 +219,7 @@ LEVEL_ROLES = {
 }
 
 # ═══════ درجات العقوبة حسب عدد التحذيرات (سهل التعديل) ═══════
-# كل عضو كيبدا بلا تحذيرات. كل تحذير (Auto-Mod ولا !warn يدوي) كيزيد
+# كل عضو كيبدا بلا تحذيرات. كل تحذير (Auto-Mod ولا /warn يدوي) كيزيد
 # العداد ديالو بـ 1. من غير ما يوصل لعتبة، ما كتوقع حتى عقوبة.
 # غيّر الأرقام هنا حسب بغيتك — بلا ما تمس شي حاجة أخرى فالكود.
 MUTE_AFTER_WARNS = 2     # عدد التحذيرات باش يتكتم أوتوماتيكياً
@@ -285,6 +285,9 @@ intents.members = True
 intents.reactions = True
 intents.presences = True  # ← ضروري باش نقدرو نحسبو "Online Members"، خاصك تفعلها من Discord Developer Portal
 # (https://discord.com/developers/applications → البوت ديالك → Bot → Privileged Gateway Intents → Presence Intent)
+# ═══════ ملاحظة: command_prefix باقي محطوط تقنياً (discord.py كيطلبو)، ولكن
+# ماعادش كيتستعمل — bot.process_commands() تنيح فـ on_message، فـ "!" ماعادش
+# كيخدم. كاع الأوامر دابا Slash (/) بوحدها. ═══════
 bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
 user_memory = defaultdict(list)
@@ -305,8 +308,8 @@ raid_state = {}                   # {guild_id: {"active": bool, "previous_verifi
 # ═══════════════════════════════════════════════════════
 # كل عقوبة (warn/mute/kick/ban/unmute/unban/unwarn) كتاخد رقم Case فريد
 # ومتزايد (#1, #2, #3...)، وكتتسجل فـ cases.json باش تبقى محفوظة حتى
-# بعد ريستارت البوت. استعمل !history @user باش تشوف كاع الحالات ديال
-# عضو معين، ولا !case <رقم> باش تشوف حالة معينة بالتفصيل.
+# بعد ريستارت البوت. استعمل /history @user باش تشوف كاع الحالات ديال
+# عضو معين، ولا /case <رقم> باش تشوف حالة معينة بالتفصيل.
 CASES_FILE = os.path.join(DATA_DIR, "cases.json")
 cases_db = {"next_id": 1, "cases": {}}  # cases: {"1": {...}, "2": {...}}
 
@@ -557,8 +560,8 @@ load_admin_list_message_ids()
 # ═══════════════════════════════════════════════════════
 # ║                  نظام التذكيرات (Reminders)             ║
 # ═══════════════════════════════════════════════════════
-# كل واحد يقدر يصاوب تذكير لراسو بـ !remind <وقت> <رسالة>
-# مثال: !remind 10m اشرب الما  /  !remind 2h30m اجتماع  /  !remind 1d تذكير
+# كل واحد يقدر يصاوب تذكير لراسو بـ /remind <وقت> <رسالة>
+# مثال: /remind 10m اشرب الما  /  /remind 2h30m اجتماع  /  /remind 1d تذكير
 # البوت كيحفظ التذكيرات فـ ملف JSON باش ما تضيعش حتى ملي يعاود ريستارت.
 REMINDERS_FILE = os.path.join(DATA_DIR, "reminders.json")
 reminders = []  # [{id, user_id, channel_id, guild_id, message, remind_at, created_at}]
@@ -760,7 +763,7 @@ def owner_only():
 
 
 async def _delete_trigger_silently(ctx):
-    """يمسح الرسالة اللي فيها الأمر مباشرة (بحال !report) باش حتى حد
+    """يمسح الرسالة اللي فيها الأمر مباشرة (بحال /report) باش حتى حد
     ما يشوف الأمر ولا المحتوى ديالو فالقناة."""
     try:
         await ctx.message.delete()
@@ -1835,7 +1838,7 @@ class GenderSelectView(discord.ui.View):
                 await member.add_roles(role)
         except discord.Forbidden:
             await interaction.response.send_message(
-                "❌ ما قدرتش نعطيك الرول، بلغ الإدارة (البوت ماعندوش صلاحية — تحقق من ترتيب الرولات بـ `!checkroles`).",
+                "❌ ما قدرتش نعطيك الرول، بلغ الإدارة (البوت ماعندوش صلاحية — تحقق من ترتيب الرولات بـ `/checkroles`).",
                 ephemeral=True
             )
             return
@@ -2017,7 +2020,7 @@ class RulesVerifyView(discord.ui.View):
                     "⚠️ فشل التفعيل (صلاحية)",
                     f"**المستخدم:** {member.mention} ({member.name})\n"
                     f"**السبب:** role ديال البوت ماعندوش صلاحية يعطي role ديال Member.\n"
-                    f"**الحل:** استعمل `!checkroles` باش تشوف المشكل بالضبط.",
+                    f"**الحل:** استعمل `/checkroles` باش تشوف المشكل بالضبط.",
                     discord.Color.orange()
                 )
                 return
@@ -2221,15 +2224,15 @@ async def setup_blacklist_message(guild: discord.Guild):
 
         if REPORTS_CHANNEL_ID:
             embed.add_field(
-                name="🚨 كيفاش تبلغ عن مخالفة (!report)",
+                name="🚨 كيفاش تبلغ عن مخالفة (/report)",
                 value=(
                     "إلا شفتي شي مخالفة والبوت ما تدخلش أوتوماتيكياً، عندك طريقتين:\n\n"
                     "**1) بلاغ على عضو معين:**\n"
-                    "`!report @العضو السبب`\n"
-                    "مثال: `!report @GGMW9 بعث رابط ديال سيرفر آخر فـ #general`\n\n"
+                    "`/report @العضو السبب`\n"
+                    "مثال: `/report @GGMW9 بعث رابط ديال سيرفر آخر فـ #general`\n\n"
                     "**2) بلاغ عام (بلا ما تحدد عضو):**\n"
-                    "`!report وصف المشكل`\n"
-                    "مثال: `!report كاين ناس كيهضرو بزربة فـ #announcements`\n\n"
+                    "`/report وصف المشكل`\n"
+                    "مثال: `/report كاين ناس كيهضرو بزربة فـ #announcements`\n\n"
                     "💡 **نصيحة:** إلا عندك سكرين شوت ديال المخالفة، بعثو مباشرة للمشرفين ولا فـ نفس الرسالة معاك (mention العضو بحال Ahmed)\n"
                     "⚠️ الرسالة ديالك كتمسح أوتوماتيك من الشات العام والبلاغ كيوصل مباشرة للإدارة، حتى حد ماغاديش يشوف بلي بلغتي."
                 ),
@@ -2308,15 +2311,15 @@ async def setup_blacklist_message(guild: discord.Guild):
 
         if REPORTS_CHANNEL_ID:
             embed_fr.add_field(
-                name="🚨 Comment signaler une infraction (!report)",
+                name="🚨 Comment signaler une infraction (/report)",
                 value=(
                     "Si vous voyez une infraction et que le bot n'intervient pas automatiquement, vous avez deux options :\n\n"
                     "**1) Signaler un membre précis :**\n"
-                    "`!report @Membre raison`\n"
-                    "Exemple : `!report @GGMW9 a posté un lien vers un autre serveur dans #general`\n\n"
+                    "`/report @Membre raison`\n"
+                    "Exemple : `/report @GGMW9 a posté un lien vers un autre serveur dans #general`\n\n"
                     "**2) Signalement général (sans citer de membre) :**\n"
-                    "`!report description du problème`\n"
-                    "Exemple : `!report des gens spamment dans #announcements`\n\n"
+                    "`/report description du problème`\n"
+                    "Exemple : `/report des gens spamment dans #announcements`\n\n"
                     "💡 **Conseil :** si vous avez une capture d'écran de l'infraction, envoyez-la directement au staff ou dans le même message "
                     "(en mentionnant le membre, ex. Ahmed)\n"
                     "⚠️ Votre message est automatiquement supprimé du salon public et le signalement arrive directement à l'administration, "
@@ -2395,15 +2398,15 @@ async def setup_blacklist_message(guild: discord.Guild):
 
         if REPORTS_CHANNEL_ID:
             embed_en.add_field(
-                name="🚨 How to report a violation (!report)",
+                name="🚨 How to report a violation (/report)",
                 value=(
                     "If you see a violation and the bot doesn't step in automatically, you have two options:\n\n"
                     "**1) Report a specific member:**\n"
-                    "`!report @Member reason`\n"
-                    "Example: `!report @GGMW9 posted a link to another server in #general`\n\n"
+                    "`/report @Member reason`\n"
+                    "Example: `/report @GGMW9 posted a link to another server in #general`\n\n"
                     "**2) General report (without naming a member):**\n"
-                    "`!report description of the issue`\n"
-                    "Example: `!report people are spamming in #announcements`\n\n"
+                    "`/report description of the issue`\n"
+                    "Example: `/report people are spamming in #announcements`\n\n"
                     "💡 **Tip:** if you have a screenshot of the violation, send it directly to staff or in the same message "
                     "(mentioning the member, e.g. Ahmed)\n"
                     "⚠️ Your message is automatically deleted from the public chat and the report goes straight to the staff, "
@@ -2679,8 +2682,8 @@ async def setup_levels_info_message(guild: discord.Guild):
             f"كل ما تجمع XP كفاية، كتطلع **Level** جديد. من **Level 30** لفوق، كل مستوى كيصعب أكثر بشكل ملحوظ — "
             f"يعني الوصول لمستويات عالية كيستاهل جهد حقيقي! 💪\n\n"
             f"**الأوامر:**\n"
-            f"`!rank [@user]` — شوف المستوى والـ XP ديالك ولا ديال عضو آخر\n"
-            f"`!leaderboard` — أفضل 10 أعضاء نشيطين فالسيرفر"
+            f"`/rank [@user]` — شوف المستوى والـ XP ديالك ولا ديال عضو آخر\n"
+            f"`/leaderboard` — أفضل 10 أعضاء نشيطين فالسيرفر"
         ),
         color=discord.Color.gold(),
         timestamp=datetime.now()
@@ -2800,7 +2803,7 @@ async def trigger_raid_lockdown(guild: discord.Guild, reason: str, duration_minu
                 f"{reason}\n\n"
                 f"✅ verification level تصعدات مؤقتاً لأعلى درجة.\n"
                 f"⚠️ كل عضو جديد غادي يتـ **{'حظر' if RAID_ACTION == 'ban' else 'طرد'}** تلقائياً حتى يتسد الـ Lockdown.\n"
-                f"استعمل `!unlockdown` باش تسدو يدوياً قبل الوقت، ولا `!raidstatus` باش تشوف الحالة."
+                f"استعمل `/unlockdown` باش تسدو يدوياً قبل الوقت، ولا `/raidstatus` باش تشوف الحالة."
             ),
             color=discord.Color.dark_red(),
             timestamp=datetime.now()
@@ -3250,7 +3253,7 @@ async def on_raw_reaction_add(payload):
                 "⚠️ فشل التفعيل (صلاحية)",
                 f"**المستخدم:** {member.mention} ({member.name})\n"
                 f"**السبب:** role ديال البوت ماعندوش صلاحية يعطي role ديال Member.\n"
-                f"**الحل:** استعمل `!checkroles` باش تشوف المشكل بالضبط.",
+                f"**الحل:** استعمل `/checkroles` باش تشوف المشكل بالضبط.",
                 discord.Color.orange()
             )
             return
@@ -3368,9 +3371,8 @@ async def on_message(message):
         return
     if message.author.bot:
         return
-    await bot.process_commands(message)
-    if message.content.startswith("!"):
-        return
+    # ═══════ Prefix Commands (!) معطلين — كاع الأوامر دابا Slash (/) بوحدها ═══════
+    # (bot.process_commands ماعادش كيتصاوب، حيت الأوامر ديال ! معطلة نهائياً)
     await process_message_xp(message)
     msg_lower = message.content.lower()
     gender = detect_gender(message.author.name, message.author.display_name)
@@ -3830,7 +3832,7 @@ async def unwarn(ctx, member: discord.Member):
 
 
 # ═══════════════════════════════════════════════════════
-# ║        !case و !history — تصفح سجل الـ Cases            ║
+# ║        /case و /history — تصفح سجل الـ Cases            ║
 # ═══════════════════════════════════════════════════════
 
 CASE_ACTION_COLORS = {
@@ -3898,7 +3900,7 @@ async def history_cmd(ctx, member: Optional[discord.Member] = None):
         embed.description = "\n\n".join(lines)
         embed.add_field(name="📊 مجموع الـ Cases", value=str(len(user_cases)), inline=False)
         if len(user_cases) > 15:
-            embed.set_footer(text=f"{SERVER_NAME} | كيبان غير آخر 15 Case، استعمل !case <رقم> باش تشوف واحد قديم")
+            embed.set_footer(text=f"{SERVER_NAME} | كيبان غير آخر 15 Case، استعمل /case <رقم> باش تشوف واحد قديم")
         else:
             embed.set_footer(text=f"{SERVER_NAME} | Moderation History")
 
@@ -3916,7 +3918,7 @@ async def history_cmd(ctx, member: Optional[discord.Member] = None):
 # كتمسح مباشرة، والجواب كيوصل بـ DM للـ Owner فقط — باش حتى حد آخر فالسيرفر
 # ما يشوف واش تزادت/تحيدت شي كلمة، وواش شكون دارها.
 
-@bot.command(name="addword")
+@bot.hybrid_command(name="addword")
 async def addword_cmd(ctx, *, word: str = ""):
     await _delete_trigger_silently(ctx)
     if not is_owner(ctx):
@@ -3935,7 +3937,7 @@ async def addword_cmd(ctx, *, word: str = ""):
         pass
 
 
-@bot.command(name="removeword")
+@bot.hybrid_command(name="removeword")
 async def removeword_cmd(ctx, *, word: str = ""):
     await _delete_trigger_silently(ctx)
     if not is_owner(ctx):
@@ -3954,7 +3956,7 @@ async def removeword_cmd(ctx, *, word: str = ""):
         pass
 
 
-@bot.command(name="addaction")
+@bot.hybrid_command(name="addaction")
 async def addaction_cmd(ctx, *, phrase: str = ""):
     """كتزيد عبارة/سلوك ممنوع (بحال كلمة، غير كتقدر تكون جملة كاملة)،
     وكيتبع نفس آلية الحذف/التحذير ديال BANNED_WORDS."""
@@ -3972,7 +3974,7 @@ async def addaction_cmd(ctx, *, phrase: str = ""):
         pass
 
 
-@bot.command(name="removeaction")
+@bot.hybrid_command(name="removeaction")
 async def removeaction_cmd(ctx, *, phrase: str = ""):
     await _delete_trigger_silently(ctx)
     if not is_owner(ctx):
@@ -3987,7 +3989,7 @@ async def removeaction_cmd(ctx, *, phrase: str = ""):
             pass
 
 
-@bot.command(name="listbanned")
+@bot.hybrid_command(name="listbanned")
 async def listbanned_cmd(ctx):
     """كيبعث اللائحة الكاملة بـ DM للـ Owner فقط (حتى الأدمن ما شايفينهاش)"""
     await _delete_trigger_silently(ctx)
@@ -4009,12 +4011,12 @@ async def listbanned_cmd(ctx):
 # ═══════════════════════════════════════════════════════
 # ║   OWNER ONLY — تحكم كامل فالسيرفر (كتم/حظر/طرد)          ║
 # ═══════════════════════════════════════════════════════
-# هاد الأوامر منفصلة على !kick/!ban/!mute العاديين (اللي خدامين بالصلاحيات
+# هاد الأوامر منفصلة على /kick//ban//mute العاديين (اللي خدامين بالصلاحيات
 # ديال Discord)، وخاصة غير بالـ Owner بواسطة الـ ID — حتى admin/mod ما
 # يقدروش يستعملوها. الـ Admins والـ Moderators كيبقاو خدامين بالأوامر
 # العادية فوق حسب الصلاحيات ديال الـ role ديالهم بحال ماكانو.
 
-@bot.command(name="ownerkick")
+@bot.hybrid_command(name="ownerkick")
 async def ownerkick_cmd(ctx, member: discord.Member, *, reason="ما ذكرش سبب"):
     if not is_owner(ctx):
         return
@@ -4034,7 +4036,7 @@ async def ownerkick_cmd(ctx, member: discord.Member, *, reason="ما ذكرش س
         await ctx.send(f"❌ خطأ: {str(e)}", delete_after=5)
 
 
-@bot.command(name="ownerban")
+@bot.hybrid_command(name="ownerban")
 async def ownerban_cmd(ctx, member: discord.Member, *, reason="ما ذكرش سبب"):
     if not is_owner(ctx):
         return
@@ -4054,7 +4056,7 @@ async def ownerban_cmd(ctx, member: discord.Member, *, reason="ما ذكرش س�
         await ctx.send(f"❌ خطأ: {str(e)}", delete_after=5)
 
 
-@bot.command(name="ownermute")
+@bot.hybrid_command(name="ownermute")
 async def ownermute_cmd(ctx, member: discord.Member, duration: int = 5, *, reason="ما ذكرش سبب"):
     if not is_owner(ctx):
         return
@@ -4082,7 +4084,7 @@ async def ownermute_cmd(ctx, member: discord.Member, duration: int = 5, *, reaso
         await ctx.send("❌ ما عنديش الصلاحية!", delete_after=5)
 
 
-@bot.command(name="muteall")
+@bot.hybrid_command(name="muteall")
 async def muteall_cmd(ctx, *, reason="Server Lockdown (Owner)"):
     """كتكتم كاع الأعضاء فالسيرفر (ما عدا Owner والأدوار المعفية) — Owner فقط"""
     if not is_owner(ctx):
@@ -4112,7 +4114,7 @@ async def muteall_cmd(ctx, *, reason="Server Lockdown (Owner)"):
     )
 
 
-@bot.command(name="unmuteall")
+@bot.hybrid_command(name="unmuteall")
 async def unmuteall_cmd(ctx):
     """كتفك الكتم على كاع الأعضاء المكتومين — Owner فقط"""
     if not is_owner(ctx):
@@ -4156,7 +4158,7 @@ async def lockdown_cmd(ctx, duration_minutes: int = None):
     )
     if started:
         dur_txt = f"{duration_minutes} دقيقة" if duration_minutes else (
-            f"{RAID_LOCKDOWN_DURATION_MINUTES} دقيقة" if RAID_LOCKDOWN_DURATION_MINUTES else "حتى `!unlockdown` يدوي"
+            f"{RAID_LOCKDOWN_DURATION_MINUTES} دقيقة" if RAID_LOCKDOWN_DURATION_MINUTES else "حتى `/unlockdown` يدوي"
         )
         await ctx.send(f"🔒 Lockdown تفعل. غادي يدوم: {dur_txt}.")
     else:
@@ -4203,7 +4205,7 @@ async def raidstatus_cmd(ctx):
 @commands.has_permissions(administrator=True)
 async def testwelcome_cmd(ctx, member: Optional[discord.Member] = None, returning: bool = False):
     """كيبعث Welcome Card تجريبية هنا فالشات بلا ما تحتاج عضو يدخل بصح للسيرفر (Admin).
-    استعمال: !testwelcome [@عضو] [true/false للـ returning]"""
+    استعمال: /testwelcome [@عضو] [true/false للـ returning]"""
     member = member or ctx.author
     if not PIL_AVAILABLE:
         await ctx.send("❌ Pillow ماشي مثبتة، الصورة ماغاديش تتصاوب. دير `pip install Pillow`.")
@@ -4547,20 +4549,20 @@ async def info(ctx):
     await ctx.send(embed=embed)
 
 
-@bot.command(name="remind", aliases=["تذكير", "reminder"])
+@bot.hybrid_command(name="remind", aliases=["تذكير", "reminder"])
 async def remind_cmd(ctx, channel: Optional[discord.TextChannel] = None, *, rest: str):
     """
     كل واحد يصاوب تذكير لراسو، فأي وقت وأي شانيل بغى:
-    !remind 10m اشرب الما                     ← بعد 10 دقايق، فنفس الشانيل
-    !remind 21:00 نوض                         ← اليوم/غدا فـ 21:00، فنفس الشانيل
-    !remind #general 2h30m سلام              ← بعد ساعتين ونص، فـ #general
-    !remind #announcements 2026-07-25-18:00 حدث ← نهار محدد بالضبط
+    /remind 10m اشرب الما                     ← بعد 10 دقايق، فنفس الشانيل
+    /remind 21:00 نوض                         ← اليوم/غدا فـ 21:00، فنفس الشانيل
+    /remind #general 2h30m سلام              ← بعد ساعتين ونص، فـ #general
+    /remind #announcements 2026-07-25-18:00 حدث ← نهار محدد بالضبط
     """
     parts = rest.strip().split(maxsplit=1)
     if len(parts) < 2:
         await ctx.send(
-            "❌ خاصك تحط الوقت والرسالة. مثال: `!remind 10m اشرب الما`\n"
-            "استعمل `!help` باش تشوف كاع الصيغ الممكنة.",
+            "❌ خاصك تحط الوقت والرسالة. مثال: `/remind 10m اشرب الما`\n"
+            "استعمل `/help` باش تشوف كاع الصيغ الممكنة.",
             delete_after=15
         )
         return
@@ -4587,7 +4589,7 @@ async def remind_cmd(ctx, channel: Optional[discord.TextChannel] = None, *, rest
                 "`10m` / `2h` / `1h30m` / `1d` — بعد مدة من دابا\n"
                 "`21:00` — اليوم فهاد الساعة (وإلا غدا إلا فاتت)\n"
                 "`2026-07-25-21:00` — نهار محدد بالضبط\n\n"
-                "مثال كامل: `!remind #general 2h30m سلام`"
+                "مثال كامل: `/remind #general 2h30m سلام`"
             ),
             color=discord.Color.red()
         )
@@ -4647,7 +4649,7 @@ async def reminders_cmd(ctx):
         text = r["message"] if len(r["message"]) <= 200 else r["message"][:200] + "..."
         chan_txt = f"<#{r['channel_id']}>"
         embed.add_field(name=f"#{r['id']}", value=f"{text}\n<t:{ts}:R> — {chan_txt}", inline=False)
-    embed.set_footer(text="!delreminder <ID> باش تلغي وحدة")
+    embed.set_footer(text="/delreminder <ID> باش تلغي وحدة")
     await ctx.send(embed=embed)
 
 
@@ -4670,83 +4672,83 @@ async def help(ctx):
         title="📋 قائمة أوامر GGMW9",
         description=(
             "**GGMW9** — بوت AI مغربي + Moderation + Verification + Auto-Info\n"
-            "💡 معظم الأوامر خدامة بجوج: بـ `!` (بحال `!kick`) أو بـ `/` (بحال `/kick`)."
+            "💡 كاع الأوامر دابا Slash Commands (`/`) بوحدها — اكتب `/` باش تشوف اللائحة ديال Discord."
         ),
         color=discord.Color.blue(),
         timestamp=datetime.now()
     )
     ai_cmds = (
-        "`!chat <رسالة>` — هضر مع GGMW9\n"
-        "`!نسيني` — امسح ذاكرتك\n"
-        "`!ذاكرة` — شحال من رسالة فالذاكرة\n"
-        "`!انعلمك <حاجة>` — علم GGMW9 شي حاجة"
+        "`/chat <رسالة>` — هضر مع GGMW9\n"
+        "`/نسيني` — امسح ذاكرتك\n"
+        "`/ذاكرة` — شحال من رسالة فالذاكرة\n"
+        "`/انعلمك <حاجة>` — علم GGMW9 شي حاجة"
     )
     embed.add_field(name="🤖 AI & ذاكرة", value=ai_cmds, inline=False)
     mod_cmds = (
-        "`!kick @user [سبب]` — طرد عضو\n"
-        "`!ban @user [سبب]` — حظر عضو\n"
-        "`!unban <user_id>` — فك الحظر\n"
-        "`!mute @user <دقائق> [سبب]` — كتم\n"
-        "`!unmute @user` — فك الكتم\n"
-        "`!warn @user <سبب>` — تحذير\n"
-        "`!warns [@user]` — عرض التحذيرات\n"
-        "`!unwarn @user` — مسح التحذيرات\n"
-        "`!case <رقم>` — تفاصيل Case معين\n"
-        "`!history [@user]` — سجل الـ Cases ديال عضو\n"
-        "`!clear <عدد>` — حذف رسائل (1-100)"
+        "`/kick @user [سبب]` — طرد عضو\n"
+        "`/ban @user [سبب]` — حظر عضو\n"
+        "`/unban <user_id>` — فك الحظر\n"
+        "`/mute @user <دقائق> [سبب]` — كتم\n"
+        "`/unmute @user` — فك الكتم\n"
+        "`/warn @user <سبب>` — تحذير\n"
+        "`/warns [@user]` — عرض التحذيرات\n"
+        "`/unwarn @user` — مسح التحذيرات\n"
+        "`/case <رقم>` — تفاصيل Case معين\n"
+        "`/history [@user]` — سجل الـ Cases ديال عضو\n"
+        "`/clear <عدد>` — حذف رسائل (1-100)"
     )
     embed.add_field(name="🛡️ موديراتورز", value=mod_cmds, inline=False)
     verif_cmds = (
-        "`!setupverify` — صاوب رسالة التفعيل بـ ✅ (Admin)\n"
-        "`!setuprules` — صاوب رسالة القوانين بـ أزرار كنوافق/كنرفض (Admin)\n"
-        "`!verify @user` — يفعّل عضو يدوياً (Admin)\n"
-        "`!unverify @user` — يرجعو @Unverified (Admin)"
+        "`/setupverify` — صاوب رسالة التفعيل بـ ✅ (Admin)\n"
+        "`/setuprules` — صاوب رسالة القوانين بـ أزرار كنوافق/كنرفض (Admin)\n"
+        "`/verify @user` — يفعّل عضو يدوياً (Admin)\n"
+        "`/unverify @user` — يرجعو @Unverified (Admin)"
     )
     embed.add_field(name="✅ تفعيل", value=verif_cmds, inline=False)
     ticket_cmds = (
-        "`!setuptickets` — صاوب/عاود صاوب لوحة الـ Tickets (Admin)\n"
+        "`/setuptickets` — صاوب/عاود صاوب لوحة الـ Tickets (Admin)\n"
         "🎫 ضغط على الزر فاللوحة → كيتحلق channel خاص\n"
-        "`!closeticket` — سد ticket بأمر (بديل للزر، جوة channel الـ ticket)"
+        "`/closeticket` — سد ticket بأمر (بديل للزر، جوة channel الـ ticket)"
     )
     embed.add_field(name="🎫 Tickets", value=ticket_cmds, inline=False)
     raid_cmds = (
-        "`!lockdown [دقائق]` — فعّل Anti-Raid Lockdown يدوياً (Admin)\n"
-        "`!unlockdown` — سد الـ Lockdown يدوياً (Admin)\n"
-        "`!raidstatus` — شوف الحالة دابا"
+        "`/lockdown [دقائق]` — فعّل Anti-Raid Lockdown يدوياً (Admin)\n"
+        "`/unlockdown` — سد الـ Lockdown يدوياً (Admin)\n"
+        "`/raidstatus` — شوف الحالة دابا"
     )
     embed.add_field(name="🚨 Anti-Raid", value=raid_cmds, inline=False)
     embed.add_field(
         name="🖼️ Welcome Card",
-        value="`!testwelcome [@عضو]` — جرب شكل الكارطة الترحيبية هنا فالشات (Admin)",
+        value="`/testwelcome [@عضو]` — جرب شكل الكارطة الترحيبية هنا فالشات (Admin)",
         inline=False
     )
     level_cmds = (
-        "`!rank [@user]` — شوف المستوى والـ XP ديالك ولا ديال عضو آخر\n"
-        "`!leaderboard` (`!lb`, `!top`) — أفضل 10 أعضاء نشيطين\n"
-        "`!setlevel @user <رقم>` — حط عضو فمستوى معين يدوياً (Admin)\n"
-        "`!setuplevels` — صاوب/عاود صاوب رسالة شرح النظام (Admin)"
+        "`/rank [@user]` — شوف المستوى والـ XP ديالك ولا ديال عضو آخر\n"
+        "`/leaderboard` — أفضل 10 أعضاء نشيطين\n"
+        "`/setlevel @user <رقم>` — حط عضو فمستوى معين يدوياً (Admin)\n"
+        "`/setuplevels` — صاوب/عاود صاوب رسالة شرح النظام (Admin)"
     )
     embed.add_field(name="📊 Leveling", value=level_cmds, inline=False)
     roles_cmds = (
-        "`!setuproles` — صاوب رسالة اختيار الأدوار (Admin)\n"
-        "`!listroles` — بين رسائل Reaction Roles الفعّالة (Admin)"
+        "`/setuproles` — صاوب رسالة اختيار الأدوار (Admin)\n"
+        "`/listroles` — بين رسائل Reaction Roles الفعّالة (Admin)"
     )
     embed.add_field(name="🎭 Reaction Roles", value=roles_cmds, inline=False)
     util_cmds = (
-        "`!ping` — سرعة البوت\n"
-        "`!info` — معلومات البوت\n"
-        "`!help` — هاد القائمة\n"
-        "`!testinfo` — جرب Auto-Info فوراً (Admin)"
+        "`/ping` — سرعة البوت\n"
+        "`/info` — معلومات البوت\n"
+        "`/help` — هاد القائمة\n"
+        "`/testinfo` — جرب Auto-Info فوراً (Admin)"
     )
     embed.add_field(name="🔧 أدوات", value=util_cmds, inline=False)
     reminder_cmds = (
-        "`!remind [#شانيل] <وقت> <رسالة>` — صاوب تذكير\n"
-        "`!remind 10m اشرب الما` — بعد 10 دقايق، فنفس الشانيل\n"
-        "`!remind 21:00 نوض` — اليوم فـ 21:00 (وإلا غدا إلا فاتت)\n"
-        "`!remind #general 2h30m سلام` — بعد ساعتين ونص، فـ #general\n"
-        "`!remind #الشانيل 2026-07-25-18:00 حدث` — نهار محدد بالضبط\n"
-        "`!reminders` — التذكيرات ديالك المبرمجة\n"
-        "`!delreminder <ID>` — لغي تذكير"
+        "`/remind [#شانيل] <وقت> <رسالة>` — صاوب تذكير\n"
+        "`/remind 10m اشرب الما` — بعد 10 دقايق، فنفس الشانيل\n"
+        "`/remind 21:00 نوض` — اليوم فـ 21:00 (وإلا غدا إلا فاتت)\n"
+        "`/remind #general 2h30m سلام` — بعد ساعتين ونص، فـ #general\n"
+        "`/remind #الشانيل 2026-07-25-18:00 حدث` — نهار محدد بالضبط\n"
+        "`/reminders` — التذكيرات ديالك المبرمجة\n"
+        "`/delreminder <ID>` — لغي تذكير"
     )
     embed.add_field(name="⏰ تذكيرات", value=reminder_cmds, inline=False)
     auto_mod = (
@@ -4754,7 +4756,7 @@ async def help(ctx):
         "✅ كشف السبام (5 msg/5s)\n"
         "✅ Auto-mute\n"
         "✅ Auto-kick (3 warns)\n"
-        "✅ Logs كاملة فـ #mod-logs بـ Case ID (`!case`, `!history`)"
+        "✅ Logs كاملة فـ #mod-logs بـ Case ID (`/case`, `/history`)"
     )
     embed.add_field(name="🤖 Auto-Mod", value=auto_mod, inline=False)
     auto_info_cmds = (
@@ -4772,7 +4774,7 @@ async def help(ctx):
         "🔄 كليك ✅ فـ verify channel، ولا الأزرار (كنوافق/كنرفض) فـ rules channel"
     )
     embed.add_field(name="🔐 نظام التفعيل", value=verif_info, inline=False)
-    embed.set_footer(text="GGMW9 | Prefix: !")
+    embed.set_footer(text="GGMW9 | Slash Commands: /")
     await ctx.send(embed=embed)
 
 
@@ -4783,7 +4785,7 @@ async def chat(ctx, *, message: str):
     await ctx.send(response[:MAX_REPLY_LENGTH])
 
 
-@bot.command()
+@bot.hybrid_command()
 @owner_only()
 async def نسيني(ctx):
     user_id = str(ctx.author.id)
@@ -4794,7 +4796,7 @@ async def نسيني(ctx):
         await ctx.send("ما عندي والو ننساه!")
 
 
-@bot.command()
+@bot.hybrid_command()
 @owner_only()
 async def ذاكرة(ctx):
     user_id = str(ctx.author.id)
@@ -4802,7 +4804,7 @@ async def ذاكرة(ctx):
     await ctx.send(f"🧠 عندي {count} رسالة فـ الذاكرة ديالك.")
 
 
-@bot.command()
+@bot.hybrid_command()
 @owner_only()
 async def انعلمك(ctx, *, knowledge: str):
     learned_knowledge.append(knowledge)
@@ -4813,7 +4815,7 @@ async def انعلمك(ctx, *, knowledge: str):
         await ctx.send(f"✅ **واخا أسيدي!** تعلمت: {knowledge[:100]}... نتذكرها دايمن! 🧠")
 
 
-@bot.command()
+@bot.hybrid_command()
 @owner_only()
 async def انعلمك_شي_حاجة_جديدة(ctx, *, knowledge: str):
     await انعلمك(ctx, knowledge=knowledge)
@@ -4823,12 +4825,12 @@ async def انعلمك_شي_حاجة_جديدة(ctx, *, knowledge: str):
 # ║        COMMAND TEST INFO (جديد!)                      ║
 # ═══════════════════════════════════════════════════════
 
-@bot.command()
+@bot.hybrid_command()
 @owner_only()
 async def testinfo(ctx, category: str = "all"):
     """
     جرب Auto-Info فوراً!
-    الاستخدام: !testinfo [news|games|movies|anime|music|all]
+    الاستخدام: /testinfo [news|games|movies|anime|music|all]
     """
     categories = {
         "news": ("📰 News", NEWS_CHANNEL_IDS, get_news_from_api, "NewsAPI"),
@@ -4843,7 +4845,7 @@ async def testinfo(ctx, category: str = "all"):
     elif category in categories:
         cats_to_test = [category]
     else:
-        await ctx.send("❌ الاستخدام: `!testinfo [news|games|movies|anime|music|all]`")
+        await ctx.send("❌ الاستخدام: `/testinfo [news|games|movies|anime|music|all]`")
         return
     
     await ctx.send(f"🧪 جاري اختبار {len(cats_to_test)} APIs...")
@@ -5275,7 +5277,7 @@ async def on_command_error(ctx, error):
     elif isinstance(error, commands.MissingRequiredArgument):
         embed = discord.Embed(
             title="❌ ناقص شي حاجة!",
-            description=f"استخدم `!help` باش تشوف كيفاش تستخدم الأمر.",
+            description=f"استخدم `/help` باش تشوف كيفاش تستخدم الأمر.",
             color=discord.Color.red()
         )
         await ctx.send(embed=embed, delete_after=5)
@@ -5333,7 +5335,7 @@ async def on_ready():
     await bot.change_presence(
         activity=discord.Activity(
             type=discord.ActivityType.watching,
-            name=f"!help | {len(bot.guilds)} سيرفرات"
+            name=f"/help | {len(bot.guilds)} سيرفرات"
         )
     )
 
@@ -5374,7 +5376,7 @@ async def on_ready():
                 guild,
                 "⚠️ مشكل فترتيب الرولات",
                 "نظام التفعيل ممكن ما يخدمش مزيان:\n\n" + "\n\n".join(problems) +
-                "\n\nاستعمل `!checkroles` بعد ما تصلح باش تتأكد.",
+                "\n\nاستعمل `/checkroles` بعد ما تصلح باش تتأكد.",
                 discord.Color.orange()
             )
 
