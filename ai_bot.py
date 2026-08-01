@@ -255,6 +255,42 @@ LEVEL_ROLES = {
     100: 1532878888986738869,
 }
 
+# ═══════ الترجمة التلقائية بالـ Reaction (علم الدولة 🇬🇧🇫🇷 على أي رسالة) ═══════
+AUTO_TRANSLATE_ENABLED = True
+# ⚠️ كل عضو (ماشي بوت) يقدر يستعملها فأي channel — البوت خاصو صلاحية "Add Reactions" و"Send Messages"
+# زيد/بدل الأعلام اللي بغيتي هنا: emoji العلم → (الاسم بالعربية للعرض، الاسم بالانجليزية للـ AI)
+FLAG_TO_LANGUAGE = {
+    "🇬🇧": ("الإنجليزية", "English"),
+    "🇺🇸": ("الإنجليزية", "English"),
+    "🇫🇷": ("الفرنسية", "French"),
+    "🇪🇸": ("الإسبانية", "Spanish"),
+    "🇩🇪": ("الألمانية", "German"),
+    "🇮🇹": ("الإيطالية", "Italian"),
+    "🇵🇹": ("البرتغالية", "Portuguese"),
+    "🇹🇷": ("التركية", "Turkish"),
+    "🇷🇺": ("الروسية", "Russian"),
+    "🇯🇵": ("اليابانية", "Japanese"),
+    "🇰🇷": ("الكورية", "Korean"),
+    "🇨🇳": ("الصينية", "Chinese"),
+    "🇸🇦": ("العربية الفصحى", "Modern Standard Arabic"),
+    "🇲🇦": ("الدارجة المغربية", "Moroccan Darija"),
+}
+
+# ═══════ نظام الصوت — Join to Create (روم صوتية مؤقتة) ═══════
+JOIN_TO_CREATE_ENABLED = True
+JOIN_TO_CREATE_CHANNEL_ID = 1533261616081272962   # ← ID ديال الـ voice channel "➕ دير روم" (العضو كيدخل ليه فيتخلق ليه روم خاص بيه)
+TEMP_VC_CATEGORY_ID = 1533257707543461939          # ← ID ديال الـ Category فين غادي تتخلق الروومات المؤقتة (0 = نفس category ديال JOIN_TO_CREATE_CHANNEL_ID)
+TEMP_VC_NAME_TEMPLATE = "🔊 روم ديال {name}"
+TEMP_VC_DEFAULT_LIMIT = 0        # ← 0 = بلا حد أقصى للأعضاء
+
+# ═══════ نظام الصوت — Voice XP (نقط XP على الوقت فالـ Voice) ═══════
+VOICE_XP_ENABLED = True
+VOICE_XP_PER_INTERVAL = 10        # ← شحال ديال XP كياخد العضو كل VOICE_XP_INTERVAL_MINUTES
+VOICE_XP_INTERVAL_MINUTES = 5
+VOICE_XP_MIN_HUMANS_IN_CHANNEL = 2   # ← خاص يكونو على الأقل هاد العدد ديال البشر (ماشي بوتات) فنفس الروم باش ياخدو XP (كيمنع الفارمينغ وحدك)
+VOICE_XP_COUNT_MUTED_DEAFENED = False  # ← False = العضو اللي self-mute/self-deafen ما كياخدش Voice XP (كيمنع AFK farming)
+VOICE_XP_EXCLUDE_CHANNEL_IDS = []   # ← زيد هنا IDs ديال أي voice channel ماباغيش يعطي XP فيه (مثلا AFK channel)
+
 # ═══════ درجات العقوبة حسب عدد التحذيرات (سهل التعديل) ═══════
 # كل عضو كيبدا بلا تحذيرات. كل تحذير (Auto-Mod ولا /warn يدوي) كيزيد
 # العداد ديالو بـ 1. من غير ما يوصل لعتبة، ما كتوقع حتى عقوبة.
@@ -641,6 +677,53 @@ def total_xp_earned(data: dict) -> int:
     for lvl in range(data["level"]):
         total += xp_needed_for_level(lvl)
     return total
+
+
+async def grant_xp_and_announce(member: discord.Member, guild: discord.Guild, amount: int,
+                                 fallback_channel: Optional[discord.abc.Messageable] = None):
+    """كتزيد XP للعضو (من رسالة ولا من Voice)، كتشوف واش صعد لمستوى جديد،
+    كتعطي الرولات ديال LEVEL_ROLES، وكتبعث رسالة "مبروك" إلا صعد.
+    نفس المنطق اللي كان مستعمل غير مع رسائل الشات، دابا مشترك بين النصين والـ Voice."""
+    if not LEVELING_ENABLED or not guild:
+        return
+
+    data = get_user_level_data(guild.id, member.id)
+    data["xp"] += amount
+
+    leveled_up = False
+    while data["xp"] >= xp_needed_for_level(data["level"]):
+        data["xp"] -= xp_needed_for_level(data["level"])
+        data["level"] += 1
+        leveled_up = True
+
+    save_levels()
+
+    if not leveled_up:
+        return
+
+    new_level = data["level"]
+    roles_added = []
+    for lvl, role_id in LEVEL_ROLES.items():
+        if int(lvl) <= new_level:
+            role = guild.get_role(role_id)
+            if role and role not in member.roles:
+                try:
+                    await member.add_roles(role, reason=f"وصل لـ Level {new_level}")
+                    roles_added.append(role.mention)
+                except discord.Forbidden:
+                    pass
+
+    target_channel = bot.get_channel(LEVEL_UP_CHANNEL_ID) if LEVEL_UP_CHANNEL_ID else fallback_channel
+    if target_channel:
+        desc = f"🎉 {member.mention} وصل/ات لـ **Level {new_level}**!"
+        if roles_added:
+            desc += f"\n🎁 حصل/ات على: {', '.join(roles_added)}"
+        embed = discord.Embed(description=desc, color=discord.Color.gold(), timestamp=datetime.now())
+        embed.set_thumbnail(url=member.display_avatar.url)
+        try:
+            await target_channel.send(embed=embed)
+        except Exception as e:
+            print(f"[LEVELS] خطأ فـ بعث رسالة Level Up: {e}")
 
 
 load_levels()
@@ -1352,6 +1435,35 @@ async def translate_to_darija(text: str) -> str:
     translated = translated.strip()
     print(f"[TRANSLATE] ✅ قبل: '{text[:50]}' | بعد: '{translated[:50]}'")
     return translated if translated else text
+
+
+async def translate_text(text: str, target_language_en: str) -> Optional[str]:
+    """يترجم نص لأي لغة (مستعملة فـ الترجمة التلقائية بالـ Reaction). كيرجع None إلا فشلت الترجمة،
+    باش نفرقو بين 'ماكاينش OPENROUTER_API_KEY' و 'النص هو نفسو الترجمة' (contrairement لـ translate_to_darija)."""
+    if not text or not text.strip():
+        return None
+    if not OPENROUTER_API_KEY:
+        return None
+
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                f"You are a professional translator. Translate the user's message into "
+                f"{target_language_en}. Reply with ONLY the translation, no preamble, "
+                f"no quotation marks, no explanations. If the message is already in "
+                f"{target_language_en}, reply with it unchanged."
+            )
+        },
+        {"role": "user", "content": text}
+    ]
+
+    translated, error = await call_openrouter_chat(messages, 700, 0.3)
+    if error or not translated:
+        print(f"[AUTO-TRANSLATE] ❌ فشلت الترجمة لـ {target_language_en}: {error}")
+        return None
+
+    return translated.strip()
 
 
 async def get_movie_from_omdb() -> dict:
@@ -3454,6 +3566,196 @@ async def birthday_loop_error(error):
     print(f"[BIRTHDAYS] خطأ فـ birthday_loop: {error}")
 
 
+# ═══════════════════════════════════════════════════════
+# ║        نظام الصوت — Join to Create + Voice XP           ║
+# ═══════════════════════════════════════════════════════
+TEMP_VOICE_FILE = os.path.join(DATA_DIR, "temp_voice.json")
+temp_voice_channels = {}  # {channel_id (str): owner_id (int)} — الروومات المؤقتة اللي تخلقو
+
+
+def load_temp_voice_channels():
+    global temp_voice_channels
+    try:
+        with open(TEMP_VOICE_FILE, "r", encoding="utf-8") as f:
+            temp_voice_channels = json.load(f)
+    except FileNotFoundError:
+        temp_voice_channels = {}
+    except Exception as e:
+        print(f"[VOICE] خطأ فـ تحميل temp_voice.json: {e}")
+        temp_voice_channels = {}
+
+
+def save_temp_voice_channels():
+    try:
+        with open(TEMP_VOICE_FILE, "w", encoding="utf-8") as f:
+            json.dump(temp_voice_channels, f, ensure_ascii=False)
+    except Exception as e:
+        print(f"[VOICE] خطأ فـ حفظ temp_voice.json: {e}")
+
+
+load_temp_voice_channels()
+
+
+def is_temp_voice_owner(member: discord.Member, channel: discord.VoiceChannel) -> bool:
+    owner_id = temp_voice_channels.get(str(channel.id))
+    if owner_id is not None and int(owner_id) == member.id:
+        return True
+    return member.guild_permissions.manage_channels  # Admins يقدرو يتحكمو فأي روم برضو
+
+
+@bot.event
+async def on_voice_state_update(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
+    if member.bot:
+        return
+
+    # ═══════ Join to Create: العضو دخل لـ channel "➕ دير روم" ═══════
+    if (JOIN_TO_CREATE_ENABLED and JOIN_TO_CREATE_CHANNEL_ID
+            and after.channel and after.channel.id == JOIN_TO_CREATE_CHANNEL_ID):
+        creator_channel = after.channel
+        guild = member.guild
+        category = None
+        if TEMP_VC_CATEGORY_ID:
+            category = guild.get_channel(TEMP_VC_CATEGORY_ID)
+        if not category:
+            category = creator_channel.category
+
+        overwrites = {
+            guild.default_role: discord.PermissionOverwrite(view_channel=True, connect=True),
+            member: discord.PermissionOverwrite(
+                view_channel=True, connect=True, manage_channels=True,
+                move_members=True, mute_members=True, deafen_members=True
+            ),
+        }
+        try:
+            new_channel = await guild.create_voice_channel(
+                name=TEMP_VC_NAME_TEMPLATE.format(name=member.display_name)[:100],
+                category=category,
+                overwrites=overwrites,
+                user_limit=TEMP_VC_DEFAULT_LIMIT,
+                reason=f"Join to Create — {member.display_name}"
+            )
+            temp_voice_channels[str(new_channel.id)] = member.id
+            save_temp_voice_channels()
+            await member.move_to(new_channel, reason="Join to Create")
+        except discord.Forbidden:
+            print("[VOICE] ⚠️ ماعندش صلاحية Manage Channels باش نخلق الروومات المؤقتة.")
+        except Exception as e:
+            print(f"[VOICE] خطأ فـ خلق روم مؤقت: {e}")
+
+    # ═══════ تنظيف: العضو خرج من روم مؤقت وبقات فارغة ═══════
+    if before.channel and str(before.channel.id) in temp_voice_channels:
+        left_channel = before.channel
+        if len(left_channel.members) == 0:
+            temp_voice_channels.pop(str(left_channel.id), None)
+            save_temp_voice_channels()
+            try:
+                await left_channel.delete(reason="روم مؤقت بقات فارغة")
+            except (discord.NotFound, discord.Forbidden):
+                pass
+
+
+@bot.hybrid_command(name="voicerename", description="بدل سمية الروم الصوتي المؤقت ديالك")
+async def voicerename_cmd(ctx, *, new_name: str):
+    if not ctx.author.voice or not ctx.author.voice.channel:
+        await ctx.send("❌ خاصك تكون داخل لروم صوتي مؤقت باش تبدل سميتو.", ephemeral=True)
+        return
+    channel = ctx.author.voice.channel
+    if not is_temp_voice_owner(ctx.author, channel):
+        await ctx.send("❌ هاد الروم ماشي ديالك.", ephemeral=True)
+        return
+    try:
+        await channel.edit(name=new_name[:100], reason=f"Renamed by {ctx.author.display_name}")
+        await ctx.send(f"✅ تبدلات سمية الروم لـ **{new_name[:100]}**")
+    except discord.HTTPException as e:
+        await ctx.send(f"❌ ما قدرتش نبدل السمية: {e}", ephemeral=True)
+
+
+@bot.hybrid_command(name="voicelimit", description="حدد عدد الأعضاء المسموح فالروم الصوتي ديالك (0 = بلا حد)")
+async def voicelimit_cmd(ctx, limit: int):
+    if not ctx.author.voice or not ctx.author.voice.channel:
+        await ctx.send("❌ خاصك تكون داخل لروم صوتي مؤقت.", ephemeral=True)
+        return
+    channel = ctx.author.voice.channel
+    if not is_temp_voice_owner(ctx.author, channel):
+        await ctx.send("❌ هاد الروم ماشي ديالك.", ephemeral=True)
+        return
+    limit = max(0, min(limit, 99))
+    try:
+        await channel.edit(user_limit=limit, reason=f"Limit set by {ctx.author.display_name}")
+        await ctx.send(f"✅ الحد الأقصى دابا هو **{limit if limit else 'بلا حدود'}**")
+    except discord.HTTPException as e:
+        await ctx.send(f"❌ خطأ: {e}", ephemeral=True)
+
+
+@bot.hybrid_command(name="voicelock", description="سد الروم الصوتي المؤقت ديالك (حتى واحد ما يقدر يدخل من بعد)")
+async def voicelock_cmd(ctx):
+    if not ctx.author.voice or not ctx.author.voice.channel:
+        await ctx.send("❌ خاصك تكون داخل لروم صوتي مؤقت.", ephemeral=True)
+        return
+    channel = ctx.author.voice.channel
+    if not is_temp_voice_owner(ctx.author, channel):
+        await ctx.send("❌ هاد الروم ماشي ديالك.", ephemeral=True)
+        return
+    try:
+        await channel.set_permissions(ctx.guild.default_role, connect=False)
+        await ctx.send("🔒 الروم مسدود دابا — حتى واحد جديد ما يقدر يدخل.")
+    except discord.HTTPException as e:
+        await ctx.send(f"❌ خطأ: {e}", ephemeral=True)
+
+
+@bot.hybrid_command(name="voiceunlock", description="حل الروم الصوتي المؤقت ديالك")
+async def voiceunlock_cmd(ctx):
+    if not ctx.author.voice or not ctx.author.voice.channel:
+        await ctx.send("❌ خاصك تكون داخل لروم صوتي مؤقت.", ephemeral=True)
+        return
+    channel = ctx.author.voice.channel
+    if not is_temp_voice_owner(ctx.author, channel):
+        await ctx.send("❌ هاد الروم ماشي ديالك.", ephemeral=True)
+        return
+    try:
+        await channel.set_permissions(ctx.guild.default_role, connect=True)
+        await ctx.send("🔓 الروم محلول دابا.")
+    except discord.HTTPException as e:
+        await ctx.send(f"❌ خطأ: {e}", ephemeral=True)
+
+
+@tasks.loop(minutes=VOICE_XP_INTERVAL_MINUTES)
+async def voice_xp_loop():
+    if not VOICE_XP_ENABLED or not LEVELING_ENABLED:
+        return
+    for guild in bot.guilds:
+        afk_channel_id = guild.afk_channel.id if guild.afk_channel else None
+        for channel in guild.voice_channels:
+            if channel.id in VOICE_XP_EXCLUDE_CHANNEL_IDS:
+                continue
+            if afk_channel_id and channel.id == afk_channel_id:
+                continue
+            if JOIN_TO_CREATE_ENABLED and channel.id == JOIN_TO_CREATE_CHANNEL_ID:
+                continue
+
+            humans = [m for m in channel.members if not m.bot]
+            if len(humans) < VOICE_XP_MIN_HUMANS_IN_CHANNEL:
+                continue
+
+            for m in humans:
+                if not VOICE_XP_COUNT_MUTED_DEAFENED and m.voice and (m.voice.self_mute or m.voice.self_deaf):
+                    continue
+                try:
+                    await grant_xp_and_announce(m, guild, VOICE_XP_PER_INTERVAL, fallback_channel=channel)
+                except Exception as e:
+                    print(f"[VOICE-XP] خطأ فـ إعطاء XP لـ {m}: {e}")
+
+
+@voice_xp_loop.before_loop
+async def before_voice_xp_loop():
+    await bot.wait_until_ready()
+
+
+@voice_xp_loop.error
+async def voice_xp_loop_error(error):
+    print(f"[VOICE-XP] خطأ كبير وقف الـ loop: {error}")
+
+
 async def setup_levels_info_message(guild: discord.Guild):
     """كتصاوب رسالة تشرح نظام الـ Leveling كامل + لائحة كاع المستويات
     ورولاتهم، فـ LEVELS_INFO_CHANNEL_ID."""
@@ -4016,6 +4318,50 @@ async def on_member_remove(member):
     )
 
 
+translated_messages_cache = {}  # {(message_id, lang_en): النص المترجم} — كيفادي إعادة الترجمة إلا رد بزاف ناس بنفس العلم
+
+
+async def handle_flag_translation(payload: discord.RawReactionActionEvent,
+                                   guild: discord.Guild, member: discord.Member):
+    """كيترجم الرسالة اللي تحطات عليها reaction بعلم دولة، ويرد بإيمبيد فيه الترجمة."""
+    channel = guild.get_channel(payload.channel_id) or bot.get_channel(payload.channel_id)
+    if not channel:
+        return
+    try:
+        message = await channel.fetch_message(payload.message_id)
+    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+        return
+
+    # ماكاينش نص (رسالة بلا محتوى، صورة وحدها، ولا حتى ترجمة سابقة ديالنا) → ماكاين والو نترجمو
+    if message.author.bot or not message.content or not message.content.strip():
+        return
+
+    lang_display, lang_en = FLAG_TO_LANGUAGE[str(payload.emoji)]
+    cache_key = (message.id, lang_en)
+
+    translated = translated_messages_cache.get(cache_key)
+    if not translated:
+        translated = await translate_text(message.content, lang_en)
+        if not translated:
+            return
+        translated_messages_cache[cache_key] = translated
+        if len(translated_messages_cache) > 500:   # كنخليو الكاش ماكيكبرش بلا حدود
+            translated_messages_cache.pop(next(iter(translated_messages_cache)))
+
+    embed = discord.Embed(
+        description=translated[:MAX_REPLY_LENGTH],
+        color=discord.Color.blurple()
+    )
+    embed.set_author(
+        name=f"🌐 ترجمة لـ {lang_display} — طلب/ات {member.display_name}",
+        icon_url=member.display_avatar.url
+    )
+    try:
+        await message.reply(embed=embed, mention_author=False)
+    except discord.HTTPException:
+        pass
+
+
 @bot.event
 async def on_raw_reaction_add(payload):
     guild = bot.get_guild(payload.guild_id)
@@ -4023,6 +4369,11 @@ async def on_raw_reaction_add(payload):
         return
     member = guild.get_member(payload.user_id)
     if not member or member.bot:
+        return
+
+    # ═══════ الترجمة التلقائية بالـ Reaction (علم الدولة 🇬🇧🇫🇷) — كتخدم فأي channel ═══════
+    if AUTO_TRANSLATE_ENABLED and str(payload.emoji) in FLAG_TO_LANGUAGE:
+        await handle_flag_translation(payload, guild, member)
         return
 
     # ═══════ Verification ═══════
@@ -4108,6 +4459,9 @@ async def process_message_xp(message: discord.Message):
     if not LEVELING_ENABLED or not message.guild:
         return
 
+    if not isinstance(message.author, discord.Member):
+        return
+
     key = (message.guild.id, message.author.id)
     now = datetime.now()
     last = xp_cooldowns.get(key)
@@ -4115,47 +4469,8 @@ async def process_message_xp(message: discord.Message):
         return
     xp_cooldowns[key] = now
 
-    data = get_user_level_data(message.guild.id, message.author.id)
     gained = random.randint(XP_MIN_PER_MESSAGE, XP_MAX_PER_MESSAGE)
-    data["xp"] += gained
-
-    leveled_up = False
-    while data["xp"] >= xp_needed_for_level(data["level"]):
-        data["xp"] -= xp_needed_for_level(data["level"])
-        data["level"] += 1
-        leveled_up = True
-
-    save_levels()
-
-    if not leveled_up:
-        return
-
-    new_level = data["level"]
-
-    # ═══════ رولات أوتوماتيكية (تراكمية) ═══════
-    roles_added = []
-    if isinstance(message.author, discord.Member):
-        for lvl, role_id in LEVEL_ROLES.items():
-            if int(lvl) <= new_level:
-                role = message.guild.get_role(role_id)
-                if role and role not in message.author.roles:
-                    try:
-                        await message.author.add_roles(role, reason=f"وصل لـ Level {new_level}")
-                        roles_added.append(role.mention)
-                    except discord.Forbidden:
-                        pass
-
-    target_channel = bot.get_channel(LEVEL_UP_CHANNEL_ID) if LEVEL_UP_CHANNEL_ID else message.channel
-    if target_channel:
-        desc = f"🎉 {message.author.mention} وصل/ات لـ **Level {new_level}**!"
-        if roles_added:
-            desc += f"\n🎁 حصل/ات على: {', '.join(roles_added)}"
-        embed = discord.Embed(description=desc, color=discord.Color.gold(), timestamp=datetime.now())
-        embed.set_thumbnail(url=message.author.display_avatar.url)
-        try:
-            await target_channel.send(embed=embed)
-        except Exception as e:
-            print(f"[LEVELS] خطأ فـ بعث رسالة Level Up: {e}")
+    await grant_xp_and_announce(message.author, message.guild, gained, fallback_channel=message.channel)
 
 
 @bot.event
@@ -6187,6 +6502,8 @@ async def on_ready():
     print(f"🖼️ Welcome Cards: {'نشط' if (WELCOME_CARD_ENABLED and PIL_AVAILABLE) else ('معطل (Pillow ماشي مثبت)' if not PIL_AVAILABLE else 'معطل')}")
     print(f"📊 Leveling: {'نشط' if LEVELING_ENABLED else 'معطل'} ({XP_MIN_PER_MESSAGE}-{XP_MAX_PER_MESSAGE} XP/رسالة، cooldown {XP_COOLDOWN_SECONDS}ث)")
     print(f"⏰ Reminders: {len(reminders)} مبرمجين (كيتفقّد كل 30 ثانية)")
+    print(f"🌐 Auto-Translate: {'نشط' if AUTO_TRANSLATE_ENABLED else 'معطل'} ({len(FLAG_TO_LANGUAGE)} علم مدعوم)")
+    print(f"🔊 Join to Create: {'نشط' if (JOIN_TO_CREATE_ENABLED and JOIN_TO_CREATE_CHANNEL_ID) else 'معطل'} | Voice XP: {'نشط' if VOICE_XP_ENABLED else 'معطل'} ({VOICE_XP_PER_INTERVAL} XP كل {VOICE_XP_INTERVAL_MINUTES}د)")
 
     await bot.change_presence(
         activity=discord.Activity(
@@ -6209,6 +6526,9 @@ async def on_ready():
 
     if not birthday_loop.is_running():
         birthday_loop.start()
+
+    if VOICE_XP_ENABLED and not voice_xp_loop.is_running():
+        voice_xp_loop.start()
 
     bot.add_view(RulesVerifyView())  # باش الأزرار يبقاو خدامين حتى بعد ريستارت البوت
     bot.add_view(RolePickerView())   # باش الـ Dropdown ديال الأدوار يبقى خدام حتى بعد ريستارت البوت
