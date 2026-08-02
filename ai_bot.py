@@ -715,7 +715,7 @@ async def grant_xp_and_announce(member: discord.Member, guild: discord.Guild, am
     """كتزيد XP للعضو (من رسالة ولا من Voice)، كتشوف واش صعد لمستوى جديد،
     كتعطي الرولات ديال LEVEL_ROLES، وكتبعث رسالة "مبروك" إلا صعد.
     نفس المنطق اللي كان مستعمل غير مع رسائل الشات، دابا مشترك بين النصين والـ Voice."""
-    if not LEVELING_ENABLED or not guild:
+    if not bot_settings['leveling_enabled'] or not guild:
         return
 
     data = get_user_level_data(guild.id, member.id)
@@ -827,6 +827,61 @@ def save_leaderboard_message_ids():
 
 
 load_leaderboard_message_ids()
+
+# ═══════════════════════════════════════════════════════
+# ║   Bot Settings — إعدادات عامة قابلة للتعديل من /botpanel   ║
+# ═══════════════════════════════════════════════════════
+# نفس المبدأ ديال xp_settings: dict وحدة هي المصدر الحقيقي (source of truth)
+# لكل التبديلات والعتبات الكبيرة فالبوت، كتبدا بالقيم الافتراضية من فوق فالـ
+# CONFIG، ومن بعد كتقرا فوقهم أي تبديل محفوظ فـ bot_settings.json. التحكم كامل
+# من ديسكورد بالأمر /botpanel (Admin)، بلا ماتمس الكود ولا تعاود ريستارت البوت.
+BOT_SETTINGS_FILE = os.path.join(DATA_DIR, "bot_settings.json")
+bot_settings = {
+    "leveling_enabled": LEVELING_ENABLED,
+    "voice_xp_enabled": VOICE_XP_ENABLED,
+    "join_to_create_enabled": JOIN_TO_CREATE_ENABLED,
+    "welcome_card_enabled": WELCOME_CARD_ENABLED,
+    "auto_translate_enabled": AUTO_TRANSLATE_ENABLED,
+    "auto_react_enabled": AUTO_REACT_TRANSLATE_ENABLED,
+    "auto_info_news": AUTO_INFO_NEWS_ENABLED,
+    "auto_info_games": AUTO_INFO_GAMES_ENABLED,
+    "auto_info_movies": AUTO_INFO_MOVIES_ENABLED,
+    "auto_info_anime": AUTO_INFO_ANIME_ENABLED,
+    "auto_info_music": AUTO_INFO_MUSIC_ENABLED,
+    "anti_raid_enabled": ANTI_RAID_ENABLED,
+    "raid_join_threshold": RAID_JOIN_THRESHOLD,
+    "raid_join_interval_seconds": RAID_JOIN_INTERVAL_SECONDS,
+    "raid_action": RAID_ACTION,
+    "raid_lockdown_duration_minutes": RAID_LOCKDOWN_DURATION_MINUTES,
+    "mute_after_warns": MUTE_AFTER_WARNS,
+    "mute_duration_minutes": MUTE_DURATION_MINUTES,
+    "kick_after_warns": KICK_AFTER_WARNS,
+    "ban_after_warns": BAN_AFTER_WARNS,
+}
+
+
+def load_bot_settings():
+    global bot_settings
+    try:
+        with open(BOT_SETTINGS_FILE, "r", encoding="utf-8") as f:
+            saved = json.load(f)
+        bot_settings.update({k: v for k, v in saved.items() if k in bot_settings})
+        print(f"[BOT-SETTINGS] تحملات الإعدادات المحفوظة: {bot_settings}")
+    except FileNotFoundError:
+        print("[BOT-SETTINGS] ماكاينش إعدادات محفوظة، غادي نستعملو القيم الافتراضية من الكود.")
+    except Exception as e:
+        print(f"[BOT-SETTINGS] خطأ فـ التحميل: {e}")
+
+
+def save_bot_settings():
+    try:
+        with open(BOT_SETTINGS_FILE, "w", encoding="utf-8") as f:
+            json.dump(bot_settings, f, ensure_ascii=False)
+    except Exception as e:
+        print(f"[BOT-SETTINGS] خطأ فـ الحفظ: {e}")
+
+
+load_bot_settings()
 
 # ═══════════════════════════════════════════════════════
 # ║   سجل المحتوى المنشور (باش ما يتعاودش تا شي حاجة)      ║
@@ -1176,11 +1231,11 @@ async def apply_warn_escalation(member: discord.Member, guild: discord.Guild, co
                                  reason: str, channel=None) -> Optional[str]:
     """
     كتشوف شحال ديال التحذيرات وصلات لهاد العضو، وكتطبق العقوبة المناسبة
-    حسب MUTE_AFTER_WARNS / KICK_AFTER_WARNS / BAN_AFTER_WARNS (فالـ CONFIG).
+    حسب bot_settings['mute_after_warns'] / bot_settings['kick_after_warns'] / bot_settings['ban_after_warns'] (فالـ CONFIG).
     كتبدا من الأعلى (حظر) للأسفل (كتم) باش ما تطبقش عدة عقوبات فنفس الوقت.
     كترجع "ban" / "kick" / "mute" إلا تطبقات عقوبة، وإلا None.
     """
-    if BAN_AFTER_WARNS and count >= BAN_AFTER_WARNS:
+    if bot_settings['ban_after_warns'] and count >= bot_settings['ban_after_warns']:
         try:
             await member.ban(reason=f"{count} تحذيرات: {reason}")
             case_id = await log_case(
@@ -1195,7 +1250,7 @@ async def apply_warn_escalation(member: discord.Member, guild: discord.Guild, co
         except discord.Forbidden:
             return None
 
-    if KICK_AFTER_WARNS and count >= KICK_AFTER_WARNS:
+    if bot_settings['kick_after_warns'] and count >= bot_settings['kick_after_warns']:
         try:
             await member.kick(reason=f"{count} تحذيرات: {reason}")
             case_id = await log_case(
@@ -1210,7 +1265,7 @@ async def apply_warn_escalation(member: discord.Member, guild: discord.Guild, co
         except discord.Forbidden:
             return None
 
-    if MUTE_AFTER_WARNS and count >= MUTE_AFTER_WARNS:
+    if bot_settings['mute_after_warns'] and count >= bot_settings['mute_after_warns']:
         muted_role = guild.get_role(MUTED_ROLE_ID)
         if muted_role and muted_role not in member.roles:
             try:
@@ -1218,16 +1273,16 @@ async def apply_warn_escalation(member: discord.Member, guild: discord.Guild, co
                 user_id = str(member.id)
                 if user_id in mute_tasks and not mute_tasks[user_id].done():
                     mute_tasks[user_id].cancel()
-                task = asyncio.create_task(auto_unmute(member, MUTE_DURATION_MINUTES, guild))
+                task = asyncio.create_task(auto_unmute(member, bot_settings['mute_duration_minutes'], guild))
                 mute_tasks[user_id] = task
                 case_id = await log_case(
                     guild, "🔇 كتم تلقائي (Auto-Mute)", "🔇", discord.Color.yellow(),
                     target=member, moderator=None,
-                    reason=reason, extra=f"عدد التحذيرات: {count} | المدة: {MUTE_DURATION_MINUTES} دقيقة"
+                    reason=reason, extra=f"عدد التحذيرات: {count} | المدة: {bot_settings['mute_duration_minutes']} دقيقة"
                 )
                 if channel:
                     await channel.send(
-                        f"🔇 {member.mention} تكتم تلقائياً ({count} تحذيرات، {MUTE_DURATION_MINUTES} دقيقة) — Case #{case_id}!",
+                        f"🔇 {member.mention} تكتم تلقائياً ({count} تحذيرات، {bot_settings['mute_duration_minutes']} دقيقة) — Case #{case_id}!",
                         delete_after=10
                     )
                 return "mute"
@@ -2082,9 +2137,9 @@ async def send_warn_dm(member: discord.Member, count: int, reason: str):
             f"**السبب:** {reason}\n"
             f"**عدد التحذيرات ديالك دابا:** {count}\n\n"
             f"⚠️ **خاصك تعرف:**\n"
-            f"🔇 عند {MUTE_AFTER_WARNS} تحذيرات → كتم تلقائي لمدة {MUTE_DURATION_MINUTES} دقيقة\n"
-            f"👢 عند {KICK_AFTER_WARNS} تحذيرات → طرد تلقائي من السيرفر\n"
-            f"🚫 عند {BAN_AFTER_WARNS} تحذيرات → حظر نهائي من السيرفر\n\n"
+            f"🔇 عند {bot_settings['mute_after_warns']} تحذيرات → كتم تلقائي لمدة {bot_settings['mute_duration_minutes']} دقيقة\n"
+            f"👢 عند {bot_settings['kick_after_warns']} تحذيرات → طرد تلقائي من السيرفر\n"
+            f"🚫 عند {bot_settings['ban_after_warns']} تحذيرات → حظر نهائي من السيرفر\n\n"
             f"من فضلك احترم/ي قوانين السيرفر باش ما توصلش لهاد المراحل."
         ),
         inline=False
@@ -2096,9 +2151,9 @@ async def send_warn_dm(member: discord.Member, count: int, reason: str):
             f"**Raison :** {reason}\n"
             f"**Nombre total d'avertissements :** {count}\n\n"
             f"⚠️ **À savoir :**\n"
-            f"🔇 À {MUTE_AFTER_WARNS} avertissements → mute automatique pendant {MUTE_DURATION_MINUTES} minutes\n"
-            f"👢 À {KICK_AFTER_WARNS} avertissements → expulsion automatique du serveur\n"
-            f"🚫 À {BAN_AFTER_WARNS} avertissements → bannissement définitif du serveur\n\n"
+            f"🔇 À {bot_settings['mute_after_warns']} avertissements → mute automatique pendant {bot_settings['mute_duration_minutes']} minutes\n"
+            f"👢 À {bot_settings['kick_after_warns']} avertissements → expulsion automatique du serveur\n"
+            f"🚫 À {bot_settings['ban_after_warns']} avertissements → bannissement définitif du serveur\n\n"
             f"Merci de respecter les règles du serveur pour éviter d'en arriver là."
         ),
         inline=False
@@ -2110,9 +2165,9 @@ async def send_warn_dm(member: discord.Member, count: int, reason: str):
             f"**Reason:** {reason}\n"
             f"**Total warnings:** {count}\n\n"
             f"⚠️ **Please note:**\n"
-            f"🔇 At {MUTE_AFTER_WARNS} warnings → automatic mute for {MUTE_DURATION_MINUTES} minutes\n"
-            f"👢 At {KICK_AFTER_WARNS} warnings → automatic kick from the server\n"
-            f"🚫 At {BAN_AFTER_WARNS} warnings → permanent ban from the server\n\n"
+            f"🔇 At {bot_settings['mute_after_warns']} warnings → automatic mute for {bot_settings['mute_duration_minutes']} minutes\n"
+            f"👢 At {bot_settings['kick_after_warns']} warnings → automatic kick from the server\n"
+            f"🚫 At {bot_settings['ban_after_warns']} warnings → permanent ban from the server\n\n"
             f"Please follow the server rules to avoid reaching these stages."
         ),
         inline=False
@@ -2646,9 +2701,9 @@ async def setup_blacklist_message(guild: discord.Guild):
             name="⚖️ العقوبات المتدرجة",
             value=(
                 f"1️⃣ **تحذير** — كل مخالفة خفيفة كتبان تحذير أوتوماتيكي\n"
-                f"2️⃣ **كتم (Mute)** — عند {MUTE_AFTER_WARNS} تحذيرات ({MUTE_DURATION_MINUTES} دقيقة)، ولا إلا بعتي {SPAM_THRESHOLD} رسايل فـ {SPAM_INTERVAL} ثواني (سبام)\n"
-                f"3️⃣ **طرد (Kick)** — عند الوصول لـ {KICK_AFTER_WARNS} تحذيرات\n"
-                f"4️⃣ **حظر (Ban)** — عند الوصول لـ {BAN_AFTER_WARNS} تحذيرات، ولا مباشرة فحالة Doxxing/محتوى +18/تهديد خطير"
+                f"2️⃣ **كتم (Mute)** — عند {bot_settings['mute_after_warns']} تحذيرات ({bot_settings['mute_duration_minutes']} دقيقة)، ولا إلا بعتي {SPAM_THRESHOLD} رسايل فـ {SPAM_INTERVAL} ثواني (سبام)\n"
+                f"3️⃣ **طرد (Kick)** — عند الوصول لـ {bot_settings['kick_after_warns']} تحذيرات\n"
+                f"4️⃣ **حظر (Ban)** — عند الوصول لـ {bot_settings['ban_after_warns']} تحذيرات، ولا مباشرة فحالة Doxxing/محتوى +18/تهديد خطير"
             ),
             inline=False
         )
@@ -2733,9 +2788,9 @@ async def setup_blacklist_message(guild: discord.Guild):
             name="⚖️ Sanctions progressives",
             value=(
                 f"1️⃣ **Avertissement** — chaque infraction légère déclenche un avertissement automatique\n"
-                f"2️⃣ **Mute** — à {MUTE_AFTER_WARNS} avertissements ({MUTE_DURATION_MINUTES} min), ou après {SPAM_THRESHOLD} messages en {SPAM_INTERVAL}s (spam)\n"
-                f"3️⃣ **Kick** — à {KICK_AFTER_WARNS} avertissements\n"
-                f"4️⃣ **Ban** — à {BAN_AFTER_WARNS} avertissements, ou immédiatement en cas de doxxing/contenu +18/menace grave"
+                f"2️⃣ **Mute** — à {bot_settings['mute_after_warns']} avertissements ({bot_settings['mute_duration_minutes']} min), ou après {SPAM_THRESHOLD} messages en {SPAM_INTERVAL}s (spam)\n"
+                f"3️⃣ **Kick** — à {bot_settings['kick_after_warns']} avertissements\n"
+                f"4️⃣ **Ban** — à {bot_settings['ban_after_warns']} avertissements, ou immédiatement en cas de doxxing/contenu +18/menace grave"
             ),
             inline=False
         )
@@ -2820,9 +2875,9 @@ async def setup_blacklist_message(guild: discord.Guild):
             name="⚖️ Escalating Penalties",
             value=(
                 f"1️⃣ **Warning** — every minor offense triggers an automatic warning\n"
-                f"2️⃣ **Mute** — at {MUTE_AFTER_WARNS} warnings ({MUTE_DURATION_MINUTES} minutes), or after {SPAM_THRESHOLD} messages in {SPAM_INTERVAL}s (spam)\n"
-                f"3️⃣ **Kick** — upon reaching {KICK_AFTER_WARNS} warnings\n"
-                f"4️⃣ **Ban** — upon reaching {BAN_AFTER_WARNS} warnings, or immediately for doxxing/NSFW content/serious threats"
+                f"2️⃣ **Mute** — at {bot_settings['mute_after_warns']} warnings ({bot_settings['mute_duration_minutes']} minutes), or after {SPAM_THRESHOLD} messages in {SPAM_INTERVAL}s (spam)\n"
+                f"3️⃣ **Kick** — upon reaching {bot_settings['kick_after_warns']} warnings\n"
+                f"4️⃣ **Ban** — upon reaching {bot_settings['ban_after_warns']} warnings, or immediately for doxxing/NSFW content/serious threats"
             ),
             inline=False
         )
@@ -3779,7 +3834,7 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
         return
 
     # ═══════ Join to Create: العضو دخل لـ channel "➕ دير روم" ═══════
-    if (JOIN_TO_CREATE_ENABLED and JOIN_TO_CREATE_CHANNEL_ID
+    if (bot_settings['join_to_create_enabled'] and JOIN_TO_CREATE_CHANNEL_ID
             and after.channel and after.channel.id == JOIN_TO_CREATE_CHANNEL_ID):
         creator_channel = after.channel
         guild = member.guild
@@ -3891,7 +3946,7 @@ async def voiceunlock_cmd(ctx):
 
 @tasks.loop(minutes=xp_settings["voice_interval_minutes"])
 async def voice_xp_loop():
-    if not VOICE_XP_ENABLED or not LEVELING_ENABLED:
+    if not bot_settings['voice_xp_enabled'] or not bot_settings['leveling_enabled']:
         return
     for guild in bot.guilds:
         afk_channel_id = guild.afk_channel.id if guild.afk_channel else None
@@ -3900,7 +3955,7 @@ async def voice_xp_loop():
                 continue
             if afk_channel_id and channel.id == afk_channel_id:
                 continue
-            if JOIN_TO_CREATE_ENABLED and channel.id == JOIN_TO_CREATE_CHANNEL_ID:
+            if bot_settings['join_to_create_enabled'] and channel.id == JOIN_TO_CREATE_CHANNEL_ID:
                 continue
 
             humans = [m for m in channel.members if not m.bot]
@@ -4076,7 +4131,7 @@ async def trigger_raid_lockdown(guild: discord.Guild, reason: str, duration_minu
             description=(
                 f"{reason}\n\n"
                 f"✅ verification level تصعدات مؤقتاً لأعلى درجة.\n"
-                f"⚠️ كل عضو جديد غادي يتـ **{'حظر' if RAID_ACTION == 'ban' else 'طرد'}** تلقائياً حتى يتسد الـ Lockdown.\n"
+                f"⚠️ كل عضو جديد غادي يتـ **{'حظر' if bot_settings['raid_action'] == 'ban' else 'طرد'}** تلقائياً حتى يتسد الـ Lockdown.\n"
                 f"استعمل `/unlockdown` باش تسدو يدوياً قبل الوقت، ولا `/raidstatus` باش تشوف الحالة."
             ),
             color=discord.Color.dark_red(),
@@ -4087,7 +4142,7 @@ async def trigger_raid_lockdown(guild: discord.Guild, reason: str, duration_minu
         except Exception as e:
             print(f"[ANTI-RAID] خطأ فـ بعث التنبيه: {e}")
 
-    duration = RAID_LOCKDOWN_DURATION_MINUTES if duration_minutes is None else duration_minutes
+    duration = bot_settings['raid_lockdown_duration_minutes'] if duration_minutes is None else duration_minutes
     if duration and duration > 0:
         async def _auto_revert():
             await asyncio.sleep(duration * 60)
@@ -4132,20 +4187,20 @@ async def end_raid_lockdown(guild: discord.Guild, reason: str = "يدوي") -> b
 
 async def _check_and_maybe_trigger_raid(guild: discord.Guild) -> bool:
     """كتزيد join جديد لتتبع الأعضاء الجداد، وكتشوف واش عدد الانضمامات
-    الأخيرة وصل للعتبة (RAID_JOIN_THRESHOLD فـ RAID_JOIN_INTERVAL_SECONDS).
+    الأخيرة وصل للعتبة (bot_settings['raid_join_threshold'] فـ bot_settings['raid_join_interval_seconds']).
     كترجع True إلا Lockdown تفعل دابا بالضبط (أول مرة)."""
     now = datetime.now()
-    cutoff = now - timedelta(seconds=RAID_JOIN_INTERVAL_SECONDS)
+    cutoff = now - timedelta(seconds=bot_settings['raid_join_interval_seconds'])
     joins = [t for t in recent_joins[guild.id] if t > cutoff]
     joins.append(now)
     recent_joins[guild.id] = joins
 
-    if len(joins) >= RAID_JOIN_THRESHOLD:
+    if len(joins) >= bot_settings['raid_join_threshold']:
         state = raid_state.get(guild.id, {})
         if not state.get("active"):
             await trigger_raid_lockdown(
                 guild,
-                reason=f"🚨 {len(joins)} عضو دخلو فـ آخر {RAID_JOIN_INTERVAL_SECONDS} ثانية (العتبة: {RAID_JOIN_THRESHOLD})."
+                reason=f"🚨 {len(joins)} عضو دخلو فـ آخر {bot_settings['raid_join_interval_seconds']} ثانية (العتبة: {bot_settings['raid_join_threshold']})."
             )
             return True
     return False
@@ -4174,7 +4229,7 @@ async def generate_welcome_card(member: discord.Member, member_count: int, retur
     """كتصاوب صورة ترحيبية مخصصة (Welcome Card) فيها صورة العضو + اسمو + رقمو
     فالسيرفر. كترجع None إلا Pillow ماشي متوفرة أو وقع خطأ (باش الكود اللي
     كيسطاها يرجع للـ embed العادي بلا ما يطيح البوت)."""
-    if not PIL_AVAILABLE or not WELCOME_CARD_ENABLED:
+    if not PIL_AVAILABLE or not bot_settings['welcome_card_enabled']:
         return None
 
     try:
@@ -4307,14 +4362,14 @@ async def on_member_join(member):
     # ═══════════════════════════════════════════════════════
     # ║              Anti-Raid Protection                       ║
     # ═══════════════════════════════════════════════════════
-    if ANTI_RAID_ENABLED:
+    if bot_settings['anti_raid_enabled']:
         raid_triggered_now = await _check_and_maybe_trigger_raid(member.guild)
         state = raid_state.get(member.guild.id, {})
 
         if state.get("active"):
-            # Raid Mode مفعل → كل عضو جديد كيتطبق عليه RAID_ACTION مباشرة
+            # Raid Mode مفعل → كل عضو جديد كيتطبق عليه bot_settings['raid_action'] مباشرة
             try:
-                if RAID_ACTION == "ban":
+                if bot_settings['raid_action'] == "ban":
                     await member.ban(reason="Anti-Raid: Lockdown مفعل، عضو جديد تلقائياً")
                     action_label = "🚫 حظر تلقائي (Anti-Raid)"
                     color = discord.Color.dark_red()
@@ -4329,7 +4384,7 @@ async def on_member_join(member):
                     reason="انضم خلال فترة Anti-Raid Lockdown",
                 )
             except discord.Forbidden:
-                print(f"[ANTI-RAID] ❌ ماقدرتش نطبق {RAID_ACTION} على {member} — صلاحية ناقصة")
+                print(f"[ANTI-RAID] ❌ ماقدرتش نطبق {bot_settings['raid_action']} على {member} — صلاحية ناقصة")
             except Exception as e:
                 print(f"[ANTI-RAID] خطأ: {e}")
             return  # ما نكملوش الترحيب/استرجاع الرولات لعضو تفلتر
@@ -4549,7 +4604,7 @@ async def handle_flag_translation(payload: discord.RawReactionActionEvent,
 async def maybe_auto_react_translate(message: discord.Message):
     """كيزيد الأعلام ديال AUTO_REACT_FLAGS أوتوماتيك على كل رسالة (إلا فيها نص)،
     باش العضو غير يكليكي على العلم بلا ما يقلب عليه/يكتبو بيدو."""
-    if not AUTO_REACT_TRANSLATE_ENABLED or not AUTO_TRANSLATE_ENABLED:
+    if not bot_settings['auto_react_enabled'] or not bot_settings['auto_translate_enabled']:
         return
     if not message.content or not message.content.strip():
         return
@@ -4572,7 +4627,7 @@ async def on_raw_reaction_add(payload):
         return
 
     # ═══════ الترجمة التلقائية بالـ Reaction (علم الدولة 🇬🇧🇫🇷) — كتخدم فأي channel ═══════
-    if AUTO_TRANSLATE_ENABLED and str(payload.emoji) in FLAG_TO_LANGUAGE:
+    if bot_settings['auto_translate_enabled'] and str(payload.emoji) in FLAG_TO_LANGUAGE:
         await handle_flag_translation(payload, guild, member)
         return
 
@@ -4656,7 +4711,7 @@ async def on_message_edit(before, after):
 async def process_message_xp(message: discord.Message):
     """كتزيد XP للعضو ملي يهضر، وكتشوف واش صعد لمستوى جديد (ممكن أكثر من مستوى
     فمرة وحدة إلا خذا XP كثيرة). كتعطي الرولات ديال LEVEL_ROLES تلقائياً."""
-    if not LEVELING_ENABLED or not message.guild:
+    if not bot_settings['leveling_enabled'] or not message.guild:
         return
 
     if not isinstance(message.author, discord.Member):
@@ -4702,7 +4757,7 @@ async def on_message(message):
                         f"**القناة:** {message.channel.mention}\n"
                         f"**الكلمة الممنوعة:** `{word}`\n"
                         f"**المحتوى:** {message.content[:500]}\n"
-                        f"**التحذيرات:** {count} (كتم عند {MUTE_AFTER_WARNS}, طرد عند {KICK_AFTER_WARNS}, حظر عند {BAN_AFTER_WARNS})",
+                        f"**التحذيرات:** {count} (كتم عند {bot_settings['mute_after_warns']}, طرد عند {bot_settings['kick_after_warns']}, حظر عند {bot_settings['ban_after_warns']})",
                         discord.Color.red()
                     )
                     await apply_warn_escalation(
@@ -5092,14 +5147,14 @@ async def warn(ctx, member: discord.Member, *, reason: str):
     embed.add_field(name="السبب", value=reason, inline=False)
     embed.add_field(
         name="عدد التحذيرات",
-        value=f"{count} (كتم عند {MUTE_AFTER_WARNS}, طرد عند {KICK_AFTER_WARNS}, حظر عند {BAN_AFTER_WARNS})",
+        value=f"{count} (كتم عند {bot_settings['mute_after_warns']}, طرد عند {bot_settings['kick_after_warns']}, حظر عند {bot_settings['ban_after_warns']})",
         inline=False
     )
     embed.add_field(name="المنفذ", value=ctx.author.mention, inline=False)
     embed.set_footer(text=f"GGMW9 | Moderation | Case #{case_id}")
     await ctx.send(embed=embed)
     action = await apply_warn_escalation(member, ctx.guild, count, reason, channel=ctx.channel)
-    if action is None and count >= MUTE_AFTER_WARNS:
+    if action is None and count >= bot_settings['mute_after_warns']:
         await ctx.send("❌ ما قدرتش نطبق العقوبة (تأكد من صلاحيات وترتيب الأدوار ديال البوت)!")
 
 
@@ -5116,7 +5171,7 @@ async def warns(ctx, member: Optional[discord.Member] = None):
     )
     embed.add_field(
         name="العدد",
-        value=f"{user_warns['count']} (كتم عند {MUTE_AFTER_WARNS}, طرد عند {KICK_AFTER_WARNS}, حظر عند {BAN_AFTER_WARNS})",
+        value=f"{user_warns['count']} (كتم عند {bot_settings['mute_after_warns']}, طرد عند {bot_settings['kick_after_warns']}, حظر عند {bot_settings['ban_after_warns']})",
         inline=False
     )
     if user_warns["reasons"]:
@@ -5490,7 +5545,7 @@ async def lockdown_cmd(ctx, duration_minutes: int = None):
     )
     if started:
         dur_txt = f"{duration_minutes} دقيقة" if duration_minutes else (
-            f"{RAID_LOCKDOWN_DURATION_MINUTES} دقيقة" if RAID_LOCKDOWN_DURATION_MINUTES else "حتى `/unlockdown` يدوي"
+            f"{bot_settings['raid_lockdown_duration_minutes']} دقيقة" if bot_settings['raid_lockdown_duration_minutes'] else "حتى `/unlockdown` يدوي"
         )
         await ctx.send(f"🔒 Lockdown تفعل. غادي يدوم: {dur_txt}.")
     else:
@@ -5516,7 +5571,7 @@ async def raidstatus_cmd(ctx):
     """كيبين الحالة ديال Anti-Raid دابا (مفعل ولا لا، عدد الانضمامات الأخيرة)"""
     state = raid_state.get(ctx.guild.id, {})
     now = datetime.now()
-    cutoff = now - timedelta(seconds=RAID_JOIN_INTERVAL_SECONDS)
+    cutoff = now - timedelta(seconds=bot_settings['raid_join_interval_seconds'])
     recent = [t for t in recent_joins.get(ctx.guild.id, []) if t > cutoff]
 
     embed = discord.Embed(
@@ -5527,10 +5582,10 @@ async def raidstatus_cmd(ctx):
     embed.add_field(name="الحالة", value="🔒 Lockdown مفعل" if state.get("active") else "✅ عادي", inline=False)
     embed.add_field(
         name="الانضمامات الأخيرة",
-        value=f"{len(recent)} / {RAID_JOIN_THRESHOLD} (فـ آخر {RAID_JOIN_INTERVAL_SECONDS}ث)",
+        value=f"{len(recent)} / {bot_settings['raid_join_threshold']} (فـ آخر {bot_settings['raid_join_interval_seconds']}ث)",
         inline=False
     )
-    embed.add_field(name="العمل ملي يتفعل Lockdown", value="🚫 حظر" if RAID_ACTION == "ban" else "👢 طرد", inline=False)
+    embed.add_field(name="العمل ملي يتفعل Lockdown", value="🚫 حظر" if bot_settings['raid_action'] == "ban" else "👢 طرد", inline=False)
     embed.set_footer(text=f"{SERVER_NAME} | Anti-Raid Protection")
     await ctx.send(embed=embed)
 
@@ -5545,8 +5600,8 @@ async def testwelcome_cmd(ctx, member: Optional[discord.Member] = None, returnin
     if not PIL_AVAILABLE:
         await ctx.send("❌ Pillow ماشي مثبتة، الصورة ماغاديش تتصاوب. دير `pip install Pillow`.")
         return
-    if not WELCOME_CARD_ENABLED:
-        await ctx.send("⚠️ `WELCOME_CARD_ENABLED = False` فالـ CONFIG، حطها `True` باش تجرب.")
+    if not bot_settings['welcome_card_enabled']:
+        await ctx.send("⚠️ Welcome Cards معطلة دابا، شعلها من `/botpanel` (زر 🖼️ الترحيب) ولا Admin.")
         return
 
     card_buffer = await generate_welcome_card(member, ctx.guild.member_count, returning=returning)
@@ -5767,6 +5822,359 @@ async def xppanel_cmd(ctx):
 
 
 # ═══════════════════════════════════════════════════════
+# ║      Bot Control Panel — لوحة تحكم شاملة (Admin)         ║
+# ═══════════════════════════════════════════════════════
+# لوحة واحدة كتجمع أغلب الحوايج اللي محتاجة تحكم متكرر (تفعيل/تعطيل، عتبات،
+# مدد) بلا ماتمس الكود ولا تعاود ريستارت البوت — /botpanel
+
+def _bool_emoji(value: bool) -> str:
+    return "✅" if value else "❌"
+
+
+def _main_panel_embed() -> discord.Embed:
+    embed = discord.Embed(
+        title="🎛️ لوحة تحكم البوت",
+        description="اختار قسم من الأزرار تحت باش تشوف/تبدل الإعدادات ديالو. XP ليها لوحة خاصة بيها `/xppanel`.",
+        color=discord.Color.blurple(),
+        timestamp=datetime.now()
+    )
+    embed.add_field(
+        name="🚨 Anti-Raid",
+        value=(
+            f"{_bool_emoji(bot_settings['anti_raid_enabled'])} الحالة\n"
+            f"عتبة: **{bot_settings['raid_join_threshold']}** فـ **{bot_settings['raid_join_interval_seconds']}**ث\n"
+            f"العمل: **{'حظر' if bot_settings['raid_action'] == 'ban' else 'طرد'}** | Lockdown: **{bot_settings['raid_lockdown_duration_minutes'] or '∞'}**د"
+        ),
+        inline=True
+    )
+    embed.add_field(
+        name="⚠️ التحذيرات (Warns)",
+        value=(
+            f"🔇 كتم عند **{bot_settings['mute_after_warns']}** ({bot_settings['mute_duration_minutes']}د)\n"
+            f"👢 طرد عند **{bot_settings['kick_after_warns']}**\n"
+            f"🚫 حظر عند **{bot_settings['ban_after_warns']}**"
+        ),
+        inline=True
+    )
+    embed.add_field(
+        name="📰 Auto-Info",
+        value=(
+            f"{_bool_emoji(bot_settings['auto_info_news'])} أخبار | "
+            f"{_bool_emoji(bot_settings['auto_info_games'])} ألعاب | "
+            f"{_bool_emoji(bot_settings['auto_info_movies'])} أفلام\n"
+            f"{_bool_emoji(bot_settings['auto_info_anime'])} أنمي | "
+            f"{_bool_emoji(bot_settings['auto_info_music'])} موسيقى"
+        ),
+        inline=False
+    )
+    embed.add_field(
+        name="🧩 مميزات عامة",
+        value=(
+            f"{_bool_emoji(bot_settings['leveling_enabled'])} Leveling/XP | "
+            f"{_bool_emoji(bot_settings['voice_xp_enabled'])} Voice XP\n"
+            f"{_bool_emoji(bot_settings['join_to_create_enabled'])} Join to Create | "
+            f"{_bool_emoji(bot_settings['welcome_card_enabled'])} Welcome Cards\n"
+            f"{_bool_emoji(bot_settings['auto_translate_enabled'])} Auto-Translate | "
+            f"{_bool_emoji(bot_settings['auto_react_enabled'])} Auto-React"
+        ),
+        inline=False
+    )
+    embed.set_footer(text=f"{SERVER_NAME} | Bot Control Panel")
+    return embed
+
+
+class BackToMainButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(label="رجوع", emoji="🔙", style=discord.ButtonStyle.secondary, row=4)
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.edit_message(embed=_main_panel_embed(), view=MainPanelView())
+
+
+class PanelPermissionView(discord.ui.View):
+    """View بيز فيها فحص الصلاحية (Admin فقط) مشترك بين كل صفحات اللوحة."""
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if not isinstance(interaction.user, discord.Member) or not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("❌ هاد اللوحة خاصة بالإدارة فقط.", ephemeral=True)
+            return False
+        return True
+
+
+# ───────────── Anti-Raid ─────────────
+
+def _anti_raid_embed() -> discord.Embed:
+    embed = discord.Embed(
+        title="🚨 إعدادات Anti-Raid",
+        color=discord.Color.red() if bot_settings["anti_raid_enabled"] else discord.Color.greyple(),
+        timestamp=datetime.now()
+    )
+    embed.add_field(name="الحالة", value=_bool_emoji(bot_settings["anti_raid_enabled"]), inline=True)
+    embed.add_field(name="العمل", value="🚫 حظر" if bot_settings["raid_action"] == "ban" else "👢 طرد", inline=True)
+    embed.add_field(
+        name="مدة Lockdown",
+        value=f"{bot_settings['raid_lockdown_duration_minutes']} دقيقة" if bot_settings["raid_lockdown_duration_minutes"] else "حتى /unlockdown يدوي",
+        inline=True
+    )
+    embed.add_field(
+        name="العتبة",
+        value=f"**{bot_settings['raid_join_threshold']}** عضو جديد فـ **{bot_settings['raid_join_interval_seconds']}** ثانية",
+        inline=False
+    )
+    return embed
+
+
+class AntiRaidSettingsModal(discord.ui.Modal, title="🚨 إعدادات Anti-Raid"):
+    def __init__(self):
+        super().__init__()
+        self.threshold = discord.ui.TextInput(
+            label="عدد الأعضاء الجداد (العتبة)", default=str(bot_settings["raid_join_threshold"]), max_length=4
+        )
+        self.interval = discord.ui.TextInput(
+            label="فـ هاد المدة بالثواني", default=str(bot_settings["raid_join_interval_seconds"]), max_length=5
+        )
+        self.action = discord.ui.TextInput(
+            label="العمل: اكتب kick ولا ban", default=bot_settings["raid_action"], max_length=4
+        )
+        self.lockdown_minutes = discord.ui.TextInput(
+            label="مدة Lockdown بالدقايق (0 = يدوي فقط)",
+            default=str(bot_settings["raid_lockdown_duration_minutes"]), max_length=5
+        )
+        self.add_item(self.threshold)
+        self.add_item(self.interval)
+        self.add_item(self.action)
+        self.add_item(self.lockdown_minutes)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            new_threshold = int(self.threshold.value)
+            new_interval = int(self.interval.value)
+            new_lockdown = int(self.lockdown_minutes.value)
+        except ValueError:
+            await interaction.response.send_message("❌ العتبة/المدة/Lockdown خاصهم يكونو أرقام صحيحة.", ephemeral=True)
+            return
+        new_action = self.action.value.strip().lower()
+        if new_action not in ("kick", "ban"):
+            await interaction.response.send_message("❌ العمل خاصو يكون `kick` ولا `ban` فقط.", ephemeral=True)
+            return
+        if new_threshold < 1 or new_interval < 1 or new_lockdown < 0:
+            await interaction.response.send_message("❌ العتبة والمدة خاصهم يكونو أكبر من 0.", ephemeral=True)
+            return
+
+        bot_settings["raid_join_threshold"] = new_threshold
+        bot_settings["raid_join_interval_seconds"] = new_interval
+        bot_settings["raid_action"] = new_action
+        bot_settings["raid_lockdown_duration_minutes"] = new_lockdown
+        save_bot_settings()
+
+        await interaction.response.edit_message(embed=_anti_raid_embed(), view=AntiRaidView())
+
+
+class AntiRaidView(PanelPermissionView):
+    def __init__(self):
+        super().__init__(timeout=300)
+        self.add_item(BackToMainButton())
+
+    @discord.ui.button(label="تفعيل/تعطيل", emoji="🔌", style=discord.ButtonStyle.primary)
+    async def toggle_enabled(self, interaction: discord.Interaction, button: discord.ui.Button):
+        bot_settings["anti_raid_enabled"] = not bot_settings["anti_raid_enabled"]
+        save_bot_settings()
+        await interaction.response.edit_message(embed=_anti_raid_embed(), view=self)
+
+    @discord.ui.button(label="عدل القيم", emoji="✏️", style=discord.ButtonStyle.primary)
+    async def edit_values(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(AntiRaidSettingsModal())
+
+
+# ───────────── Warns Escalation ─────────────
+
+def _warns_embed() -> discord.Embed:
+    embed = discord.Embed(title="⚠️ تصعيد التحذيرات (Warns)", color=discord.Color.orange(), timestamp=datetime.now())
+    embed.add_field(name="🔇 كتم", value=f"عند **{bot_settings['mute_after_warns']}** تحذيرات، **{bot_settings['mute_duration_minutes']}** دقيقة", inline=False)
+    embed.add_field(name="👢 طرد", value=f"عند **{bot_settings['kick_after_warns']}** تحذيرات", inline=False)
+    embed.add_field(name="🚫 حظر", value=f"عند **{bot_settings['ban_after_warns']}** تحذيرات", inline=False)
+    return embed
+
+
+class WarnsSettingsModal(discord.ui.Modal, title="⚠️ تصعيد التحذيرات"):
+    def __init__(self):
+        super().__init__()
+        self.mute_after = discord.ui.TextInput(label="كتم عند شحال تحذير", default=str(bot_settings["mute_after_warns"]), max_length=3)
+        self.mute_minutes = discord.ui.TextInput(label="مدة الكتم بالدقايق", default=str(bot_settings["mute_duration_minutes"]), max_length=5)
+        self.kick_after = discord.ui.TextInput(label="طرد عند شحال تحذير", default=str(bot_settings["kick_after_warns"]), max_length=3)
+        self.ban_after = discord.ui.TextInput(label="حظر عند شحال تحذير", default=str(bot_settings["ban_after_warns"]), max_length=3)
+        self.add_item(self.mute_after)
+        self.add_item(self.mute_minutes)
+        self.add_item(self.kick_after)
+        self.add_item(self.ban_after)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            new_mute_after = int(self.mute_after.value)
+            new_mute_minutes = int(self.mute_minutes.value)
+            new_kick_after = int(self.kick_after.value)
+            new_ban_after = int(self.ban_after.value)
+        except ValueError:
+            await interaction.response.send_message("❌ خاص كاع القيم يكونو أرقام صحيحة.", ephemeral=True)
+            return
+        if min(new_mute_after, new_mute_minutes, new_kick_after, new_ban_after) < 0:
+            await interaction.response.send_message("❌ ماكاينش أرقام سالبة.", ephemeral=True)
+            return
+        if not (new_mute_after <= new_kick_after <= new_ban_after):
+            await interaction.response.send_message(
+                "❌ خاص الترتيب يكون منطقي: كتم ≤ طرد ≤ حظر (بعدد التحذيرات).", ephemeral=True
+            )
+            return
+
+        bot_settings["mute_after_warns"] = new_mute_after
+        bot_settings["mute_duration_minutes"] = new_mute_minutes
+        bot_settings["kick_after_warns"] = new_kick_after
+        bot_settings["ban_after_warns"] = new_ban_after
+        save_bot_settings()
+
+        await interaction.response.edit_message(embed=_warns_embed(), view=WarnsView())
+
+
+class WarnsView(PanelPermissionView):
+    def __init__(self):
+        super().__init__(timeout=300)
+        self.add_item(BackToMainButton())
+
+    @discord.ui.button(label="عدل القيم", emoji="✏️", style=discord.ButtonStyle.primary)
+    async def edit_values(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(WarnsSettingsModal())
+
+
+# ───────────── Auto-Info Toggles ─────────────
+
+def _auto_info_embed() -> discord.Embed:
+    embed = discord.Embed(title="📰 Auto-Info — تفعيل/تعطيل كل فئة", color=discord.Color.teal(), timestamp=datetime.now())
+    embed.add_field(name="📰 أخبار", value=_bool_emoji(bot_settings["auto_info_news"]), inline=True)
+    embed.add_field(name="🎮 ألعاب", value=_bool_emoji(bot_settings["auto_info_games"]), inline=True)
+    embed.add_field(name="🎬 أفلام", value=_bool_emoji(bot_settings["auto_info_movies"]), inline=True)
+    embed.add_field(name="📺 أنمي", value=_bool_emoji(bot_settings["auto_info_anime"]), inline=True)
+    embed.add_field(name="🎧 موسيقى", value=_bool_emoji(bot_settings["auto_info_music"]), inline=True)
+    return embed
+
+
+class AutoInfoView(PanelPermissionView):
+    def __init__(self):
+        super().__init__(timeout=300)
+        self.add_item(BackToMainButton())
+
+    async def _toggle(self, interaction: discord.Interaction, key: str):
+        bot_settings[key] = not bot_settings[key]
+        save_bot_settings()
+        await interaction.response.edit_message(embed=_auto_info_embed(), view=self)
+
+    @discord.ui.button(label="أخبار", emoji="📰", style=discord.ButtonStyle.secondary)
+    async def toggle_news(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._toggle(interaction, "auto_info_news")
+
+    @discord.ui.button(label="ألعاب", emoji="🎮", style=discord.ButtonStyle.secondary)
+    async def toggle_games(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._toggle(interaction, "auto_info_games")
+
+    @discord.ui.button(label="أفلام", emoji="🎬", style=discord.ButtonStyle.secondary)
+    async def toggle_movies(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._toggle(interaction, "auto_info_movies")
+
+    @discord.ui.button(label="أنمي", emoji="📺", style=discord.ButtonStyle.secondary)
+    async def toggle_anime(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._toggle(interaction, "auto_info_anime")
+
+    @discord.ui.button(label="موسيقى", emoji="🎧", style=discord.ButtonStyle.secondary)
+    async def toggle_music(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._toggle(interaction, "auto_info_music")
+
+
+# ───────────── مميزات عامة (Feature Toggles) ─────────────
+
+def _features_embed() -> discord.Embed:
+    embed = discord.Embed(title="🧩 مميزات عامة — تفعيل/تعطيل", color=discord.Color.blurple(), timestamp=datetime.now())
+    embed.add_field(name="📊 Leveling/XP", value=_bool_emoji(bot_settings["leveling_enabled"]), inline=True)
+    embed.add_field(name="🎙️ Voice XP", value=_bool_emoji(bot_settings["voice_xp_enabled"]), inline=True)
+    embed.add_field(name="🔊 Join to Create", value=_bool_emoji(bot_settings["join_to_create_enabled"]), inline=True)
+    embed.add_field(name="🖼️ Welcome Cards", value=_bool_emoji(bot_settings["welcome_card_enabled"]), inline=True)
+    embed.add_field(name="🌐 Auto-Translate", value=_bool_emoji(bot_settings["auto_translate_enabled"]), inline=True)
+    embed.add_field(name="⚡ Auto-React", value=_bool_emoji(bot_settings["auto_react_enabled"]), inline=True)
+    return embed
+
+
+class FeaturesView(PanelPermissionView):
+    def __init__(self):
+        super().__init__(timeout=300)
+        self.add_item(BackToMainButton())
+
+    async def _toggle(self, interaction: discord.Interaction, key: str):
+        bot_settings[key] = not bot_settings[key]
+        save_bot_settings()
+        await interaction.response.edit_message(embed=_features_embed(), view=self)
+
+    @discord.ui.button(label="Leveling/XP", emoji="📊", style=discord.ButtonStyle.secondary)
+    async def toggle_leveling(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._toggle(interaction, "leveling_enabled")
+
+    @discord.ui.button(label="Voice XP", emoji="🎙️", style=discord.ButtonStyle.secondary)
+    async def toggle_voice_xp(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._toggle(interaction, "voice_xp_enabled")
+
+    @discord.ui.button(label="Join to Create", emoji="🔊", style=discord.ButtonStyle.secondary)
+    async def toggle_j2c(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._toggle(interaction, "join_to_create_enabled")
+
+    @discord.ui.button(label="Welcome Cards", emoji="🖼️", style=discord.ButtonStyle.secondary)
+    async def toggle_welcome(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not PIL_AVAILABLE:
+            await interaction.response.send_message("❌ Pillow ماشي مثبتة فالسيرفر، Welcome Cards ماغاديش تخدم حتى لو شعلتيها.", ephemeral=True)
+            return
+        await self._toggle(interaction, "welcome_card_enabled")
+
+    @discord.ui.button(label="Auto-Translate", emoji="🌐", style=discord.ButtonStyle.secondary)
+    async def toggle_translate(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._toggle(interaction, "auto_translate_enabled")
+
+    @discord.ui.button(label="Auto-React", emoji="⚡", style=discord.ButtonStyle.secondary)
+    async def toggle_react(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._toggle(interaction, "auto_react_enabled")
+
+
+# ───────────── اللوحة الرئيسية ─────────────
+
+class MainPanelView(PanelPermissionView):
+    def __init__(self):
+        super().__init__(timeout=300)
+
+    @discord.ui.button(label="Anti-Raid", emoji="🚨", style=discord.ButtonStyle.primary)
+    async def open_anti_raid(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(embed=_anti_raid_embed(), view=AntiRaidView())
+
+    @discord.ui.button(label="التحذيرات", emoji="⚠️", style=discord.ButtonStyle.primary)
+    async def open_warns(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(embed=_warns_embed(), view=WarnsView())
+
+    @discord.ui.button(label="Auto-Info", emoji="📰", style=discord.ButtonStyle.primary)
+    async def open_auto_info(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(embed=_auto_info_embed(), view=AutoInfoView())
+
+    @discord.ui.button(label="مميزات عامة", emoji="🧩", style=discord.ButtonStyle.primary)
+    async def open_features(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(embed=_features_embed(), view=FeaturesView())
+
+    @discord.ui.button(label="XP Panel", emoji="📊", style=discord.ButtonStyle.success, row=1)
+    async def open_xp(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(embed=_xp_panel_embed(), view=XPPanelView())
+
+
+@bot.hybrid_command(name="botpanel")
+@app_commands.default_permissions(administrator=True)
+@commands.has_permissions(administrator=True)
+async def botpanel_cmd(ctx):
+    """لوحة تحكم شاملة فأغلب إعدادات البوت (Anti-Raid، التحذيرات، Auto-Info، مميزات عامة، وXP) — Admin"""
+    await ctx.send(embed=_main_panel_embed(), view=MainPanelView())
+
+
+# ═══════════════════════════════════════════════════════
 # ║              Leveling System — أوامر                     ║
 # ═══════════════════════════════════════════════════════
 
@@ -5779,8 +6187,8 @@ def _progress_bar(current: int, needed: int, length: int = 20) -> str:
 @bot.hybrid_command(name="rank")
 async def rank_cmd(ctx, member: Optional[discord.Member] = None):
     """كيبين المستوى والـ XP ديال عضو (نتا ولا شخص آخر)"""
-    if not LEVELING_ENABLED:
-        await ctx.send("❌ نظام Leveling معطل دابا (`LEVELING_ENABLED = False`).", delete_after=6)
+    if not bot_settings['leveling_enabled']:
+        await ctx.send("❌ نظام Leveling معطل دابا. شعلو من `/botpanel` (Admin).", delete_after=6)
         return
 
     member = member or ctx.author
@@ -5843,8 +6251,8 @@ def build_leaderboard_embed(guild: discord.Guild) -> Optional[discord.Embed]:
 @bot.hybrid_command(name="leaderboard", aliases=["lb", "top"])
 async def leaderboard_cmd(ctx):
     """كيبين أفضل 10 أعضاء نشيطين فالسيرفر (الأكثر XP)"""
-    if not LEVELING_ENABLED:
-        await ctx.send("❌ نظام Leveling معطل دابا (`LEVELING_ENABLED = False`).", delete_after=6)
+    if not bot_settings['leveling_enabled']:
+        await ctx.send("❌ نظام Leveling معطل دابا. شعلو من `/botpanel` (Admin).", delete_after=6)
         return
 
     embed = build_leaderboard_embed(ctx.guild)
@@ -5858,7 +6266,7 @@ async def leaderboard_cmd(ctx):
 async def update_leaderboard():
     """كتحدث رسالة لائحة الشرف أوتوماتيكياً فـ LEADERBOARD_CHANNEL_ID كل LEADERBOARD_UPDATE_MINUTES
     (كتبدل نفس الرسالة، ماكتبعثش وحدة جديدة كل مرة)."""
-    if not LEVELING_ENABLED or not LEADERBOARD_CHANNEL_ID:
+    if not bot_settings['leveling_enabled'] or not LEADERBOARD_CHANNEL_ID:
         return
     channel = bot.get_channel(LEADERBOARD_CHANNEL_ID)
     if not channel:
@@ -6150,7 +6558,7 @@ async def info(ctx):
     embed.add_field(name="📰 Auto-Info", value="✅ نشط (5 channels)", inline=False)
     embed.add_field(
         name="⚠️ Warn Escalation",
-        value=f"Mute@{MUTE_AFTER_WARNS} / Kick@{KICK_AFTER_WARNS} / Ban@{BAN_AFTER_WARNS}",
+        value=f"Mute@{bot_settings['mute_after_warns']} / Kick@{bot_settings['kick_after_warns']} / Ban@{bot_settings['ban_after_warns']}",
         inline=True
     )
     embed.add_field(name="🚫 Banned Words", value=f"`{len(get_active_banned_words())}`", inline=True)
@@ -6520,7 +6928,7 @@ async def auto_info():
     باش خطأ فـ فئة وحدة ما يوقفش اللي بعدها."""
 
     # ═══════ 📰 NEWS — أخبار عامة ═══════
-    if AUTO_INFO_NEWS_ENABLED:
+    if bot_settings['auto_info_news']:
         try:
             news = await get_news_from_api()
             if news:
@@ -6546,7 +6954,7 @@ async def auto_info():
     await asyncio.sleep(2)
 
     # ═══════ 🎮 GAMES — أخبار ألعاب ═══════
-    if AUTO_INFO_GAMES_ENABLED:
+    if bot_settings['auto_info_games']:
         try:
             game = await get_game_from_rawg()
             if game:
@@ -6574,7 +6982,7 @@ async def auto_info():
     await asyncio.sleep(2)
 
     # ═══════ 🎬 MOVIES — أفلام + ملخص ═══════
-    if AUTO_INFO_MOVIES_ENABLED:
+    if bot_settings['auto_info_movies']:
         try:
             movie = await get_movie_from_omdb()
             if movie:
@@ -6601,7 +7009,7 @@ async def auto_info():
     await asyncio.sleep(2)
 
     # ═══════ 📺 ANIME — أنمي + ملخص ═══════
-    if AUTO_INFO_ANIME_ENABLED:
+    if bot_settings['auto_info_anime']:
         try:
             anime = await get_anime_from_jikan()
             print(f"[AUTO_INFO] get_anime_from_jikan رجع: {'فيها داتا' if anime else 'فارغة'}")
@@ -6634,7 +7042,7 @@ async def auto_info():
     await asyncio.sleep(2)
 
     # ═══════ 🎧 MUSIC — موسيقى + أغاني ═══════
-    if AUTO_INFO_MUSIC_ENABLED:
+    if bot_settings['auto_info_music']:
         try:
             music = await get_music_from_lastfm()
             if music:
@@ -6953,16 +7361,16 @@ async def on_ready():
     print(f"👋 Welcome: {WELCOME_CHANNEL_ID}")
     print(f"✅ Verify: {VERIFY_CHANNEL_ID}")
     print(f"🛡️ Mod Logs: {MOD_LOGS_CHANNEL_ID}")
-    print(f"📰 News: {'نشط' if AUTO_INFO_NEWS_ENABLED else 'معطل مؤقتا'} {NEWS_CHANNEL_IDS}")
-    print(f"🎮 Games: {'نشط' if AUTO_INFO_GAMES_ENABLED else 'معطل مؤقتا'} {GAMES_CHANNEL_IDS}")
-    print(f"🎬 Movies: {'نشط' if AUTO_INFO_MOVIES_ENABLED else 'معطل مؤقتا'} {MOVIES_CHANNEL_IDS}")
-    print(f"📺 Anime: {'نشط' if AUTO_INFO_ANIME_ENABLED else 'معطل مؤقتا'} {ANIME_CHANNEL_IDS}")
-    print(f"🎧 Music: {'نشط' if AUTO_INFO_MUSIC_ENABLED else 'معطل مؤقتا'} {MUSIC_CHANNEL_IDS}")
+    print(f"📰 News: {'نشط' if bot_settings['auto_info_news'] else 'معطل مؤقتا'} {NEWS_CHANNEL_IDS}")
+    print(f"🎮 Games: {'نشط' if bot_settings['auto_info_games'] else 'معطل مؤقتا'} {GAMES_CHANNEL_IDS}")
+    print(f"🎬 Movies: {'نشط' if bot_settings['auto_info_movies'] else 'معطل مؤقتا'} {MOVIES_CHANNEL_IDS}")
+    print(f"📺 Anime: {'نشط' if bot_settings['auto_info_anime'] else 'معطل مؤقتا'} {ANIME_CHANNEL_IDS}")
+    print(f"🎧 Music: {'نشط' if bot_settings['auto_info_music'] else 'معطل مؤقتا'} {MUSIC_CHANNEL_IDS}")
     print(f"⏱️ Timeout: {API_TIMEOUT}s")
     print(f"🛡️ Moderation: نشط")
     print(f"✅ Verification: نشط")
     print(f"📰 Auto-Info: نشط (5 channels + APIs حقيقية)")
-    print(f"⚠️ Warn Escalation: Mute@{MUTE_AFTER_WARNS} / Kick@{KICK_AFTER_WARNS} / Ban@{BAN_AFTER_WARNS}")
+    print(f"⚠️ Warn Escalation: Mute@{bot_settings['mute_after_warns']} / Kick@{bot_settings['kick_after_warns']} / Ban@{bot_settings['ban_after_warns']}")
     print(f"📊 Stats Channel: {STATS_CHANNEL_ID if STATS_CHANNEL_ID else 'ماشي معطي بعد'} (كل {STATS_UPDATE_MINUTES} د)")
     print(f"🏆 Leaderboard أوتوماتيكي: {LEADERBOARD_CHANNEL_ID if LEADERBOARD_CHANNEL_ID else 'ماشي معطي بعد'} (كل {LEADERBOARD_UPDATE_MINUTES} د)")
     print(f"👑 Administrators Channel: {ADMINISTRATORS_CHANNEL_ID if ADMINISTRATORS_CHANNEL_ID else 'ماشي معطي بعد'} (كل {ADMIN_LIST_UPDATE_MINUTES} د)")
@@ -6970,12 +7378,12 @@ async def on_ready():
     print(f"📋 Applications: Panel={APPLICATIONS_PANEL_CHANNEL_ID or 'ماشي معطي'} | Review={APPLICATIONS_REVIEW_CHANNEL_ID or 'MOD_LOGS_CHANNEL_ID'} | Cooldown={APPLICATIONS_COOLDOWN_HOURS}h")
     print(f"💡 Suggestions: Channel={SUGGESTIONS_CHANNEL_ID or 'ماشي معطي'}")
     print(f"🎂 Birthdays: Channel={BIRTHDAY_ANNOUNCE_CHANNEL_ID or 'ماشي معطي'} | Role={BIRTHDAY_ROLE_ID or 'بلا رول'} | Hour={BIRTHDAY_ANNOUNCE_HOUR}:00 UTC")
-    print(f"🚨 Anti-Raid: {'نشط' if ANTI_RAID_ENABLED else 'معطل'} (عتبة: {RAID_JOIN_THRESHOLD} فـ {RAID_JOIN_INTERVAL_SECONDS}ث | عمل: {RAID_ACTION})")
-    print(f"🖼️ Welcome Cards: {'نشط' if (WELCOME_CARD_ENABLED and PIL_AVAILABLE) else ('معطل (Pillow ماشي مثبت)' if not PIL_AVAILABLE else 'معطل')}")
-    print(f"📊 Leveling: {'نشط' if LEVELING_ENABLED else 'معطل'} (شات: {xp_settings['chat_min']}-{xp_settings['chat_max']} XP/رسالة، cooldown {xp_settings['chat_cooldown']}ث)")
+    print(f"🚨 Anti-Raid: {'نشط' if bot_settings['anti_raid_enabled'] else 'معطل'} (عتبة: {bot_settings['raid_join_threshold']} فـ {bot_settings['raid_join_interval_seconds']}ث | عمل: {bot_settings['raid_action']})")
+    print(f"🖼️ Welcome Cards: {'نشط' if (bot_settings['welcome_card_enabled'] and PIL_AVAILABLE) else ('معطل (Pillow ماشي مثبت)' if not PIL_AVAILABLE else 'معطل')}")
+    print(f"📊 Leveling: {'نشط' if bot_settings['leveling_enabled'] else 'معطل'} (شات: {xp_settings['chat_min']}-{xp_settings['chat_max']} XP/رسالة، cooldown {xp_settings['chat_cooldown']}ث)")
     print(f"⏰ Reminders: {len(reminders)} مبرمجين (كيتفقّد كل 30 ثانية)")
-    print(f"🌐 Auto-Translate: {'نشط' if AUTO_TRANSLATE_ENABLED else 'معطل'} ({len(FLAG_TO_LANGUAGE)} علم مدعوم) | Auto-React: {'نشط' if AUTO_REACT_TRANSLATE_ENABLED else 'معطل'} ({', '.join(AUTO_REACT_FLAGS) if AUTO_REACT_FLAGS else 'بلا أعلام'})")
-    print(f"🔊 Join to Create: {'نشط' if (JOIN_TO_CREATE_ENABLED and JOIN_TO_CREATE_CHANNEL_ID) else 'معطل'} | Voice XP: {'نشط' if VOICE_XP_ENABLED else 'معطل'} (فويس: {xp_settings['voice_per_interval']} / لايفستريم: {xp_settings['stream_per_interval']} XP كل {xp_settings['voice_interval_minutes']}د)")
+    print(f"🌐 Auto-Translate: {'نشط' if bot_settings['auto_translate_enabled'] else 'معطل'} ({len(FLAG_TO_LANGUAGE)} علم مدعوم) | Auto-React: {'نشط' if bot_settings['auto_react_enabled'] else 'معطل'} ({', '.join(AUTO_REACT_FLAGS) if AUTO_REACT_FLAGS else 'بلا أعلام'})")
+    print(f"🔊 Join to Create: {'نشط' if (bot_settings['join_to_create_enabled'] and JOIN_TO_CREATE_CHANNEL_ID) else 'معطل'} | Voice XP: {'نشط' if bot_settings['voice_xp_enabled'] else 'معطل'} (فويس: {xp_settings['voice_per_interval']} / لايفستريم: {xp_settings['stream_per_interval']} XP كل {xp_settings['voice_interval_minutes']}د)")
 
     await bot.change_presence(
         activity=discord.Activity(
@@ -7002,7 +7410,7 @@ async def on_ready():
     if not birthday_loop.is_running():
         birthday_loop.start()
 
-    if VOICE_XP_ENABLED and not voice_xp_loop.is_running():
+    if not voice_xp_loop.is_running():
         voice_xp_loop.start()
 
     bot.add_view(RulesVerifyView())  # باش الأزرار يبقاو خدامين حتى بعد ريستارت البوت
