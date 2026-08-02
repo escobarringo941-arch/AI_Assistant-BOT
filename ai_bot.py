@@ -305,11 +305,18 @@ TEMP_VC_DEFAULT_LIMIT = 0        # ← 0 = بلا حد أقصى للأعضاء
 
 # ═══════ نظام الصوت — Voice XP (نقط XP على الوقت فالـ Voice) ═══════
 VOICE_XP_ENABLED = True
-VOICE_XP_PER_INTERVAL = 10        # ← شحال ديال XP كياخد العضو كل VOICE_XP_INTERVAL_MINUTES
+VOICE_XP_PER_INTERVAL = 10        # ← شحال ديال XP كياخد العضو كل VOICE_XP_INTERVAL_MINUTES (غير كيهضر/كيتواجد فـ فويس عادي)
 VOICE_XP_INTERVAL_MINUTES = 5
 VOICE_XP_MIN_HUMANS_IN_CHANNEL = 2   # ← خاص يكونو على الأقل هاد العدد ديال البشر (ماشي بوتات) فنفس الروم باش ياخدو XP (كيمنع الفارمينغ وحدك)
 VOICE_XP_COUNT_MUTED_DEAFENED = False  # ← False = العضو اللي self-mute/self-deafen ما كياخدش Voice XP (كيمنع AFK farming)
 VOICE_XP_EXCLUDE_CHANNEL_IDS = []   # ← زيد هنا IDs ديال أي voice channel ماباغيش يعطي XP فيه (مثلا AFK channel)
+STREAM_XP_PER_INTERVAL = 20   # ← شحال ديال XP كياخد العضو كل VOICE_XP_INTERVAL_MINUTES ملي كيدير Go Live (لايفستريم) — بالافتراض أكثر من الفويس العادي حيت المجهود أكبر (كيبان لكل الروم، ماشي غير كيتواجد)
+
+# ⚠️ القيم اللي فوق (XP_MIN_PER_MESSAGE, XP_MAX_PER_MESSAGE, XP_COOLDOWN_SECONDS,
+# VOICE_XP_PER_INTERVAL, VOICE_XP_INTERVAL_MINUTES, VOICE_XP_MIN_HUMANS_IN_CHANNEL,
+# STREAM_XP_PER_INTERVAL) هي غير القيم الافتراضية عند أول تشغيل. من بعد، تقدر تبدلهم
+# مباشرة من ديسكورد بالأمر /xppanel (Admin) بلا ماتمس الكود ولا تعاود ريستارت البوت،
+# والتبديلات كيتحفظو فـ xp_settings.json باش يبقاو حتى بعد ريستارت.
 
 # ═══════ درجات العقوبة حسب عدد التحذيرات (سهل التعديل) ═══════
 # كل عضو كيبدا بلا تحذيرات. كل تحذير (Auto-Mod ولا /warn يدوي) كيزيد
@@ -747,6 +754,48 @@ async def grant_xp_and_announce(member: discord.Member, guild: discord.Guild, am
 
 
 load_levels()
+
+# ═══════════════════════════════════════════════════════
+# ║   XP Settings — الإعدادات القابلة للتعديل من /xppanel   ║
+# ═══════════════════════════════════════════════════════
+# هاد الـ dict هو المصدر الحقيقي (source of truth) لكل قيم XP فالبوت وهو خدام.
+# كيتبدا بالقيم الافتراضية من فوق، ومن بعد كيتقرا فوقهم أي تبديل محفوظ فـ
+# xp_settings.json (يعني إلا بدلتي شي حاجة من /xppanel قبل، غادي تتحافظ حتى
+# بعد ريستارت البوت). ماكاينش داعي تبدل الكود، كامل التحكم من ديسكورد.
+XP_SETTINGS_FILE = os.path.join(DATA_DIR, "xp_settings.json")
+xp_settings = {
+    "chat_min": XP_MIN_PER_MESSAGE,
+    "chat_max": XP_MAX_PER_MESSAGE,
+    "chat_cooldown": XP_COOLDOWN_SECONDS,
+    "voice_per_interval": VOICE_XP_PER_INTERVAL,
+    "voice_interval_minutes": VOICE_XP_INTERVAL_MINUTES,
+    "voice_min_humans": VOICE_XP_MIN_HUMANS_IN_CHANNEL,
+    "stream_per_interval": STREAM_XP_PER_INTERVAL,
+}
+
+
+def load_xp_settings():
+    global xp_settings
+    try:
+        with open(XP_SETTINGS_FILE, "r", encoding="utf-8") as f:
+            saved = json.load(f)
+        xp_settings.update({k: v for k, v in saved.items() if k in xp_settings})
+        print(f"[XP-SETTINGS] تحملات الإعدادات المحفوظة: {xp_settings}")
+    except FileNotFoundError:
+        print("[XP-SETTINGS] ماكاينش إعدادات محفوظة، غادي نستعملو القيم الافتراضية من الكود.")
+    except Exception as e:
+        print(f"[XP-SETTINGS] خطأ فـ التحميل: {e}")
+
+
+def save_xp_settings():
+    try:
+        with open(XP_SETTINGS_FILE, "w", encoding="utf-8") as f:
+            json.dump(xp_settings, f, ensure_ascii=False)
+    except Exception as e:
+        print(f"[XP-SETTINGS] خطأ فـ الحفظ: {e}")
+
+
+load_xp_settings()
 
 # ═══════════════════════════════════════════════════════
 # ║   سجل المحتوى المنشور (باش ما يتعاودش تا شي حاجة)      ║
@@ -3809,7 +3858,7 @@ async def voiceunlock_cmd(ctx):
         await ctx.send(f"❌ خطأ: {e}", ephemeral=True)
 
 
-@tasks.loop(minutes=VOICE_XP_INTERVAL_MINUTES)
+@tasks.loop(minutes=xp_settings["voice_interval_minutes"])
 async def voice_xp_loop():
     if not VOICE_XP_ENABLED or not LEVELING_ENABLED:
         return
@@ -3824,7 +3873,7 @@ async def voice_xp_loop():
                 continue
 
             humans = [m for m in channel.members if not m.bot]
-            meets_min_humans = len(humans) >= VOICE_XP_MIN_HUMANS_IN_CHANNEL
+            meets_min_humans = len(humans) >= xp_settings["voice_min_humans"]
 
             for m in humans:
                 is_streaming = bool(m.voice and m.voice.self_stream)  # كيدير Go Live
@@ -3833,8 +3882,11 @@ async def voice_xp_loop():
                     continue
                 if not VOICE_XP_COUNT_MUTED_DEAFENED and m.voice and (m.voice.self_mute or m.voice.self_deaf):
                     continue
+                # اللي كيدير Go Live كياخد قيمة "لايفستريم" خاصة بيه (عادة أكثر من الفويس العادي)،
+                # والباقي (غير متواجد/كيهضر) كياخد قيمة "فويس" العادية.
+                amount = xp_settings["stream_per_interval"] if is_streaming else xp_settings["voice_per_interval"]
                 try:
-                    await grant_xp_and_announce(m, guild, VOICE_XP_PER_INTERVAL, fallback_channel=channel)
+                    await grant_xp_and_announce(m, guild, amount, fallback_channel=channel)
                 except Exception as e:
                     print(f"[VOICE-XP] خطأ فـ إعطاء XP لـ {m}: {e}")
 
@@ -3864,8 +3916,11 @@ async def setup_levels_info_message(guild: discord.Guild):
     embed = discord.Embed(
         title="📊 نظام المستويات (Leveling System)",
         description=(
-            f"كل ما تهضر فالشات، كتربح **XP** ({XP_MIN_PER_MESSAGE}-{XP_MAX_PER_MESSAGE} نقطة فكل رسالة)، "
-            f"مع فترة انتظار {XP_COOLDOWN_SECONDS} ثانية بين كل رسالة وأخرى (باش محدش يقدر يسبام باش يربح نقط).\n\n"
+            f"💬 **الشات:** كل ما تهضر، كتربح **XP** ({xp_settings['chat_min']}-{xp_settings['chat_max']} نقطة فكل رسالة)، "
+            f"مع فترة انتظار {xp_settings['chat_cooldown']} ثانية بين كل رسالة وأخرى (باش محدش يقدر يسبام باش يربح نقط).\n\n"
+            f"🎙️ **الفويس:** كتربح **{xp_settings['voice_per_interval']} XP** كل {xp_settings['voice_interval_minutes']} دقايق "
+            f"(خاص يكونو على الأقل {xp_settings['voice_min_humans']} ديال البشر فنفس الروم).\n\n"
+            f"📡 **اللايفستريم:** ملي تدير Go Live، كتربح **{xp_settings['stream_per_interval']} XP** كل {xp_settings['voice_interval_minutes']} دقايق — أكثر من الفويس العادي حيت المجهود أكبر.\n\n"
             f"كل ما تجمع XP كفاية، كتطلع **Level** جديد. من **Level 30** لفوق، كل مستوى كيصعب أكثر بشكل ملحوظ — "
             f"يعني الوصول لمستويات عالية كيستاهل جهد حقيقي! 💪\n\n"
             f"**الأوامر:**\n"
@@ -4579,11 +4634,11 @@ async def process_message_xp(message: discord.Message):
     key = (message.guild.id, message.author.id)
     now = datetime.now()
     last = xp_cooldowns.get(key)
-    if last and (now - last).total_seconds() < XP_COOLDOWN_SECONDS:
+    if last and (now - last).total_seconds() < xp_settings["chat_cooldown"]:
         return
     xp_cooldowns[key] = now
 
-    gained = random.randint(XP_MIN_PER_MESSAGE, XP_MAX_PER_MESSAGE)
+    gained = random.randint(xp_settings["chat_min"], xp_settings["chat_max"])
     await grant_xp_and_announce(message.author, message.guild, gained, fallback_channel=message.channel)
 
 
@@ -5470,6 +5525,214 @@ async def testwelcome_cmd(ctx, member: Optional[discord.Member] = None, returnin
 
     file = discord.File(card_buffer, filename="welcome.png")
     await ctx.send(content=f"🖼️ هاكذا غادي تبان الكارطة (تجريبي، ماشي رسالة حقيقية):", file=file)
+
+
+# ═══════════════════════════════════════════════════════
+# ║         XP Control Panel — لوحة تحكم فـ XP (Admin)       ║
+# ═══════════════════════════════════════════════════════
+# لوحة تفاعلية كتخلي الإدارة تبدل شحال ديال XP كياخدو الأعضاء من 3 طرق
+# (الشات، الفويس، اللايفستريم) مباشرة من ديسكورد بلا ماتمس الكود — /xppanel
+# القيم كتتحفظ فـ xp_settings.json وكتبقى حتى بعد ريستارت البوت.
+
+def _xp_panel_embed() -> discord.Embed:
+    embed = discord.Embed(
+        title="🎛️ لوحة تحكم XP",
+        description="بدل شحال ديال XP كياخدو الأعضاء من كل طريقة، بالأزرار تحت. القيم كتتحفظ أوتوماتيك.",
+        color=discord.Color.blurple(),
+        timestamp=datetime.now()
+    )
+    embed.add_field(
+        name="💬 الشات",
+        value=(
+            f"**{xp_settings['chat_min']}-{xp_settings['chat_max']}** XP / رسالة\n"
+            f"Cooldown: **{xp_settings['chat_cooldown']}** ثانية"
+        ),
+        inline=True
+    )
+    embed.add_field(
+        name="🎙️ الفويس",
+        value=(
+            f"**{xp_settings['voice_per_interval']}** XP / {xp_settings['voice_interval_minutes']} دقايق\n"
+            f"أدنى بشر فالروم: **{xp_settings['voice_min_humans']}**"
+        ),
+        inline=True
+    )
+    embed.add_field(
+        name="📡 اللايفستريم",
+        value=f"**{xp_settings['stream_per_interval']}** XP / {xp_settings['voice_interval_minutes']} دقايق",
+        inline=True
+    )
+    per_hour = 60 / xp_settings["voice_interval_minutes"]
+    ratio_voice = (xp_settings["stream_per_interval"] / xp_settings["voice_per_interval"]) if xp_settings["voice_per_interval"] else 0
+    embed.add_field(
+        name="📐 مقارنة سريعة (تقريبية، فـ الساعة)",
+        value=(
+            f"اللايفستريم كياخد تقريبا **×{ratio_voice:.1f}** من الفويس العادي.\n"
+            f"🎙️ فويس ≈ **{xp_settings['voice_per_interval'] * per_hour:.0f} XP/ساعة** | "
+            f"📡 لايفستريم ≈ **{xp_settings['stream_per_interval'] * per_hour:.0f} XP/ساعة**"
+        ),
+        inline=False
+    )
+    embed.set_footer(text=f"{SERVER_NAME} | XP Control Panel")
+    return embed
+
+
+class ChatXPModal(discord.ui.Modal, title="💬 إعدادات XP الشات"):
+    def __init__(self):
+        super().__init__()
+        self.min_xp = discord.ui.TextInput(
+            label="أدنى XP فكل رسالة", default=str(xp_settings["chat_min"]), max_length=5
+        )
+        self.max_xp = discord.ui.TextInput(
+            label="أقصى XP فكل رسالة", default=str(xp_settings["chat_max"]), max_length=5
+        )
+        self.cooldown = discord.ui.TextInput(
+            label="Cooldown بالثواني بين رسالة ورسالة", default=str(xp_settings["chat_cooldown"]), max_length=6
+        )
+        self.add_item(self.min_xp)
+        self.add_item(self.max_xp)
+        self.add_item(self.cooldown)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            new_min = int(self.min_xp.value)
+            new_max = int(self.max_xp.value)
+            new_cooldown = int(self.cooldown.value)
+        except ValueError:
+            await interaction.response.send_message("❌ خاص كاع القيم يكونو أرقام صحيحة.", ephemeral=True)
+            return
+        if new_min < 0 or new_max < 0 or new_cooldown < 0:
+            await interaction.response.send_message("❌ ماكاينش أرقام سالبة.", ephemeral=True)
+            return
+        if new_min > new_max:
+            await interaction.response.send_message("❌ الأدنى خاصو يكون أصغر ولا يساوي الأقصى.", ephemeral=True)
+            return
+
+        xp_settings["chat_min"] = new_min
+        xp_settings["chat_max"] = new_max
+        xp_settings["chat_cooldown"] = new_cooldown
+        save_xp_settings()
+
+        await interaction.response.edit_message(embed=_xp_panel_embed(), view=XPPanelView())
+
+
+class VoiceXPModal(discord.ui.Modal, title="🎙️ إعدادات XP الفويس"):
+    def __init__(self):
+        super().__init__()
+        self.per_interval = discord.ui.TextInput(
+            label="XP كل فترة (فويس عادي)", default=str(xp_settings["voice_per_interval"]), max_length=5
+        )
+        self.interval_minutes = discord.ui.TextInput(
+            label="الفترة بالدقايق (مشتركة مع اللايفستريم)",
+            default=str(xp_settings["voice_interval_minutes"]), max_length=4
+        )
+        self.min_humans = discord.ui.TextInput(
+            label="أدنى عدد بشر فالروم باش ياخدو XP", default=str(xp_settings["voice_min_humans"]), max_length=3
+        )
+        self.add_item(self.per_interval)
+        self.add_item(self.interval_minutes)
+        self.add_item(self.min_humans)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            new_amount = int(self.per_interval.value)
+            new_interval = int(self.interval_minutes.value)
+            new_min_humans = int(self.min_humans.value)
+        except ValueError:
+            await interaction.response.send_message("❌ خاص كاع القيم يكونو أرقام صحيحة.", ephemeral=True)
+            return
+        if new_amount < 0 or new_interval <= 0 or new_min_humans < 1:
+            await interaction.response.send_message(
+                "❌ الفترة خاصها تكون أكبر من 0، وأدنى البشر خاصو يكون 1 ولا أكثر.", ephemeral=True
+            )
+            return
+
+        interval_changed = new_interval != xp_settings["voice_interval_minutes"]
+        xp_settings["voice_per_interval"] = new_amount
+        xp_settings["voice_interval_minutes"] = new_interval
+        xp_settings["voice_min_humans"] = new_min_humans
+        save_xp_settings()
+
+        # الفترة (VOICE_XP_INTERVAL_MINUTES) مشتركة بين الفويس واللايفستريم (نفس الـ loop)،
+        # فـ إلا تبدلات خاصنا نبدلو الـ loop نفسو ماشي غير الرقم فالـ dict
+        if interval_changed and voice_xp_loop.is_running():
+            voice_xp_loop.change_interval(minutes=new_interval)
+
+        await interaction.response.edit_message(embed=_xp_panel_embed(), view=XPPanelView())
+
+
+class StreamXPModal(discord.ui.Modal, title="📡 إعدادات XP اللايفستريم"):
+    def __init__(self):
+        super().__init__()
+        self.per_interval = discord.ui.TextInput(
+            label="XP كل فترة (ملي كيدير Go Live)",
+            default=str(xp_settings["stream_per_interval"]), max_length=5
+        )
+        self.add_item(self.per_interval)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            new_amount = int(self.per_interval.value)
+        except ValueError:
+            await interaction.response.send_message("❌ خاص القيمة تكون رقم صحيح.", ephemeral=True)
+            return
+        if new_amount < 0:
+            await interaction.response.send_message("❌ ماكاينش رقم سالب.", ephemeral=True)
+            return
+
+        xp_settings["stream_per_interval"] = new_amount
+        save_xp_settings()
+
+        await interaction.response.edit_message(embed=_xp_panel_embed(), view=XPPanelView())
+
+
+class XPPanelView(discord.ui.View):
+    """أزرار لوحة تحكم XP — كل واحد كيحل Modal باش تبدل القيم ديال طريقة معينة.
+    خاص Administrator باش يستعملها، حتى ملي تكون الرسالة بانة لكل واحد."""
+
+    def __init__(self):
+        super().__init__(timeout=300)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if not isinstance(interaction.user, discord.Member) or not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("❌ هاد اللوحة خاصة بالإدارة فقط.", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="عدل الشات", emoji="💬", style=discord.ButtonStyle.primary)
+    async def edit_chat(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(ChatXPModal())
+
+    @discord.ui.button(label="عدل الفويس", emoji="🎙️", style=discord.ButtonStyle.primary)
+    async def edit_voice(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(VoiceXPModal())
+
+    @discord.ui.button(label="عدل اللايفستريم", emoji="📡", style=discord.ButtonStyle.primary)
+    async def edit_stream(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(StreamXPModal())
+
+    @discord.ui.button(label="رجّع الافتراضي", emoji="↩️", style=discord.ButtonStyle.danger, row=1)
+    async def reset_defaults(self, interaction: discord.Interaction, button: discord.ui.Button):
+        interval_changed = xp_settings["voice_interval_minutes"] != VOICE_XP_INTERVAL_MINUTES
+        xp_settings["chat_min"] = XP_MIN_PER_MESSAGE
+        xp_settings["chat_max"] = XP_MAX_PER_MESSAGE
+        xp_settings["chat_cooldown"] = XP_COOLDOWN_SECONDS
+        xp_settings["voice_per_interval"] = VOICE_XP_PER_INTERVAL
+        xp_settings["voice_interval_minutes"] = VOICE_XP_INTERVAL_MINUTES
+        xp_settings["voice_min_humans"] = VOICE_XP_MIN_HUMANS_IN_CHANNEL
+        xp_settings["stream_per_interval"] = STREAM_XP_PER_INTERVAL
+        save_xp_settings()
+        if interval_changed and voice_xp_loop.is_running():
+            voice_xp_loop.change_interval(minutes=VOICE_XP_INTERVAL_MINUTES)
+        await interaction.response.edit_message(embed=_xp_panel_embed(), view=self)
+
+
+@bot.hybrid_command(name="xppanel")
+@app_commands.default_permissions(administrator=True)
+@commands.has_permissions(administrator=True)
+async def xppanel_cmd(ctx):
+    """لوحة تحكم تفاعلية باش تبدل شحال ديال XP كياخدو الأعضاء من الشات، الفويس، واللايفستريم — Admin"""
+    await ctx.send(embed=_xp_panel_embed(), view=XPPanelView())
 
 
 # ═══════════════════════════════════════════════════════
@@ -6621,10 +6884,10 @@ async def on_ready():
     print(f"🎂 Birthdays: Channel={BIRTHDAY_ANNOUNCE_CHANNEL_ID or 'ماشي معطي'} | Role={BIRTHDAY_ROLE_ID or 'بلا رول'} | Hour={BIRTHDAY_ANNOUNCE_HOUR}:00 UTC")
     print(f"🚨 Anti-Raid: {'نشط' if ANTI_RAID_ENABLED else 'معطل'} (عتبة: {RAID_JOIN_THRESHOLD} فـ {RAID_JOIN_INTERVAL_SECONDS}ث | عمل: {RAID_ACTION})")
     print(f"🖼️ Welcome Cards: {'نشط' if (WELCOME_CARD_ENABLED and PIL_AVAILABLE) else ('معطل (Pillow ماشي مثبت)' if not PIL_AVAILABLE else 'معطل')}")
-    print(f"📊 Leveling: {'نشط' if LEVELING_ENABLED else 'معطل'} ({XP_MIN_PER_MESSAGE}-{XP_MAX_PER_MESSAGE} XP/رسالة، cooldown {XP_COOLDOWN_SECONDS}ث)")
+    print(f"📊 Leveling: {'نشط' if LEVELING_ENABLED else 'معطل'} (شات: {xp_settings['chat_min']}-{xp_settings['chat_max']} XP/رسالة، cooldown {xp_settings['chat_cooldown']}ث)")
     print(f"⏰ Reminders: {len(reminders)} مبرمجين (كيتفقّد كل 30 ثانية)")
     print(f"🌐 Auto-Translate: {'نشط' if AUTO_TRANSLATE_ENABLED else 'معطل'} ({len(FLAG_TO_LANGUAGE)} علم مدعوم) | Auto-React: {'نشط' if AUTO_REACT_TRANSLATE_ENABLED else 'معطل'} ({', '.join(AUTO_REACT_FLAGS) if AUTO_REACT_FLAGS else 'بلا أعلام'})")
-    print(f"🔊 Join to Create: {'نشط' if (JOIN_TO_CREATE_ENABLED and JOIN_TO_CREATE_CHANNEL_ID) else 'معطل'} | Voice XP: {'نشط' if VOICE_XP_ENABLED else 'معطل'} ({VOICE_XP_PER_INTERVAL} XP كل {VOICE_XP_INTERVAL_MINUTES}د)")
+    print(f"🔊 Join to Create: {'نشط' if (JOIN_TO_CREATE_ENABLED and JOIN_TO_CREATE_CHANNEL_ID) else 'معطل'} | Voice XP: {'نشط' if VOICE_XP_ENABLED else 'معطل'} (فويس: {xp_settings['voice_per_interval']} / لايفستريم: {xp_settings['stream_per_interval']} XP كل {xp_settings['voice_interval_minutes']}د)")
 
     await bot.change_presence(
         activity=discord.Activity(
