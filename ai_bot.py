@@ -55,7 +55,7 @@ STATS_IMAGE_URL = ""  # ← حط هنا رابط مباشر ديال صورة (�
 # وحط هاد الرابط هنا (كيبدا بـ https://cdn.discordapp.com/attachments/...).
 # مواقع بحال animated-gif-creator.com عادة ماخدامينش كـ hotlink، البوت ما غاديش يقدر يبين الصورة بيهم.
 
-AI_MODEL = "openrouter/free"  # ← مؤقت! كان "deepseek/deepseek-chat" (رجعها ملي تزيد رصيد فـ OpenRouter)
+AI_MODEL = "deepseek/deepseek-r1:free"  # ← مؤقت! كان "deepseek/deepseek-chat" (رجعها ملي تزيد رصيد فـ OpenRouter)
 
 # ═══════ سلسلة الاحتياط (Fallback) ═══════
 # إلا الموديل الأساسي (AI_MODEL) وقف بـ 429 (rate limit) ولا 402 (بلا رصيد)،
