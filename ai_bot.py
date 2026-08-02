@@ -276,6 +276,16 @@ FLAG_TO_LANGUAGE = {
     "🇲🇦": ("الدارجة المغربية", "Moroccan Darija"),
 }
 
+# ═══════ Auto-React: البوت كيزيد الأعلام كـ reactions أوتوماتيك على كل رسالة ═══════
+# (بدل ما العضو يكتب/يلقى العلم بيدو، البوت كيحطهم ليه جاهزين، وغير يكليكي على اللي بغا)
+AUTO_REACT_TRANSLATE_ENABLED = False   # ← بدلها True باش تخدم
+AUTO_REACT_FLAGS = ["🇬🇧", "🇫🇷", "🇪🇸"]  # ← الأعلام اللي غادي تتزاد أوتوماتيك (خاصهم يكونو موجودين فـ FLAG_TO_LANGUAGE فوق)
+AUTO_REACT_CHANNEL_IDS = []   # ← خاوية [] = فكاع الـ channels. إلا بغيتي غير channels معينة، زيد IDs هنا مثلا [111, 222]
+
+for _flag in AUTO_REACT_FLAGS:
+    if _flag not in FLAG_TO_LANGUAGE:
+        print(f"[CONFIG] ⚠️ AUTO_REACT_FLAGS فيها علم '{_flag}' ماكاينش فـ FLAG_TO_LANGUAGE — زيدو لهاديك اللائحة ولا حيدو من AUTO_REACT_FLAGS.")
+
 # ═══════ نظام الصوت — Join to Create (روم صوتية مؤقتة) ═══════
 JOIN_TO_CREATE_ENABLED = True
 JOIN_TO_CREATE_CHANNEL_ID = 1533261616081272962   # ← ID ديال الـ voice channel "➕ دير روم" (العضو كيدخل ليه فيتخلق ليه روم خاص بيه)
@@ -4362,6 +4372,22 @@ async def handle_flag_translation(payload: discord.RawReactionActionEvent,
         pass
 
 
+async def maybe_auto_react_translate(message: discord.Message):
+    """كيزيد الأعلام ديال AUTO_REACT_FLAGS أوتوماتيك على كل رسالة (إلا فيها نص)،
+    باش العضو غير يكليكي على العلم بلا ما يقلب عليه/يكتبو بيدو."""
+    if not AUTO_REACT_TRANSLATE_ENABLED or not AUTO_TRANSLATE_ENABLED:
+        return
+    if not message.content or not message.content.strip():
+        return
+    if AUTO_REACT_CHANNEL_IDS and message.channel.id not in AUTO_REACT_CHANNEL_IDS:
+        return
+    for flag in AUTO_REACT_FLAGS:
+        try:
+            await message.add_reaction(flag)
+        except discord.HTTPException:
+            pass
+
+
 @bot.event
 async def on_raw_reaction_add(payload):
     guild = bot.get_guild(payload.guild_id)
@@ -4545,6 +4571,8 @@ async def on_message(message):
                     spam_tracker[user_id] = []
             except discord.Forbidden:
                 pass
+
+    await maybe_auto_react_translate(message)
 
     if "ggmw9" in msg_lower:
         await message.reply("نعام! 😂 واش بغيتي؟", mention_author=False)
@@ -6502,7 +6530,7 @@ async def on_ready():
     print(f"🖼️ Welcome Cards: {'نشط' if (WELCOME_CARD_ENABLED and PIL_AVAILABLE) else ('معطل (Pillow ماشي مثبت)' if not PIL_AVAILABLE else 'معطل')}")
     print(f"📊 Leveling: {'نشط' if LEVELING_ENABLED else 'معطل'} ({XP_MIN_PER_MESSAGE}-{XP_MAX_PER_MESSAGE} XP/رسالة، cooldown {XP_COOLDOWN_SECONDS}ث)")
     print(f"⏰ Reminders: {len(reminders)} مبرمجين (كيتفقّد كل 30 ثانية)")
-    print(f"🌐 Auto-Translate: {'نشط' if AUTO_TRANSLATE_ENABLED else 'معطل'} ({len(FLAG_TO_LANGUAGE)} علم مدعوم)")
+    print(f"🌐 Auto-Translate: {'نشط' if AUTO_TRANSLATE_ENABLED else 'معطل'} ({len(FLAG_TO_LANGUAGE)} علم مدعوم) | Auto-React: {'نشط' if AUTO_REACT_TRANSLATE_ENABLED else 'معطل'} ({', '.join(AUTO_REACT_FLAGS) if AUTO_REACT_FLAGS else 'بلا أعلام'})")
     print(f"🔊 Join to Create: {'نشط' if (JOIN_TO_CREATE_ENABLED and JOIN_TO_CREATE_CHANNEL_ID) else 'معطل'} | Voice XP: {'نشط' if VOICE_XP_ENABLED else 'معطل'} ({VOICE_XP_PER_INTERVAL} XP كل {VOICE_XP_INTERVAL_MINUTES}د)")
 
     await bot.change_presence(
