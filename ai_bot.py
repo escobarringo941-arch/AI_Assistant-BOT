@@ -244,6 +244,10 @@ XP_COOLDOWN_SECONDS = 60   # ماخذيش XP مرة أخرى من نفس الع�
 LEVEL_UP_CHANNEL_ID = 1532872432778743978    # ← channel فين كيتبعث "مبروك وصلتي لـ Level X" (0 = نفس channel لي هضر فيه العضو)
 LEVELS_INFO_CHANNEL_ID = 1532613980466446387  # ← channel فين غادي تبان رسالة شرح نظام الـ Leveling + لائحة كاع المستويات ورولاتهم
 
+# ═══════ Leaderboard أوتوماتيكي (كيتحدث بروحو فـ channel معين) ═══════
+LEADERBOARD_CHANNEL_ID = 1532613980466446387   # ← channel فين غادي تتبعث/تتحدث لائحة الشرف أوتوماتيكياً
+LEADERBOARD_UPDATE_MINUTES = 15                 # ← كل شحال ديال الدقايق كيتحدث
+
 # رولات أوتوماتيكية عند مستويات معينة: {level: role_id}
 # العضو كيحتفظ بكل الرولات السابقة (تراكمية، ماشي بديل)
 # ⚠️ بدل كل 0 برقم الـ Role ID الحقيقي ديالك (Server Settings → Roles → كليك يمين → Copy Role ID)
@@ -796,6 +800,33 @@ def save_xp_settings():
 
 
 load_xp_settings()
+
+# ═══════ Leaderboard أوتوماتيكي — تخزين ID ديال الرسالة (باش تتبدل ماشي تتبعث من جديد) ═══════
+LEADERBOARD_MESSAGE_FILE = os.path.join(DATA_DIR, "leaderboard_message.json")
+leaderboard_message_ids = {}  # {guild_id (str): message_id}
+
+
+def load_leaderboard_message_ids():
+    global leaderboard_message_ids
+    try:
+        with open(LEADERBOARD_MESSAGE_FILE, "r", encoding="utf-8") as f:
+            leaderboard_message_ids = json.load(f)
+        print(f"[LEADERBOARD] تحمل {len(leaderboard_message_ids)} رسالة leaderboard محفوظة")
+    except FileNotFoundError:
+        print("[LEADERBOARD] ماكاينش رسالة leaderboard سابقة، غادي نبعثو وحدة جديدة")
+    except Exception as e:
+        print(f"[LEADERBOARD] خطأ فـ التحميل: {e}")
+
+
+def save_leaderboard_message_ids():
+    try:
+        with open(LEADERBOARD_MESSAGE_FILE, "w", encoding="utf-8") as f:
+            json.dump(leaderboard_message_ids, f, ensure_ascii=False)
+    except Exception as e:
+        print(f"[LEADERBOARD] خطأ فـ الحفظ: {e}")
+
+
+load_leaderboard_message_ids()
 
 # ═══════════════════════════════════════════════════════
 # ║   سجل المحتوى المنشور (باش ما يتعاودش تا شي حاجة)      ║
@@ -5779,17 +5810,11 @@ async def rank_cmd(ctx, member: Optional[discord.Member] = None):
     await ctx.send(embed=embed)
 
 
-@bot.hybrid_command(name="leaderboard", aliases=["lb", "top"])
-async def leaderboard_cmd(ctx):
-    """كيبين أفضل 10 أعضاء نشيطين فالسيرفر (الأكثر XP)"""
-    if not LEVELING_ENABLED:
-        await ctx.send("❌ نظام Leveling معطل دابا (`LEVELING_ENABLED = False`).", delete_after=6)
-        return
-
-    guild_data = levels_db.get(str(ctx.guild.id), {})
+def build_leaderboard_embed(guild: discord.Guild) -> Optional[discord.Embed]:
+    """كتصاوب embed لائحة الشرف (أفضل 10) لسيرفر معين. كترجع None إلا ماكاين حتى عضو ربح XP بعد."""
+    guild_data = levels_db.get(str(guild.id), {})
     if not guild_data:
-        await ctx.send("ماكاين حتى عضو ربح XP دابا.")
-        return
+        return None
 
     ranking = sorted(
         guild_data.items(),
@@ -5801,7 +5826,7 @@ async def leaderboard_cmd(ctx):
     lines = []
     for i, (user_id, data) in enumerate(ranking):
         prefix = medals[i] if i < len(medals) else f"#{i + 1}"
-        member = ctx.guild.get_member(int(user_id))
+        member = guild.get_member(int(user_id))
         name = member.mention if member else f"<@{user_id}> (خرج من السيرفر)"
         lines.append(f"{prefix} {name} — Level {data['level']} ({total_xp_earned(data)} XP)")
 
@@ -5812,7 +5837,69 @@ async def leaderboard_cmd(ctx):
         timestamp=datetime.now()
     )
     embed.set_footer(text=f"{SERVER_NAME} | Leveling System")
+    return embed
+
+
+@bot.hybrid_command(name="leaderboard", aliases=["lb", "top"])
+async def leaderboard_cmd(ctx):
+    """كيبين أفضل 10 أعضاء نشيطين فالسيرفر (الأكثر XP)"""
+    if not LEVELING_ENABLED:
+        await ctx.send("❌ نظام Leveling معطل دابا (`LEVELING_ENABLED = False`).", delete_after=6)
+        return
+
+    embed = build_leaderboard_embed(ctx.guild)
+    if not embed:
+        await ctx.send("ماكاين حتى عضو ربح XP دابا.")
+        return
     await ctx.send(embed=embed)
+
+
+@tasks.loop(minutes=LEADERBOARD_UPDATE_MINUTES)
+async def update_leaderboard():
+    """كتحدث رسالة لائحة الشرف أوتوماتيكياً فـ LEADERBOARD_CHANNEL_ID كل LEADERBOARD_UPDATE_MINUTES
+    (كتبدل نفس الرسالة، ماكتبعثش وحدة جديدة كل مرة)."""
+    if not LEVELING_ENABLED or not LEADERBOARD_CHANNEL_ID:
+        return
+    channel = bot.get_channel(LEADERBOARD_CHANNEL_ID)
+    if not channel:
+        print(f"[LEADERBOARD] ❌ ماكاينش channel بـ ID {LEADERBOARD_CHANNEL_ID}")
+        return
+
+    guild = channel.guild
+    embed = build_leaderboard_embed(guild)
+    if not embed:
+        return  # ماكاين حتى عضو ربح XP بعد، منتظرين
+
+    msg_id = leaderboard_message_ids.get(str(guild.id))
+    if msg_id:
+        try:
+            msg = await channel.fetch_message(int(msg_id))
+            await msg.edit(embed=embed)
+            return
+        except (discord.NotFound, discord.Forbidden):
+            pass
+        except Exception as e:
+            print(f"[LEADERBOARD] خطأ فـ التعديل: {e}")
+
+    try:
+        new_msg = await channel.send(embed=embed)
+        leaderboard_message_ids[str(guild.id)] = new_msg.id
+        save_leaderboard_message_ids()
+    except Exception as e:
+        print(f"[LEADERBOARD] خطأ فـ البعث: {e}")
+
+
+@update_leaderboard.before_loop
+async def before_update_leaderboard():
+    await bot.wait_until_ready()
+
+
+@update_leaderboard.error
+async def update_leaderboard_error(error):
+    print(f"[LEADERBOARD] ❌❌ خطأ كبير وقف الـ loop: {error}")
+    await asyncio.sleep(5)
+    if not update_leaderboard.is_running():
+        update_leaderboard.restart()
 
 
 @bot.hybrid_command(name="setlevel")
@@ -6877,6 +6964,7 @@ async def on_ready():
     print(f"📰 Auto-Info: نشط (5 channels + APIs حقيقية)")
     print(f"⚠️ Warn Escalation: Mute@{MUTE_AFTER_WARNS} / Kick@{KICK_AFTER_WARNS} / Ban@{BAN_AFTER_WARNS}")
     print(f"📊 Stats Channel: {STATS_CHANNEL_ID if STATS_CHANNEL_ID else 'ماشي معطي بعد'} (كل {STATS_UPDATE_MINUTES} د)")
+    print(f"🏆 Leaderboard أوتوماتيكي: {LEADERBOARD_CHANNEL_ID if LEADERBOARD_CHANNEL_ID else 'ماشي معطي بعد'} (كل {LEADERBOARD_UPDATE_MINUTES} د)")
     print(f"👑 Administrators Channel: {ADMINISTRATORS_CHANNEL_ID if ADMINISTRATORS_CHANNEL_ID else 'ماشي معطي بعد'} (كل {ADMIN_LIST_UPDATE_MINUTES} د)")
     print(f"🎫 Tickets: Panel={TICKETS_PANEL_CHANNEL_ID or 'ماشي معطي'} | Category={TICKETS_CATEGORY_ID or 'ماشي معطي'} | Logs={TICKET_LOGS_CHANNEL_ID or 'MOD_LOGS_CHANNEL_ID'}")
     print(f"📋 Applications: Panel={APPLICATIONS_PANEL_CHANNEL_ID or 'ماشي معطي'} | Review={APPLICATIONS_REVIEW_CHANNEL_ID or 'MOD_LOGS_CHANNEL_ID'} | Cooldown={APPLICATIONS_COOLDOWN_HOURS}h")
@@ -6901,6 +6989,9 @@ async def on_ready():
 
     if STATS_CHANNEL_ID and not update_stats.is_running():
         update_stats.start()
+
+    if LEADERBOARD_CHANNEL_ID and not update_leaderboard.is_running():
+        update_leaderboard.start()
 
     if ADMINISTRATORS_CHANNEL_ID and not update_admin_list.is_running():
         update_admin_list.start()
