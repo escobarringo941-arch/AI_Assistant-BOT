@@ -3376,6 +3376,75 @@ async def suggest_cmd(ctx, *, idea: str):
         await ctx.send(f"✅ تم بعث الاقتراح ديالك (#{sug_id})!", delete_after=5)
 
 
+async def setup_suggestions_info(guild: discord.Guild):
+    """كيبعث (مرة وحدة، أول مرة) رسالة تشرح لأعضاء channel الاقتراحات
+    شنو يقدرو يقترحو وكيفاش، باش ما يبقاش الناس تايهين."""
+    if not SUGGESTIONS_CHANNEL_ID:
+        return
+    channel = bot.get_channel(SUGGESTIONS_CHANNEL_ID)
+    if not channel:
+        return
+
+    async for message in channel.history(limit=15):
+        if message.author == bot.user and message.embeds and message.embeds[0].title and "الاقتراحات" in message.embeds[0].title:
+            return  # الرسالة موجودة ديجا، ماخاصناش نبعثوها مرة أخرى
+
+    embed = discord.Embed(
+        title="💡 مرحبا بيك فـ channel الاقتراحات",
+        description=(
+            "هادي هي البلاصة فين تقدر تقترح أي فكرة باش نزيدو نطورو السيرفر سوا. "
+            "كل اقتراح كيبان هنا وكيقدر كل واحد يصوت عليه بـ 👍/👎، والإدارة كتراجعو وكتقرر."
+        ),
+        color=discord.Color.blurple(),
+        timestamp=datetime.now()
+    )
+    embed.add_field(
+        name="✅ شنو تقدر تقترح",
+        value=(
+            "• شي feature/أمر جديد تحب تزاد للبوت\n"
+            "• شي channel/role جديد يفيد السيرفر\n"
+            "• شي فعالية، مسابقة، ولا event تحب تشوفو\n"
+            "• تعديل على القوانين ولا التنظيم ديال السيرفر\n"
+            "• أي فكرة أخرى تحس بلي غادي تحسن السيرفر"
+        ),
+        inline=False
+    )
+    embed.add_field(
+        name="🚫 شنو ماشي مكانو هنا",
+        value=(
+            "• مشكل تقني ولا بوغ فالبوت → دير Ticket بدل الاقتراح\n"
+            "• شكاية على عضو معين ولا تبليغ → استعمل `/report`\n"
+            "• طلب انضمام للإدارة → عندو channel خاص بيه (Applications)"
+        ),
+        inline=False
+    )
+    embed.add_field(
+        name="📝 كيفاش تقترح؟",
+        value=(
+            "اكتب الأمر:\n"
+            "`/suggest <الفكرة ديالك بالتفصيل>`\n\n"
+            "مثال: `/suggest نزيدو channel خاص بالميمز`\n\n"
+            "الاقتراح غادي يتبعث هنا أوتوماتيك، والأعضاء غايقدرو يصوتو عليه. "
+            "كون واضح ومباشر باش الإدارة تفهم الفكرة بسرعة!"
+        ),
+        inline=False
+    )
+    embed.set_footer(text=f"{SERVER_NAME} | نظام الاقتراحات")
+    await channel.send(embed=embed)
+
+
+@bot.hybrid_command(name="setupsuggestions")
+@app_commands.default_permissions(administrator=True)
+@commands.has_permissions(administrator=True)
+async def setupsuggestions_cmd(ctx):
+    """كيصاوب/يعاود يصاوب رسالة الشرح ديال channel الاقتراحات فـ SUGGESTIONS_CHANNEL_ID (Admin)"""
+    if not SUGGESTIONS_CHANNEL_ID:
+        await ctx.send("❌ حط `SUGGESTIONS_CHANNEL_ID` فالـ CONFIG أولاً.", delete_after=8)
+        return
+    await setup_suggestions_info(ctx.guild)
+    await ctx.send("✅ رسالة الشرح ديال الاقتراحات تصاوبات (ولا كانت ديجا موجودة).", delete_after=8)
+
+
 # ═══════════════════════════════════════════════════════
 # ║        Phase 8 — أوامر نظام Birthdays                   ║
 # ═══════════════════════════════════════════════════════
@@ -6578,6 +6647,8 @@ async def on_ready():
             await setup_applications_panel(guild)
         if LEVELS_INFO_CHANNEL_ID:
             await setup_levels_info_message(guild)
+        if SUGGESTIONS_CHANNEL_ID:
+            await setup_suggestions_info(guild)
 
         problems = check_role_hierarchy(guild)
         if problems:
