@@ -55,17 +55,18 @@ STATS_IMAGE_URL = ""  # ← حط هنا رابط مباشر ديال صورة (�
 # وحط هاد الرابط هنا (كيبدا بـ https://cdn.discordapp.com/attachments/...).
 # مواقع بحال animated-gif-creator.com عادة ماخدامينش كـ hotlink، البوت ما غاديش يقدر يبين الصورة بيهم.
 
-AI_MODEL = "deepseek/deepseek-r1:free"  # ← مؤقت! كان "deepseek/deepseek-chat" (رجعها ملي تزيد رصيد فـ OpenRouter)
+AI_MODEL = "openrouter/free"  # ← Router الرسمي ديال OpenRouter: كيختار أوتوماتيك موديل مجاني خدام دابا (كيتفادى المشكل بلي الموديلات المجانية كيتبدلو/كيتحيدو بلا سابق إنذار)
 
 # ═══════ سلسلة الاحتياط (Fallback) ═══════
-# إلا الموديل الأساسي (AI_MODEL) وقف بـ 429 (rate limit) ولا 402 (بلا رصيد)،
-# البوت كيجرب أوتوماتيكيا الموديلات اللي فـ هاد اللائحة، واحد بواحد،
-# قبل ما يستسلم. زيد/بدل الموديلات اللي بغيتي هنا (خاصك تتأكد من الأسماء
-# الدقيقة فـ https://openrouter.ai/models قبل ما تزيدهم).
+# إلا AI_MODEL (الـ Router) فشل لسبب ما، البوت كيجرب أوتوماتيكيا الموديلات
+# اللي فـ هاد اللائحة، واحد بواحد، قبل ما يستسلم. ⚠️ الموديلات المجانية فـ
+# OpenRouter كتتبدل/كتتحيد بزربة بلا سابق إنذار — إلا شفتي فـ logs بلي شي
+# موديل هنا كيرجع 404، تأكد من الأسماء الدقيقة فـ openrouter.ai/models
+# (فلتر Price: Free) وبدلها.
 AI_MODEL_FALLBACKS = [
-    "deepseek/deepseek-r1:free",
-    "meta-llama/llama-3.3-70b-instruct:free",
-    "google/gemini-2.0-flash-exp:free",
+    "openai/gpt-oss-20b:free",
+    "nvidia/nemotron-3-super-120b-a12b:free",
+    "qwen/qwen3-next-80b-a3b-instruct:free",
 ]
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
@@ -278,7 +279,7 @@ FLAG_TO_LANGUAGE = {
 
 # ═══════ Auto-React: البوت كيزيد الأعلام كـ reactions أوتوماتيك على كل رسالة ═══════
 # (بدل ما العضو يكتب/يلقى العلم بيدو، البوت كيحطهم ليه جاهزين، وغير يكليكي على اللي بغا)
-AUTO_REACT_TRANSLATE_ENABLED = False   # ← بدلها True باش تخدم
+AUTO_REACT_TRANSLATE_ENABLED = True   # ← بدلها True باش تخدم
 AUTO_REACT_FLAGS = ["🇬🇧", "🇫🇷", "🇪🇸"]  # ← الأعلام اللي غادي تتزاد أوتوماتيك (خاصهم يكونو موجودين فـ FLAG_TO_LANGUAGE فوق)
 AUTO_REACT_CHANNEL_IDS = []   # ← خاوية [] = فكاع الـ channels. إلا بغيتي غير channels معينة، زيد IDs هنا مثلا [111, 222]
 
