@@ -1453,6 +1453,7 @@ async def translate_text(text: str, target_language_en: str) -> Optional[str]:
     if not text or not text.strip():
         return None
     if not OPENROUTER_API_KEY:
+        print("[AUTO-TRANSLATE] ❌ OPENROUTER_API_KEY ماكاينش/فارغة — ماقدرش نترجم حتى نص.")
         return None
 
     messages = [
@@ -4405,23 +4406,28 @@ async def handle_flag_translation(payload: discord.RawReactionActionEvent,
     """كيترجم الرسالة اللي تحطات عليها reaction بعلم دولة، ويرد بإيمبيد فيه الترجمة."""
     channel = guild.get_channel(payload.channel_id) or bot.get_channel(payload.channel_id)
     if not channel:
+        print(f"[AUTO-TRANSLATE] ❌ ما لقيتش channel بـ ID {payload.channel_id}")
         return
     try:
         message = await channel.fetch_message(payload.message_id)
-    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+    except (discord.NotFound, discord.Forbidden, discord.HTTPException) as e:
+        print(f"[AUTO-TRANSLATE] ❌ ما قدرتش نجيب الرسالة (Forbidden/NotFound؟): {e}")
         return
 
     # ماكاينش نص (رسالة بلا محتوى، صورة وحدها، ولا حتى ترجمة سابقة ديالنا) → ماكاين والو نترجمو
     if message.author.bot or not message.content or not message.content.strip():
+        print(f"[AUTO-TRANSLATE] ⏭️ تجاوزت الرسالة (بوت={message.author.bot}, بلا نص={not message.content})")
         return
 
     lang_display, lang_en = FLAG_TO_LANGUAGE[str(payload.emoji)]
+    print(f"[AUTO-TRANSLATE] 🔄 كنترجم رسالة #{message.id} لـ {lang_en}...")
     cache_key = (message.id, lang_en)
 
     translated = translated_messages_cache.get(cache_key)
     if not translated:
         translated = await translate_text(message.content, lang_en)
         if not translated:
+            print(f"[AUTO-TRANSLATE] ❌ translate_text رجع خاوي لـ رسالة #{message.id}")
             return
         translated_messages_cache[cache_key] = translated
         if len(translated_messages_cache) > 500:   # كنخليو الكاش ماكيكبرش بلا حدود
