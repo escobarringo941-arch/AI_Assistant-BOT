@@ -238,7 +238,7 @@ RAID_MIN_ACCOUNT_AGE_HOURS = 24
 
 # ═══════ Leveling System (XP + Levels + رولات أوتوماتيكية) ═══════
 LEVELING_ENABLED = True
-XP_MIN_PER_MESSAGE = 15
+XP_MIN_PER_MESSAGE = 10
 XP_MAX_PER_MESSAGE = 25
 XP_COOLDOWN_SECONDS = 60   # ماخذيش XP مرة أخرى من نفس العضو قبل ما تعدي هاد المدة
 LEVEL_UP_CHANNEL_ID = 1532872432778743978    # ← channel فين كيتبعث "مبروك وصلتي لـ Level X" (0 = نفس channel لي هضر فيه العضو)
