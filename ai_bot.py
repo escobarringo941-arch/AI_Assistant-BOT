@@ -3824,10 +3824,13 @@ async def voice_xp_loop():
                 continue
 
             humans = [m for m in channel.members if not m.bot]
-            if len(humans) < VOICE_XP_MIN_HUMANS_IN_CHANNEL:
-                continue
+            meets_min_humans = len(humans) >= VOICE_XP_MIN_HUMANS_IN_CHANNEL
 
             for m in humans:
+                is_streaming = bool(m.voice and m.voice.self_stream)  # كيدير Go Live
+                # إلا ماكافيش عدد كافي ديال الناس فالروم، نعطيو XP بوحدو للي كيدير لايف (ماشي AFK)
+                if not meets_min_humans and not is_streaming:
+                    continue
                 if not VOICE_XP_COUNT_MUTED_DEAFENED and m.voice and (m.voice.self_mute or m.voice.self_deaf):
                     continue
                 try:
