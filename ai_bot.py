@@ -96,6 +96,15 @@ MOVIES_CHANNEL_IDS = [1526721884434206820]     # ← زيد IDs آخرين هن�
 ANIME_CHANNEL_IDS = [1526726257012772985]      # ← زيد IDs آخرين هنا بـ , إلا بغيتي عدة channels ديال الأنمي
 MUSIC_CHANNEL_IDS = [1524957892925456547]      # ← زيد IDs آخرين هنا بـ , إلا بغيتي عدة channels ديال الموسيقى
 
+# ═══════ تفعيل/تعطيل كل فئة ديال Auto-Info بوحدها ═══════
+# (كل فئة كتستعمل translate_to_darija → طلب OpenRouter. عطلها مؤقتا باش توفر
+# الحصة اليومية المجانية للترجمة بالعلم، وشعلها ملي تزيد رصيد ولا تبغي)
+AUTO_INFO_NEWS_ENABLED = False
+AUTO_INFO_GAMES_ENABLED = False
+AUTO_INFO_MOVIES_ENABLED = False
+AUTO_INFO_ANIME_ENABLED = False
+AUTO_INFO_MUSIC_ENABLED = False
+
 # ═══════════════════════════════════════════════════════
 # ║              MODERATION & VERIFICATION CONFIG          ║
 # ═══════════════════════════════════════════════════════
@@ -279,7 +288,7 @@ FLAG_TO_LANGUAGE = {
 
 # ═══════ Auto-React: البوت كيزيد الأعلام كـ reactions أوتوماتيك على كل رسالة ═══════
 # (بدل ما العضو يكتب/يلقى العلم بيدو، البوت كيحطهم ليه جاهزين، وغير يكليكي على اللي بغا)
-AUTO_REACT_TRANSLATE_ENABLED = True   # ← بدلها True باش تخدم
+AUTO_REACT_TRANSLATE_ENABLED = False   # ← بدلها True باش تخدم
 AUTO_REACT_FLAGS = ["🇬🇧", "🇫🇷", "🇪🇸"]  # ← الأعلام اللي غادي تتزاد أوتوماتيك (خاصهم يكونو موجودين فـ FLAG_TO_LANGUAGE فوق)
 AUTO_REACT_CHANNEL_IDS = []   # ← خاوية [] = فكاع الـ channels. إلا بغيتي غير channels معينة، زيد IDs هنا مثلا [111, 222]
 
@@ -6158,138 +6167,143 @@ async def auto_info():
     باش خطأ فـ فئة وحدة ما يوقفش اللي بعدها."""
 
     # ═══════ 📰 NEWS — أخبار عامة ═══════
-    try:
-        news = await get_news_from_api()
-        if news:
-            embed = discord.Embed(
-                title=f"📰 {news['title']}",
-                description=news['description'],
-                color=discord.Color.blue(),
-                url=news['url'],
-                timestamp=datetime.now()
-            )
-            embed.set_author(name=f"📡 {news['source']}")
-            if news['image']:
-                embed.set_image(url=news['image'])
-            embed.set_footer(text="GGMW9 | NewsAPI")
-            ping = get_ping_mention("News Ping") or None
-            for channel_id in NEWS_CHANNEL_IDS:
-                channel = bot.get_channel(channel_id)
-                if channel:
-                    await channel.send(content=ping, embed=embed)
-    except Exception as e:
-        print(f"[AUTO_INFO] ❌ خطأ فـ NEWS: {e}")
+    if AUTO_INFO_NEWS_ENABLED:
+        try:
+            news = await get_news_from_api()
+            if news:
+                embed = discord.Embed(
+                    title=f"📰 {news['title']}",
+                    description=news['description'],
+                    color=discord.Color.blue(),
+                    url=news['url'],
+                    timestamp=datetime.now()
+                )
+                embed.set_author(name=f"📡 {news['source']}")
+                if news['image']:
+                    embed.set_image(url=news['image'])
+                embed.set_footer(text="GGMW9 | NewsAPI")
+                ping = get_ping_mention("News Ping") or None
+                for channel_id in NEWS_CHANNEL_IDS:
+                    channel = bot.get_channel(channel_id)
+                    if channel:
+                        await channel.send(content=ping, embed=embed)
+        except Exception as e:
+            print(f"[AUTO_INFO] ❌ خطأ فـ NEWS: {e}")
 
     await asyncio.sleep(2)
 
     # ═══════ 🎮 GAMES — أخبار ألعاب ═══════
-    try:
-        game = await get_game_from_rawg()
-        if game:
-            embed = discord.Embed(
-                title=f"🎮 {game['name']}",
-                description=game['description'][:400] + "...",
-                color=discord.Color.green(),
-                url=game['url'],
-                timestamp=datetime.now()
-            )
-            embed.add_field(name="📅 تاريخ الصدور", value=game['released'], inline=True)
-            embed.add_field(name="⭐ التقييم", value=game['rating'], inline=True)
-            embed.add_field(name="🎭 النوع", value=game['genres'], inline=False)
-            if game['poster']:
-                embed.set_image(url=game['poster'])
-            embed.set_footer(text="GGMW9 | RAWG.io")
-            ping = get_ping_mention("Games Ping") or None
-            for channel_id in GAMES_CHANNEL_IDS:
-                channel = bot.get_channel(channel_id)
-                if channel:
-                    await channel.send(content=ping, embed=embed)
-    except Exception as e:
-        print(f"[AUTO_INFO] ❌ خطأ فـ GAMES: {e}")
+    if AUTO_INFO_GAMES_ENABLED:
+        try:
+            game = await get_game_from_rawg()
+            if game:
+                embed = discord.Embed(
+                    title=f"🎮 {game['name']}",
+                    description=game['description'][:400] + "...",
+                    color=discord.Color.green(),
+                    url=game['url'],
+                    timestamp=datetime.now()
+                )
+                embed.add_field(name="📅 تاريخ الصدور", value=game['released'], inline=True)
+                embed.add_field(name="⭐ التقييم", value=game['rating'], inline=True)
+                embed.add_field(name="🎭 النوع", value=game['genres'], inline=False)
+                if game['poster']:
+                    embed.set_image(url=game['poster'])
+                embed.set_footer(text="GGMW9 | RAWG.io")
+                ping = get_ping_mention("Games Ping") or None
+                for channel_id in GAMES_CHANNEL_IDS:
+                    channel = bot.get_channel(channel_id)
+                    if channel:
+                        await channel.send(content=ping, embed=embed)
+        except Exception as e:
+            print(f"[AUTO_INFO] ❌ خطأ فـ GAMES: {e}")
 
     await asyncio.sleep(2)
 
     # ═══════ 🎬 MOVIES — أفلام + ملخص ═══════
-    try:
-        movie = await get_movie_from_omdb()
-        if movie:
-            embed = discord.Embed(
-                title=f"🎬 {movie['title']} ({movie['year']})",
-                description=movie['plot'][:500] + "...",
-                color=discord.Color.gold(),
-                url=movie['imdb'],
-                timestamp=datetime.now()
-            )
-            embed.add_field(name="🎭 النوع", value=movie['genre'], inline=True)
-            embed.add_field(name="⭐ تقييم IMDB", value=f"{movie['rating']}/10", inline=True)
-            if movie['poster'] and movie['poster'] != "N/A":
-                embed.set_image(url=movie['poster'])
-            embed.set_footer(text="GGMW9 | IMDB via OMDb")
-            ping = get_ping_mention("Movies Ping") or None
-            for channel_id in MOVIES_CHANNEL_IDS:
-                channel = bot.get_channel(channel_id)
-                if channel:
-                    await channel.send(content=ping, embed=embed)
-    except Exception as e:
-        print(f"[AUTO_INFO] ❌ خطأ فـ MOVIES: {e}")
+    if AUTO_INFO_MOVIES_ENABLED:
+        try:
+            movie = await get_movie_from_omdb()
+            if movie:
+                embed = discord.Embed(
+                    title=f"🎬 {movie['title']} ({movie['year']})",
+                    description=movie['plot'][:500] + "...",
+                    color=discord.Color.gold(),
+                    url=movie['imdb'],
+                    timestamp=datetime.now()
+                )
+                embed.add_field(name="🎭 النوع", value=movie['genre'], inline=True)
+                embed.add_field(name="⭐ تقييم IMDB", value=f"{movie['rating']}/10", inline=True)
+                if movie['poster'] and movie['poster'] != "N/A":
+                    embed.set_image(url=movie['poster'])
+                embed.set_footer(text="GGMW9 | IMDB via OMDb")
+                ping = get_ping_mention("Movies Ping") or None
+                for channel_id in MOVIES_CHANNEL_IDS:
+                    channel = bot.get_channel(channel_id)
+                    if channel:
+                        await channel.send(content=ping, embed=embed)
+        except Exception as e:
+            print(f"[AUTO_INFO] ❌ خطأ فـ MOVIES: {e}")
 
     await asyncio.sleep(2)
 
     # ═══════ 📺 ANIME — أنمي + ملخص ═══════
-    try:
-        anime = await get_anime_from_jikan()
-        print(f"[AUTO_INFO] get_anime_from_jikan رجع: {'فيها داتا' if anime else 'فارغة'}")
-        if anime:
-            embed = discord.Embed(
-                title=f"📺 {anime['title']}",
-                description=anime['synopsis'][:500] + "...",
-                color=discord.Color.purple(),
-                url=anime['url'],
-                timestamp=datetime.now()
-            )
-            if anime['title_jp']:
-                embed.add_field(name="🇯🇵 الاسم الياباني", value=anime['title_jp'], inline=False)
-            embed.add_field(name="📺 النوع", value=anime['type'], inline=True)
-            embed.add_field(name="📊 عدد الحلقات", value=str(anime['episodes']), inline=True)
-            embed.add_field(name="⭐ تقييم MAL", value=f"{anime['score']}/10", inline=True)
-            embed.add_field(name="🎭 الأنواع", value=anime['genres'], inline=False)
-            if anime['poster']:
-                embed.set_image(url=anime['poster'])
-            embed.set_footer(text="GGMW9 | MyAnimeList via Jikan")
-            ping = get_ping_mention("Anime Ping") or None
-            for channel_id in ANIME_CHANNEL_IDS:
-                channel = bot.get_channel(channel_id)
-                if channel:
-                    await channel.send(content=ping, embed=embed)
-                    print("[AUTO_INFO] ✅ تبعث embed ديال الأنمي")
-    except Exception as e:
-        print(f"[AUTO_INFO] ❌ خطأ فـ ANIME: {e}")
+    if AUTO_INFO_ANIME_ENABLED:
+        try:
+            anime = await get_anime_from_jikan()
+            print(f"[AUTO_INFO] get_anime_from_jikan رجع: {'فيها داتا' if anime else 'فارغة'}")
+            if anime:
+                embed = discord.Embed(
+                    title=f"📺 {anime['title']}",
+                    description=anime['synopsis'][:500] + "...",
+                    color=discord.Color.purple(),
+                    url=anime['url'],
+                    timestamp=datetime.now()
+                )
+                if anime['title_jp']:
+                    embed.add_field(name="🇯🇵 الاسم الياباني", value=anime['title_jp'], inline=False)
+                embed.add_field(name="📺 النوع", value=anime['type'], inline=True)
+                embed.add_field(name="📊 عدد الحلقات", value=str(anime['episodes']), inline=True)
+                embed.add_field(name="⭐ تقييم MAL", value=f"{anime['score']}/10", inline=True)
+                embed.add_field(name="🎭 الأنواع", value=anime['genres'], inline=False)
+                if anime['poster']:
+                    embed.set_image(url=anime['poster'])
+                embed.set_footer(text="GGMW9 | MyAnimeList via Jikan")
+                ping = get_ping_mention("Anime Ping") or None
+                for channel_id in ANIME_CHANNEL_IDS:
+                    channel = bot.get_channel(channel_id)
+                    if channel:
+                        await channel.send(content=ping, embed=embed)
+                        print("[AUTO_INFO] ✅ تبعث embed ديال الأنمي")
+        except Exception as e:
+            print(f"[AUTO_INFO] ❌ خطأ فـ ANIME: {e}")
 
     await asyncio.sleep(2)
 
     # ═══════ 🎧 MUSIC — موسيقى + أغاني ═══════
-    try:
-        music = await get_music_from_lastfm()
-        if music:
-            embed = discord.Embed(
-                title=f"🎵 {music['name']}",
-                description=f"أغنية جديدة من **{music['artist']}**",
-                color=discord.Color.red(),
-                url=music['url'],
-                timestamp=datetime.now()
-            )
-            embed.add_field(name="🎤 الفنان", value=music['artist'], inline=True)
-            embed.add_field(name="👥 المستمعين", value=f"{music['listeners']:,}", inline=True)
-            if music['poster']:
-                embed.set_image(url=music['poster'])
-            embed.set_footer(text="GGMW9 | Last.fm")
-            ping = get_ping_mention("Music Ping") or None
-            for channel_id in MUSIC_CHANNEL_IDS:
-                channel = bot.get_channel(channel_id)
-                if channel:
-                    await channel.send(content=ping, embed=embed)
-    except Exception as e:
-        print(f"[AUTO_INFO] ❌ خطأ فـ MUSIC: {e}")
+    if AUTO_INFO_MUSIC_ENABLED:
+        try:
+            music = await get_music_from_lastfm()
+            if music:
+                embed = discord.Embed(
+                    title=f"🎵 {music['name']}",
+                    description=f"أغنية جديدة من **{music['artist']}**",
+                    color=discord.Color.red(),
+                    url=music['url'],
+                    timestamp=datetime.now()
+                )
+                embed.add_field(name="🎤 الفنان", value=music['artist'], inline=True)
+                embed.add_field(name="👥 المستمعين", value=f"{music['listeners']:,}", inline=True)
+                if music['poster']:
+                    embed.set_image(url=music['poster'])
+                embed.set_footer(text="GGMW9 | Last.fm")
+                ping = get_ping_mention("Music Ping") or None
+                for channel_id in MUSIC_CHANNEL_IDS:
+                    channel = bot.get_channel(channel_id)
+                    if channel:
+                        await channel.send(content=ping, embed=embed)
+        except Exception as e:
+            print(f"[AUTO_INFO] ❌ خطأ فـ MUSIC: {e}")
 
 
 @auto_info.before_loop
@@ -6586,11 +6600,11 @@ async def on_ready():
     print(f"👋 Welcome: {WELCOME_CHANNEL_ID}")
     print(f"✅ Verify: {VERIFY_CHANNEL_ID}")
     print(f"🛡️ Mod Logs: {MOD_LOGS_CHANNEL_ID}")
-    print(f"📰 News: {NEWS_CHANNEL_IDS}")
-    print(f"🎮 Games: {GAMES_CHANNEL_IDS}")
-    print(f"🎬 Movies: {MOVIES_CHANNEL_IDS}")
-    print(f"📺 Anime: {ANIME_CHANNEL_IDS}")
-    print(f"🎧 Music: {MUSIC_CHANNEL_IDS}")
+    print(f"📰 News: {'نشط' if AUTO_INFO_NEWS_ENABLED else 'معطل مؤقتا'} {NEWS_CHANNEL_IDS}")
+    print(f"🎮 Games: {'نشط' if AUTO_INFO_GAMES_ENABLED else 'معطل مؤقتا'} {GAMES_CHANNEL_IDS}")
+    print(f"🎬 Movies: {'نشط' if AUTO_INFO_MOVIES_ENABLED else 'معطل مؤقتا'} {MOVIES_CHANNEL_IDS}")
+    print(f"📺 Anime: {'نشط' if AUTO_INFO_ANIME_ENABLED else 'معطل مؤقتا'} {ANIME_CHANNEL_IDS}")
+    print(f"🎧 Music: {'نشط' if AUTO_INFO_MUSIC_ENABLED else 'معطل مؤقتا'} {MUSIC_CHANNEL_IDS}")
     print(f"⏱️ Timeout: {API_TIMEOUT}s")
     print(f"🛡️ Moderation: نشط")
     print(f"✅ Verification: نشط")
