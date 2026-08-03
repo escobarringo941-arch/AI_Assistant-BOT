@@ -56,18 +56,29 @@ STATS_IMAGE_URL = ""  # ← حط هنا رابط مباشر ديال صورة (�
 # وحط هاد الرابط هنا (كيبدا بـ https://cdn.discordapp.com/attachments/...).
 # مواقع بحال animated-gif-creator.com عادة ماخدامينش كـ hotlink، البوت ما غاديش يقدر يبين الصورة بيهم.
 
-AI_MODEL = "deepseek/deepseek-v4-flash"  # ← موديل مدفوع رخيص بزاف ($0.09/مليون token دخول) — كيخدم من الرصيد ديالك مباشرة، بلا حد يومي
+AI_MODEL = "deepseek/deepseek-v4-flash"  # ← موديل مدفوع رخيص بزاف ($0.0983/مليون token دخول، $0.1966/مليون خروج)
+#   ✅ متحقق منو فـ openrouter.ai/deepseek — الاسم صحيح 100% وخدام (نسخة أبريل 2026، 1M context).
+#   بـ 9$ ديال الرصيد عندك تقريبا 90 مليون token دخول — يعني آلاف الردود. ماكاين حتى مشكل هنا.
+
+# ⚠️ DeepSeek V4 Flash هو reasoning model: كيصرف جزء من max_tokens على "التفكير"
+# قبل ما يكتب الجواب. علاش خاصنا نطفيو الـ reasoning فـ المهام القصيرة (بحال الترجمة)،
+# وإلا كيرجع content فارغة وكيبان ليك بلي "الموديل ماخدامش". شوف AI_DISABLE_REASONING تحت.
+AI_DISABLE_REASONING = True
 
 # ═══════ سلسلة الاحتياط (Fallback) ═══════
 # إلا AI_MODEL فشل لسبب ما (بحال خلص الرصيد)، البوت كيجرب أوتوماتيكيا الموديلات
-# المجانية اللي فـ هاد اللائحة، واحد بواحد، قبل ما يستسلم. ⚠️ الموديلات المجانية فـ
-# OpenRouter كتتبدل/كتتحيد بزربة بلا سابق إنذار — إلا شفتي فـ logs بلي شي
-# موديل هنا كيرجع 404، تأكد من الأسماء الدقيقة فـ openrouter.ai/models
-# (فلتر Price: Free) وبدلها.
+# المجانية اللي فـ هاد اللائحة، واحد بواحد، قبل ما يستسلم.
+# ✅ هاد اللائحة تحققت منها فـ 3 غشت 2026 من openrouter.ai (كاع الأسماء خدامة).
+# ⚠️ ملاحظة: "qwen/qwen3-next-80b-a3b-instruct:free" اللي كان هنا قبل تحيد من OpenRouter
+# فـ يوليوز 2026 — كان كيرجع 404 وهو من الأسباب اللي خلات الترجمة ما تخدمش.
 AI_MODEL_FALLBACKS = [
+    "nvidia/nemotron-3-ultra-550b-a55b:free",   # أقوى موديل مجاني حاليا (1M context)
     "openai/gpt-oss-20b:free",
     "nvidia/nemotron-3-super-120b-a12b:free",
-    "qwen/qwen3-next-80b-a3b-instruct:free",
+    "google/gemma-4-31b-it:free",
+    "openrouter/free",   # ← auto-router ديال OpenRouter: كيختار وحدو شي موديل مجاني متاح.
+                         #   خليه دايما فالآخر — هو اللي كيضمن ليك البوت مايوقفش ملي
+                         #   OpenRouter يحيد شي موديل مجاني بلا سابق إنذار.
 ]
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
@@ -122,7 +133,9 @@ TRIVIA_AUTO_INTERVAL_MINUTES = 60      # ← كل شحال ديال الدقاي
 # 1) دير category جديدة فديسكورد سميها مثلا "🎮 Mini Games"
 # 2) دير channel جوجها (مثلا "🧠│trivia") وحط الـ ID ديالها هنا:
 TRIVIA_CHANNEL_ID = 1533700465576116236
-TRIVIA_ROUNDS_PER_DIFFICULTY = 10   # ← كل ما جاوب صحيح هاد العدد ديال الأسئلة متتالية، الصعوبة تطلع درجة (سهل ← متوسط ← صعيب)
+# 💡 خليها 0 وسير دير `/setuptrivia` مباشرة فالـ channel اللي بغيتي — البوت غايصاوب
+#    الـ panel تما أوتوماتيكيا. (بدلها بالـ ID غير إلا بغيتي البوت يصاوبها وحدو ملي كيشعل)
+TRIVIA_ROUNDS_PER_DIFFICULTY = 6   # ← كل ما جاوب صحيح هاد العدد ديال الأسئلة متتالية، الصعوبة تطلع درجة (ساهل ← متوسط ← صعيب)
 TRIVIA_XP_BY_DIFFICULTY = {        # ← تحكم كامل فشحال XP كل درجة صعوبة (بدلها كيفما بغيتي)
     "easy": 10,
     "medium": 20,
@@ -1431,6 +1444,11 @@ async def call_openrouter_chat(messages: list, max_tokens: int, temperature: flo
             "max_tokens": max_tokens,
             "temperature": temperature
         }
+        # ⚠️ مهم بزاف: DeepSeek V4 (ومعاه بزاف ديال الموديلات الجديدة) هوما reasoning models.
+        # بلا هاد السطر كيصرفو كاع max_tokens على "التفكير" وكيرجعو content فارغة —
+        # وهادشي هو اللي كان كيخلي الترجمة ترجع None وتبان ليك بلي الموديل خاسر.
+        if AI_DISABLE_REASONING:
+            payload["reasoning"] = {"enabled": False, "exclude": True}
         try:
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=API_TIMEOUT)) as session:
                 async with session.post(OPENROUTER_URL, headers=headers, json=payload) as resp:
@@ -1444,8 +1462,10 @@ async def call_openrouter_chat(messages: list, max_tokens: int, temperature: flo
                             continue
 
                         # بعض الموديلات (خصوصا reasoning) كترجع content فارغة/None
-                        # وكتحط النص فـ reasoning بدلها
-                        content = message.get("content") or message.get("reasoning") or ""
+                        # وكتحط النص فـ reasoning بدلها — كناخدو content أولاً دايماً
+                        content = message.get("content")
+                        if not (isinstance(content, str) and content.strip()):
+                            content = message.get("reasoning") or ""
                         content = content.strip() if isinstance(content, str) else ""
 
                         if not content:
@@ -2073,20 +2093,329 @@ TRIVIA_CATEGORY_LABELS = {
     "anime": "📺 أنمي ومانغا",
 }
 
+# ═══════════════════════════════════════════════════════
+# ║   🇲🇦 بنك الأسئلة بالدارجة (المصدر الأساسي ديال اللعبة)  ║
+# ═══════════════════════════════════════════════════════
+# علاش بنك محلي وماشي API؟
+#   • OpenTDB كيقبل غير طلب واحد كل 5 ثواني لكل IP — وعلى Railway الـ IP مشترك،
+#     يعني كنت كتاخد 429 شبه دايما، وهادشي هو السبب الحقيقي اللي خلا "ملي كتكليكي
+#     على المجال ماكيوقع والو". هنا الأسئلة عندنا فالذاكرة → 0 انتظار، 0 خطأ.
+#   • الترجمة الأوتوماتيكية بالـ AI كانت كتزيد 3-6 ثواني لكل سؤال وكتصرف من الرصيد.
+#     دابا الأسئلة مكتوبة بالدارجة من الأصل → فورية وبالفابور.
+#
+# الشكل: كل سؤال = ("نص السؤال", ["جواب0", "جواب1", "جواب2", "جواب3"], index الجواب الصحيح)
+# باغي تزيد أسئلة ديالك؟ غير زيد tuple جديد فـ اللائحة اللي بغيتي — والسلام.
+
+TRIVIA_DARIJA_BANK = {
+    "general": {
+        "easy": [
+            ("شحال من لون كاين فـ قوس قزح؟", ["7", "5", "6", "9"], 0),
+            ("شنو هي العاصمة ديال المغرب؟", ["الرباط", "الدار البيضاء", "مراكش", "فاس"], 0),
+            ("شحال من يوم كاين فـ السنة العادية؟", ["365", "360", "366", "350"], 0),
+            ("شنو هو أكبر محيط فـ العالم؟", ["المحيط الهادي", "المحيط الأطلسي", "المحيط الهندي", "المحيط المتجمد"], 0),
+            ("شحال من لاعب كيكون فـ فريق كرة القدم داخل الميدان؟", ["11", "10", "12", "9"], 0),
+            ("بشحال من رجل كتمشي العنكبوت؟", ["8", "6", "4", "10"], 0),
+            ("أشمن حيوان كيتسمى «ملك الغابة»؟", ["السبع", "الفيل", "الدب", "الذيب"], 0),
+            ("شحال من ثانية كاين فـ الساعة الوحدة؟", ["3600", "60", "1000", "600"], 0),
+        ],
+        "medium": [
+            ("شحال من قارة كاينة فـ العالم؟", ["7", "5", "6", "8"], 0),
+            ("شنو هي أكبر دولة فـ العالم من ناحية المساحة؟", ["روسيا", "كندا", "الصين", "أمريكا"], 0),
+            ("العلم ديال اليابان فيه شنو فـ الوسط؟", ["دائرة حمرا", "نجمة", "هلال", "مثلث"], 0),
+            ("شحال من قلب عند الأخطبوط؟", ["3", "1", "2", "4"], 0),
+            ("شنو هي العملة ديال اليابان؟", ["الين", "اليوان", "الوون", "الروبية"], 0),
+            ("شحال من مفتاح عند البيانو العادي؟", ["88", "66", "76", "100"], 0),
+        ],
+        "hard": [
+            ("شنو هي أصغر دولة فـ العالم؟", ["الفاتيكان", "موناكو", "سان مارينو", "ناورو"], 0),
+            ("شحال من عضمة عند الإنسان البالغ؟", ["206", "300", "180", "250"], 0),
+            ("أشمن لغة هي الأكثر انتشارا فـ العالم كلغة أم؟", ["الصينية الماندرين", "الإنجليزية", "الإسبانية", "العربية"], 0),
+            ("أشمن دولة عندها أكبر عدد ديال الجزر فـ العالم؟", ["السويد", "إندونيسيا", "الفلبين", "اليابان"], 0),
+            ("شنو كتسمى الخوف من الأماكن المغلوقة؟", ["كلاوستروفوبيا", "أكروفوبيا", "أراكنوفوبيا", "أغورافوبيا"], 0),
+        ],
+    },
+    "science": {
+        "easy": [
+            ("شنو هو الرمز الكيميائي ديال الما؟", ["H2O", "CO2", "O2", "NaCl"], 0),
+            ("شحال من كوكب كاين فـ النظام الشمسي؟", ["8", "9", "7", "10"], 0),
+            ("أشمن كوكب كيتسمى «الكوكب الأحمر»؟", ["المريخ", "الزهرة", "المشتري", "عطارد"], 0),
+            ("أشمن غاز كيخرجو الشجر وكنتنفسوه حنا؟", ["الأوكسجين", "الأزوت", "ثاني أكسيد الكاربون", "الهيدروجين"], 0),
+            ("شنو هو أكبر عضو فـ جسم الإنسان؟", ["الجلد", "الكبد", "الدماغ", "الرية"], 0),
+            ("فشحال من درجة كيغلي الما (بالضغط العادي)؟", ["100", "90", "80", "120"], 0),
+            ("شنو هو النجم اللي أقرب للأرض؟", ["الشمس", "القمر", "سيريوس", "بولاريس"], 0),
+            ("شحال من سنّة عند الإنسان البالغ (بضراس العقل)؟", ["32", "28", "30", "36"], 0),
+        ],
+        "medium": [
+            ("شنو هو الرمز الكيميائي ديال الذهب؟", ["Au", "Ag", "Go", "Fe"], 0),
+            ("أشمن غاز هو الأكثر فـ الغلاف الجوي ديال الأرض؟", ["الأزوت", "الأوكسجين", "ثاني أكسيد الكاربون", "الهيدروجين"], 0),
+            ("شحال من كروموزوم عند الإنسان العادي؟", ["46", "44", "48", "23"], 0),
+            ("شكون اللي اكتشف البنسلين؟", ["ألكسندر فليمينغ", "لويس باستور", "إسحاق نيوتن", "ألبرت أينشتاين"], 0),
+            ("سرعة الضو تقريبا شحال فـ الثانية؟", ["300 ألف كيلومتر", "300 كيلومتر", "3 مليون كيلومتر", "30 ألف كيلومتر"], 0),
+            ("شنو كيقيس جهاز «سيسموغراف»؟", ["الزلازل", "الحرارة", "الضغط", "الرطوبة"], 0),
+        ],
+        "hard": [
+            ("شنو هي الوحدة ديال قياس المقاومة الكهربائية؟", ["الأوم", "الفولط", "الأمبير", "الواط"], 0),
+            ("شنو هو أصلب معدن طبيعي؟", ["الماس", "الحديد", "الذهب", "الكوارتز"], 0),
+            ("أشمن جزء ديال الخلية كيتسمى «معمل الطاقة»؟", ["الميتوكوندري", "النواة", "الريبوزوم", "الغشاء"], 0),
+            ("شحال من عنصر معترف بيه فـ الجدول الدوري؟", ["118", "100", "92", "150"], 0),
+            ("شكون اللي حط نظرية النسبية؟", ["ألبرت أينشتاين", "إسحاق نيوتن", "نيلز بور", "ماكس بلانك"], 0),
+        ],
+    },
+    "sports": {
+        "easy": [
+            ("شحال من لاعب كيلعبو فـ فريق كرة السلة داخل الميدان؟", ["5", "6", "7", "11"], 0),
+            ("كأس العالم لكرة القدم كيتنظم كل شحال من عام؟", ["4", "2", "3", "5"], 0),
+            ("أشمن رياضة كيلعبو فيها ميسي ورونالدو؟", ["كرة القدم", "كرة السلة", "التنس", "الملاكمة"], 0),
+            ("المنتخب المغربي كيتلقب بشنو؟", ["أسود الأطلس", "نسور قرطاج", "الفراعنة", "محاربو الصحراء"], 0),
+            ("شحال من شوط كاين فـ ماتش كرة القدم العادي؟", ["2", "3", "4", "1"], 0),
+            ("الألعاب الأولمبية الصيفية كيتنظمو كل شحال من عام؟", ["4", "2", "5", "3"], 0),
+            ("فـ التنس، شنو كتسمى النتيجة «صفر»؟", ["Love", "Zero", "Nil", "Duck"], 0),
+            ("شحال من حكم رئيسي كيكون فـ الميدان فـ ماتش كرة القدم؟", ["1", "2", "3", "4"], 0),
+        ],
+        "medium": [
+            ("شكون هو المنتخب اللي ربح كأس العالم 2022؟", ["الأرجنتين", "فرنسا", "البرازيل", "كرواتيا"], 0),
+            ("فأي عام وصل المغرب لنصف النهائي ديال كأس العالم؟", ["2022", "2018", "2014", "1986"], 0),
+            ("شحال من نقطة كتعطي الرمية الثلاثية فـ كرة السلة؟", ["3", "2", "1", "4"], 0),
+            ("أشمن نادي كيلعب فـ ملعب «كامب نو»؟", ["برشلونة", "ريال مدريد", "أتلتيكو مدريد", "إشبيلية"], 0),
+            ("شحال من جولة كحد أقصى فـ نزال الملاكمة المحترفة ديال البطولة؟", ["12", "10", "15", "8"], 0),
+            ("أشمن نادي مغربي ربح دوري أبطال إفريقيا أكثر مرة؟", ["الرجاء البيضاوي", "الوداد البيضاوي", "الجيش الملكي", "المغرب الفاسي"], 0),
+        ],
+        "hard": [
+            ("شكون هي أول مغربية ربحات ميدالية ذهبية أولمبية؟", ["نوال المتوكل", "حسنة بنحسي", "زهرة وعزيز", "سلمى الغزالي"], 0),
+            ("شحال من مرة ربحات البرازيل كأس العالم؟", ["5", "4", "6", "3"], 0),
+            ("أشمن دولة نظمات أول كأس العالم لكرة القدم؟", ["الأوروغواي", "البرازيل", "إيطاليا", "فرنسا"], 0),
+            ("فـ الغولف، شنو كتسمى ضربة وحدة تحت الـ par؟", ["Birdie", "Eagle", "Bogey", "Albatross"], 0),
+            ("أشمن عداء مغربي ربح ذهبية 1500 متر فـ أولمبياد أثينا 2004؟", ["هشام الكروج", "سعيد عويطة", "خالد سكاح", "براهيم بولامي"], 0),
+        ],
+    },
+    "history": {
+        "easy": [
+            ("فأي عام حصل المغرب على الاستقلال؟", ["1956", "1962", "1930", "1975"], 0),
+            ("المسيرة الخضراء وقعات فأي عام؟", ["1975", "1956", "1961", "1980"], 0),
+            ("الحرب العالمية الثانية سالات فأي عام؟", ["1945", "1939", "1918", "1950"], 0),
+            ("الأهرامات الكبيرة كاينين فأشمن دولة؟", ["مصر", "العراق", "السودان", "المكسيك"], 0),
+            ("شكون كان أول إنسان حط رجليه فوق القمر؟", ["نيل أرمسترونغ", "يوري غاغارين", "باز ألدرين", "جون غلين"], 0),
+            ("الحرب العالمية الأولى بدات فأي عام؟", ["1914", "1918", "1939", "1900"], 0),
+            ("أشمن حضارة بنات الكولوسيوم فـ روما؟", ["الرومان", "اليونان", "المصريين", "الفينيقيين"], 0),
+            ("شنو كتسمى الكتابة القديمة ديال المصريين؟", ["الهيروغليفية", "المسمارية", "اللاتينية", "الرونية"], 0),
+        ],
+        "medium": [
+            ("أشمن دولة بنات مدينة مراكش؟", ["المرابطين", "الموحدين", "المرينيين", "السعديين"], 0),
+            ("أشمن دولة استعمرات معظم المغرب قبل 1956؟", ["فرنسا", "إسبانيا", "البرتغال", "إنجلترا"], 0),
+            ("سور برلين طاح فأي عام؟", ["1989", "1991", "1985", "1975"], 0),
+            ("شكون كان أول رئيس ديال الولايات المتحدة؟", ["جورج واشنطن", "أبراهام لينكولن", "توماس جيفرسون", "جون آدامز"], 0),
+            ("معركة وادي المخازن (معركة الملوك الثلاثة) وقعات فأشمن قرن؟", ["القرن 16", "القرن 15", "القرن 17", "القرن 14"], 0),
+            ("شكون كتب «المقدمة» وكيتعتبر مؤسس علم الاجتماع؟", ["ابن خلدون", "ابن بطوطة", "ابن رشد", "ابن سينا"], 0),
+        ],
+        "hard": [
+            ("فأي عام تأسست جامعة القرويين فـ فاس؟", ["859", "1000", "1150", "750"], 0),
+            ("شنو كانت العاصمة ديال الدولة الموحدية؟", ["مراكش", "فاس", "الرباط", "تلمسان"], 0),
+            ("الثورة الفرنسية بدات فأي عام؟", ["1789", "1799", "1750", "1804"], 0),
+            ("أشمن إمبراطورية سقطات بسقوط القسطنطينية عام 1453؟", ["البيزنطية", "الرومانية الغربية", "العثمانية", "الفارسية"], 0),
+            ("شكون هو الرحالة المغربي اللي دار حوالي 120 ألف كيلومتر ديال الأسفار؟", ["ابن بطوطة", "ابن خلدون", "الإدريسي", "ليون الإفريقي"], 0),
+        ],
+    },
+    "geography": {
+        "easy": [
+            ("شنو هي العاصمة ديال فرنسا؟", ["باريس", "ليون", "مرسيليا", "نيس"], 0),
+            ("المغرب كاين فأشمن قارة؟", ["إفريقيا", "أوروبا", "آسيا", "أمريكا"], 0),
+            ("شنو هو أطول نهر فـ إفريقيا؟", ["النيل", "الكونغو", "النيجر", "الزمبيزي"], 0),
+            ("أشمن سلسلة جبال كتعدا فـ المغرب؟", ["الأطلس", "الألب", "الهيمالايا", "الأنديز"], 0),
+            ("شنو هي أكبر صحراء حارة فـ العالم؟", ["الصحراء الكبرى", "كالاهاري", "غوبي", "أتاكاما"], 0),
+            ("شنو هي العاصمة ديال إسبانيا؟", ["مدريد", "برشلونة", "إشبيلية", "فالنسيا"], 0),
+            ("أشمن بحر كيحد المغرب من الشمال؟", ["البحر الأبيض المتوسط", "البحر الأحمر", "بحر قزوين", "البحر الأسود"], 0),
+            ("شنو كيفصل المغرب على إسبانيا؟", ["مضيق جبل طارق", "قناة السويس", "مضيق البوسفور", "قناة بنما"], 0),
+        ],
+        "medium": [
+            ("شنو هي أعلى قمة فـ المغرب؟", ["توبقال", "المكون", "تيدغين", "بويبلان"], 0),
+            ("مدينة اسطنبول كاينة فأشمن دولة؟", ["تركيا", "اليونان", "بلغاريا", "سوريا"], 0),
+            ("شنو هي أكبر جزيرة فـ العالم؟", ["غرينلاند", "مدغشقر", "بورنيو", "سومطرة"], 0),
+            ("أشمن نهر كيعدا من مدينة القاهرة؟", ["النيل", "الفرات", "دجلة", "الأردن"], 0),
+            ("شنو هي العاصمة ديال كندا؟", ["أوتاوا", "تورونتو", "مونتريال", "فانكوفر"], 0),
+            ("أشمن مدينة مغربية كتسمى «العاصمة العلمية»؟", ["فاس", "مراكش", "الرباط", "طنجة"], 0),
+        ],
+        "hard": [
+            ("شنو هي أعمق نقطة فـ المحيطات؟", ["خندق ماريانا", "خندق بورتوريكو", "خندق جافا", "البحر الميت"], 0),
+            ("أشمن جوج دول كيتقاسمو أطول حدود برية فـ العالم؟", ["أمريكا وكندا", "روسيا والصين", "الأرجنتين والشيلي", "الهند والصين"], 0),
+            ("شنو هي العاصمة ديال أستراليا؟", ["كانبيرا", "سيدني", "ملبورن", "بيرث"], 0),
+            ("أشمن بحيرة هي الأكبر فـ العالم من ناحية المساحة؟", ["بحر قزوين", "بحيرة سوبيريور", "بحيرة فيكتوريا", "بحيرة بايكال"], 0),
+            ("شنو هي أطول سلسلة جبال فـ العالم فوق اليابسة؟", ["الأنديز", "الهيمالايا", "الروكي", "الألب"], 0),
+        ],
+    },
+    "movies": {
+        "easy": [
+            ("شنو هوما الألوان الأساسية ديال البدلة ديال سبايدرمان؟", ["حمرا وزرقا", "خضرا وصفرا", "كحلة وبيضا", "سوداء وحمرا"], 0),
+            ("فيلم «Titanic» كيحكي على شنو؟", ["باخرة غرقات", "طيارة طاحت", "قطار تحطم", "حرب عالمية"], 0),
+            ("فـ «Frozen»، شكون عندها قوة الجليد؟", ["إلسا", "آنا", "أولاف", "كريستوف"], 0),
+            ("«سيمبا» فـ The Lion King أشمن حيوان هو؟", ["سبع", "نمر", "دب", "ذيب"], 0),
+            ("«Fast and Furious» كيهضر على شنو أساسا؟", ["الطوموبيلات والسباق", "الفضاء", "البحر", "الطبخ"], 0),
+            ("شنو كتسمى أكبر جائزة فـ السينما الأمريكية؟", ["الأوسكار", "الغرامي", "الإيمي", "التوني"], 0),
+            ("فـ «Harry Potter»، شنو كتسمى مدرسة السحر؟", ["هوغوارتس", "نارنيا", "أزكابان", "دورمسترانغ"], 0),
+            ("فـ «Jurassic Park»، شنو هوما الحيوانات الرئيسية؟", ["الديناصورات", "القرود", "الحيتان", "الذياب"], 0),
+        ],
+        "medium": [
+            ("شكون خرّج فيلم «Inception»؟", ["كريستوفر نولان", "ستيفن سبيلبرغ", "كوينتين تارانتينو", "مارتن سكورسيزي"], 0),
+            ("أشمن فيلم ناطق بالكورية ربح أوسكار أحسن فيلم؟", ["Parasite", "Oldboy", "Train to Busan", "Burning"], 0),
+            ("شكون كيمثل دور «Iron Man»؟", ["روبرت داوني جونيور", "كريس إيفانز", "كريس هيمسوورث", "مارك رافالو"], 0),
+            ("أشمن استوديو خرّج «Toy Story»؟", ["Pixar", "DreamWorks", "Warner Bros", "Universal"], 0),
+            ("فـ «The Matrix»، أشمن حبة كيختار نيو باش يعرف الحقيقة؟", ["الحمرا", "الزرقا", "الخضرا", "الصفرا"], 0),
+            ("شكون هو المخرج ديال «Titanic» و«Avatar»؟", ["جيمس كاميرون", "ريدلي سكوت", "بيتر جاكسون", "جورج لوكاس"], 0),
+        ],
+        "hard": [
+            ("شنو هو أول فيلم رسوم متحركة طويل ديال ديزني؟", ["Snow White", "Pinocchio", "Bambi", "Fantasia"], 0),
+            ("شكون خرّج فيلم «Pulp Fiction»؟", ["كوينتين تارانتينو", "كريستوفر نولان", "ديفيد فينشر", "الإخوة كوين"], 0),
+            ("فـ «The Godfather»، شنو كتسمى العائلة الرئيسية؟", ["كورليوني", "سوبرانو", "غامبينو", "باربوسا"], 0),
+            ("أشمن فيلم ربح 11 أوسكار (رقم قياسي متعادل)؟", ["Ben-Hur", "Gladiator", "The Godfather", "Avatar"], 0),
+            ("فأي عام خرج أول فيلم «Star Wars»؟", ["1977", "1980", "1972", "1985"], 0),
+        ],
+    },
+    "music": {
+        "easy": [
+            ("شحال من وتر عند الغيتارة الكلاسيكية العادية؟", ["6", "4", "5", "7"], 0),
+            ("أشمن آلة كتضرب عليها بالعصي؟", ["الطبل", "الغيتارة", "الفلوت", "البيانو"], 0),
+            ("شنو كتسمى الموسيقى التقليدية المغربية المرتبطة بالأندلس؟", ["الطرب الأندلسي", "الراب", "الجاز", "الروك"], 0),
+            ("فرقة «The Beatles» من أشمن دولة؟", ["إنجلترا", "أمريكا", "فرنسا", "أستراليا"], 0),
+            ("شنو كتسمى الغناية اللي كيغنيها واحد بوحدو؟", ["سولو", "ديو", "تريو", "كورال"], 0),
+            ("آلة «العود» مشهورة عند شكون؟", ["العرب", "اليابانيين", "الروس", "البرازيليين"], 0),
+            ("أشمن آلة كتنفخ فيها؟", ["الفلوت", "الكمان", "البيانو", "الطبل"], 0),
+            ("«جدبة» و«شعبي» هوما أنواع موسيقية من أشمن دولة؟", ["المغرب", "لبنان", "مصر", "العراق"], 0),
+        ],
+        "medium": [
+            ("شكون هو الملقب بـ «ملك البوب»؟", ["مايكل جاكسون", "إلفيس بريسلي", "برينس", "جيمس براون"], 0),
+            ("أشمن نوع موسيقي خرج من جامايكا؟", ["الريغي", "السالسا", "الفلامنكو", "التانغو"], 0),
+            ("شحال من نوطة كاينة فـ السلم الموسيقي الأساسي؟", ["7", "5", "8", "12"], 0),
+            ("«ناس الغيوان» جماعة موسيقية من أشمن دولة؟", ["المغرب", "الجزائر", "تونس", "مصر"], 0),
+            ("شنو كيستعمل الدي جي باش يخلط الأصوات؟", ["الميكسر", "الفلوت", "الكمان", "البوق"], 0),
+            ("شكون كيتلقب بـ «كوكب الشرق»؟", ["أم كلثوم", "فيروز", "وردة", "أسمهان"], 0),
+        ],
+        "hard": [
+            ("شكون ألّف السيمفونية التاسعة المشهورة بـ «نشيد الفرح»؟", ["بيتهوفن", "موزارت", "باخ", "شوبان"], 0),
+            ("«العيطة» نوع موسيقي مرتبط أساسا بأشمن منطقة فـ المغرب؟", ["الشاوية وعبدة", "الريف", "سوس", "الصحراء"], 0),
+            ("شحال من عضو كانو فـ فرقة The Beatles؟", ["4", "3", "5", "6"], 0),
+            ("أشمن واحد فهاد اللائحة هو مقام موسيقي عربي؟", ["الحجاز", "الدوريان", "البلوز", "البنتاتونيك"], 0),
+            ("شنو كتسمى الموسيقى الروحية المرتبطة بالطقوس ديال كناوة؟", ["الليلة", "الحضرة", "العرس", "الوعدة"], 0),
+        ],
+    },
+    "games": {
+        "easy": [
+            ("فـ «Minecraft»، شنو كتستعمل أساسا باش تبني؟", ["البلوكات", "الطوموبيلات", "الطيارات", "الفلوس"], 0),
+            ("أشمن شركة صنعات «Mario»؟", ["نينتندو", "سوني", "مايكروسوفت", "سيغا"], 0),
+            ("«EA FC» (اللي كان FIFA) لعبة ديال شنو؟", ["كرة القدم", "السباق", "الحرب", "المغامرة"], 0),
+            ("فـ «Among Us»، شكون كيحاول يقتل الباقين؟", ["الإمبوستر", "الكرومايت", "الكابتن", "الطبيب"], 0),
+            ("«PlayStation» شكون كيصنعها؟", ["سوني", "نينتندو", "مايكروسوفت", "سامسونغ"], 0),
+            ("فـ «Pac-Man»، شنو كياكل باكمان؟", ["النقط", "التفاح", "اللحم", "الفلوس"], 0),
+            ("«Fortnite» و«PUBG» أشمن نوع ديال ألعاب؟", ["باتل رويال", "سباق", "طبخ", "رياضة"], 0),
+            ("فـ «Tetris»، شنو خاصك دير بالبلوكات؟", ["تعمر سطور كاملة", "تقتل الأعداء", "تجمع الفلوس", "تسوق طوموبيل"], 0),
+        ],
+        "medium": [
+            ("أشمن شركة خرجات «GTA»؟", ["Rockstar Games", "EA", "Ubisoft", "Activision"], 0),
+            ("«Xbox» شكون كيصنعها؟", ["مايكروسوفت", "سوني", "نينتندو", "أبل"], 0),
+            ("فـ «Pokémon»، شنو هو أول بوكيمون فـ البوكيديكس؟", ["بولباصور", "بيكاتشو", "تشارمندر", "سكويرتل"], 0),
+            ("أشمن لعبة باعت أكثر نسخ فـ التاريخ؟", ["Minecraft", "GTA V", "Tetris", "Wii Sports"], 0),
+            ("«Assassin's Creed» من صنع أشمن شركة؟", ["Ubisoft", "Rockstar", "Bethesda", "Capcom"], 0),
+            ("فـ «League of Legends»، شنو خاصك تهدم باش تربح؟", ["النيكسوس", "القاعدة", "البرج الأول", "التنين"], 0),
+        ],
+        "hard": [
+            ("فأي عام خرجات أول نسخة ديال «Super Mario Bros»؟", ["1985", "1990", "1980", "1995"], 0),
+            ("أشمن شركة صنعات «The Legend of Zelda»؟", ["نينتندو", "سيغا", "كابكوم", "كونامي"], 0),
+            ("«Half-Life» من صنع أشمن استوديو؟", ["Valve", "id Software", "Blizzard", "Epic Games"], 0),
+            ("أشمن لعبة كتعتبر أول لعبة فيديو تجارية ناجحة؟", ["Pong", "Tetris", "Space Invaders", "Pac-Man"], 0),
+            ("«Dark Souls» من صنع أشمن استوديو ياباني؟", ["FromSoftware", "Square Enix", "Konami", "Capcom"], 0),
+        ],
+    },
+    "anime": {
+        "easy": [
+            ("فـ «Naruto»، شنو هو الحلم ديال ناروتو؟", ["يولي هوكاجي", "يولي طبيب", "يهرب من القرية", "يبقى معلم"], 0),
+            ("شكون هو البطل ديال «One Piece»؟", ["لوفي", "زورو", "سانجي", "نامي"], 0),
+            ("فـ «Dragon Ball»، شنو كيجمع غوكو باش تتحقق أمنية؟", ["كرات التنين", "النجوم", "الحجرات", "الكنوز"], 0),
+            ("شكون هو البطل ديال أنمي «Pokémon»؟", ["آش", "بروك", "ميستي", "غاري"], 0),
+            ("فـ «Attack on Titan»، على شكون كيتحاربو؟", ["العمالقة", "التنانين", "الروبوهات", "القراصنة"], 0),
+            ("«Doraemon» شنو هو؟", ["قط روبوت", "كلب", "فأر", "إنسان آلي طويل"], 0),
+            ("فـ «Death Note»، شنو كيستعمل لايت باش يقتل؟", ["دفتر", "سيف", "سم", "مسدس"], 0),
+            ("فـ «Captain Tsubasa»، أشمن رياضة كيلعبو؟", ["كرة القدم", "كرة السلة", "التنس", "البيسبول"], 0),
+        ],
+        "medium": [
+            ("شكون هو مؤلف «One Piece»؟", ["إييتشيرو أودا", "ماساشي كيشيموتو", "أكيرا تورياما", "تايت كوبو"], 0),
+            ("فـ «Naruto»، شنو كتسمى القرية ديال ناروتو؟", ["كونوها", "سونا", "كيري", "إيوا"], 0),
+            ("أشمن استوديو خرّج «Spirited Away»؟", ["استوديو غيبلي", "توي أنيميشن", "مادهاوس", "بونز"], 0),
+            ("فـ «Bleach»، شنو كتسمى السيوف ديال الشينيغامي؟", ["زانباكوتو", "كاتانا", "كوناي", "شوريكن"], 0),
+            ("شكون هو البطل ديال «Demon Slayer»؟", ["تانجيرو", "زينيتسو", "إينوسكي", "غيو"], 0),
+            ("فـ «One Punch Man»، شكون كيقتل أي عدو بضربة وحدة؟", ["سايتاما", "جينوس", "كينغ", "باكوغو"], 0),
+        ],
+        "hard": [
+            ("شكون ألّف مانغا «Dragon Ball»؟", ["أكيرا تورياما", "إييتشيرو أودا", "ماساشي كيشيموتو", "هيرومو أراكاوا"], 0),
+            ("فـ «Fullmetal Alchemist»، شنو هو القانون الأساسي ديال الخيمياء؟", ["التبادل المتكافئ", "التحول الحر", "قانون النار", "قانون الدم"], 0),
+            ("أشمن أنمي ربح أوسكار أحسن فيلم رسوم متحركة؟", ["Spirited Away", "Your Name", "Akira", "Ghost in the Shell"], 0),
+            ("فـ «Code Geass»، شنو كتسمى القوة ديال ليلوش؟", ["غياس", "شارينغان", "نين", "هاكي"], 0),
+            ("شكون هو المخرج ديال «Princess Mononoke» و«My Neighbor Totoro»؟", ["هاياو ميازاكي", "ماكوتو شينكاي", "ساتوشي كون", "إيساو تاكاهاتا"], 0),
+        ],
+    },
+}
+
+
+# ═══════════════════════════════════════════════════════
+# ║        محرك الأسئلة (بنك دارجة + احتياط OpenTDB)        ║
+# ═══════════════════════════════════════════════════════
+
+def build_bank_question(category: str, difficulty: str, used_keys: set) -> Optional[dict]:
+    """كيختار سؤال عشوائي بالدارجة من البنك المحلي، بلا ما يعاود شي سؤال تسول ديجا
+    فنفس الجلسة. كيخلط ترتيب الأجوبة كل مرة باش ماتحفظش «دايما الأول»."""
+    pool = TRIVIA_DARIJA_BANK.get(category, {}).get(difficulty, [])
+    available = [
+        (i, q) for i, q in enumerate(pool)
+        if f"{category}:{difficulty}:{i}" not in used_keys
+    ]
+    if not available:
+        return None
+
+    idx, (question_text, options, correct_idx) = random.choice(available)
+    correct = options[correct_idx]
+    shuffled = list(options)
+    random.shuffle(shuffled)
+
+    return {
+        "question": question_text,
+        "correct": correct,
+        "options": shuffled,
+        "category": TRIVIA_CATEGORY_LABELS.get(category, category),
+        "difficulty": difficulty,
+        "key": f"{category}:{difficulty}:{idx}",
+        "source": "bank",
+    }
+
+
+# ═══════ حماية من الـ rate limit ديال OpenTDB ═══════
+# OpenTDB كيسمح غير بطلب واحد كل 5 ثواني لكل IP (كيرجع response_code=5 ولا HTTP 429).
+# البوت القديم كان كيبعث الطلب ديال الـ token وطلب السؤال ورا بعضياتهم فنفس اللحظة
+# → دايما 429 → «كنكليكي على المجال وماكيوقع والو». هاد الـ lock كيضمن التباعد.
+_opentdb_lock = asyncio.Lock()
+_opentdb_last_call = 0.0
+OPENTDB_MIN_INTERVAL = 5.5   # ثواني بين كل طلبين (5 هو الحد الرسمي، زدنا 0.5 احتياط)
+
+
+async def opentdb_request(url: str, params: dict) -> dict:
+    """كل طلب لـ OpenTDB كيعدا من هنا — مضمون التباعد بيناتهم."""
+    global _opentdb_last_call
+    async with _opentdb_lock:
+        elapsed = asyncio.get_event_loop().time() - _opentdb_last_call
+        if elapsed < OPENTDB_MIN_INTERVAL:
+            await asyncio.sleep(OPENTDB_MIN_INTERVAL - elapsed)
+        data = await fetch_json(url, params=params)
+        _opentdb_last_call = asyncio.get_event_loop().time()
+        return data
+
 
 async def get_new_trivia_token() -> Optional[str]:
-    """يطلب Session Token من OpenTDB — هاد الطوكن كيخلي OpenTDB ماعادش يرجع نفس السؤال
-    مرتين لنفس الجلسة، حتى يتسناو كاع الأسئلة الممكنة (فهاد الحالة كيتصيفط أوتوماتيك)."""
-    data = await fetch_json("https://opentdb.com/api_token.php", params={"command": "request"})
+    """يطلب Session Token من OpenTDB — كيخلي OpenTDB مايعاودش نفس السؤال فنفس الجلسة."""
+    data = await opentdb_request("https://opentdb.com/api_token.php", {"command": "request"})
     if data and data.get("response_code") == 0:
         return data.get("token")
     return None
 
 
 async def fetch_trivia_question(category: str = None, difficulty: str = None, token: str = None) -> Optional[dict]:
-    """جيب سؤال Trivia من OpenTDB (API مجاني بلا حتى key). كيرجع None إلا فشل.
-    إلا عطيتي token، كيتفادى التكرار — وإلا خلص الطوكن كاع الأسئلة الممكنة (response_code=4)،
-    كيصيفطو أوتوماتيك ويعاود يجرب مرة وحدة."""
+    """جيب سؤال Trivia من OpenTDB (بالإنجليزية). كيرجع None إلا فشل.
+    كيتعامل مع: code 4 (خلصو الأسئلة → reset) و code 5 (rate limit → استنى وعاود)."""
     params = {"amount": 1, "type": "multiple"}
     if category and category in TRIVIA_CATEGORIES:
         params["category"] = TRIVIA_CATEGORIES[category]
@@ -2095,12 +2424,17 @@ async def fetch_trivia_question(category: str = None, difficulty: str = None, to
     if token:
         params["token"] = token
 
-    data = await fetch_json("https://opentdb.com/api.php", params=params)
+    data = await opentdb_request("https://opentdb.com/api.php", params)
     code = data.get("response_code") if data else None
 
-    if code == 4 and token:   # الطوكن خلص كاع الأسئلة الممكنة لهاد الفئة/الصعوبة → نصيفطوه ونعاودو
-        await fetch_json("https://opentdb.com/api_token.php", params={"command": "reset", "token": token})
-        data = await fetch_json("https://opentdb.com/api.php", params=params)
+    if code == 5:   # rate limit → التباعد كيتكفل بيه opentdb_request، غير نعاودو
+        print("[TRIVIA] OpenTDB rate limit (code 5) — كنعاود المحاولة...")
+        data = await opentdb_request("https://opentdb.com/api.php", params)
+        code = data.get("response_code") if data else None
+
+    if code == 4 and token:   # الطوكن خلص كاع الأسئلة الممكنة → نصيفطوه ونعاودو
+        await opentdb_request("https://opentdb.com/api_token.php", {"command": "reset", "token": token})
+        data = await opentdb_request("https://opentdb.com/api.php", params)
         code = data.get("response_code") if data else None
 
     if not data or code != 0 or not data.get("results"):
@@ -2117,21 +2451,46 @@ async def fetch_trivia_question(category: str = None, difficulty: str = None, to
         "options": options,
         "category": html.unescape(q.get("category", "عامة")),
         "difficulty": q.get("difficulty", "medium"),
+        "source": "opentdb",
     }
 
 
-TRIVIA_LANGUAGES = {
-    "en": ("🇬🇧", "English"),
-    "fr": ("🇫🇷", "French"),
-    "es": ("🇪🇸", "Spanish"),
-    "ar": ("🇸🇦", "Modern Standard Arabic"),
-    "ma": ("🇲🇦", "Moroccan Darija"),
-}
+# ═══════ الترجمة للدارجة (للأسئلة الجايين من OpenTDB فقط) + كاش دائم ═══════
+DARIJA_CACHE_FILE = os.path.join(DATA_DIR, "trivia_darija_cache.json")
+darija_cache = {}
 
 
-async def translate_trivia_question(question: str, options: list, target_language_en: str) -> Optional[tuple]:
-    """يترجم السؤال والخيارات الأربعة بطلب واحد غير (باش نوفرو على الحصة ديال OpenRouter
-    بلاصة 5 طلبات). كيرجع (السؤال المترجم, [خيارات مترجمة]) ولا None إلا فشلت."""
+def load_darija_cache():
+    global darija_cache
+    try:
+        if os.path.exists(DARIJA_CACHE_FILE):
+            with open(DARIJA_CACHE_FILE, "r", encoding="utf-8") as f:
+                darija_cache = json.load(f)
+            print(f"✅ تحملو {len(darija_cache)} ترجمة محفوظة ديال Trivia")
+    except Exception as e:
+        print(f"⚠️ خطأ فتحميل كاش الترجمة: {e}")
+        darija_cache = {}
+
+
+def save_darija_cache():
+    try:
+        with open(DARIJA_CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(darija_cache, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"⚠️ خطأ فحفظ كاش الترجمة: {e}")
+
+
+load_darija_cache()
+
+
+async def translate_question_to_darija(question: str, options: list) -> Optional[tuple]:
+    """كيترجم السؤال + 4 أجوبة للدارجة المغربية بطلب واحد. كيحفظ النتيجة فـ كاش
+    دائم باش نفس السؤال ماياخدش طلب ثاني أبدا. كيرجع (سؤال, [أجوبة]) ولا None."""
+    cache_key = question.strip()
+    cached = darija_cache.get(cache_key)
+    if cached and len(cached.get("options", [])) == 4:
+        return cached["question"], cached["options"]
+
     if not OPENROUTER_API_KEY:
         return None
 
@@ -2140,31 +2499,68 @@ async def translate_trivia_question(question: str, options: list, target_languag
         {
             "role": "system",
             "content": (
-                f"Translate the following quiz question and its 4 answer options into {target_language_en}. "
-                f"Reply with EXACTLY the same format: one line starting with 'Q:' then four lines "
-                f"starting with 'A:', 'B:', 'C:', 'D:' — with the translated text after each colon. "
-                f"No preamble, no explanations, nothing else."
+                "You translate quiz content into MOROCCAN DARIJA written in Arabic script "
+                "(the everyday spoken Moroccan dialect, NOT Modern Standard Arabic). "
+                "Use natural Darija words like: شنو، شحال، أشمن، فين، علاش، كيفاش، واش، بزاف، دابا. "
+                "Keep proper nouns (names of people, films, games, brands) in their original spelling. "
+                "Reply with EXACTLY 5 lines and nothing else: one line starting with 'Q:' "
+                "then four lines starting with 'A:', 'B:', 'C:', 'D:'. "
+                "No preamble, no explanation, no markdown."
             )
         },
         {"role": "user", "content": "\n".join(lines)}
     ]
-    result, error = await call_openrouter_chat(messages, 700, 0.3)
+    result, error = await call_openrouter_chat(messages, 900, 0.3)
     if error or not result:
+        print(f"[TRIVIA] فشلت الترجمة للدارجة: {error}")
         return None
 
     parsed = {}
     for line in result.strip().split("\n"):
-        line = line.strip()
+        line = line.strip().lstrip("*").strip()
         for key in ("Q", "A", "B", "C", "D"):
             prefix = f"{key}:"
             if line.startswith(prefix) and key not in parsed:
                 parsed[key] = line[len(prefix):].strip()
                 break
 
-    if not all(k in parsed for k in ("Q", "A", "B", "C", "D")):
+    if not all(parsed.get(k) for k in ("Q", "A", "B", "C", "D")):
+        print(f"[TRIVIA] الرد ديال الترجمة جا بشكل غير متوقع: {result[:150]}")
         return None
 
-    return parsed["Q"], [parsed["A"], parsed["B"], parsed["C"], parsed["D"]]
+    translated = (parsed["Q"], [parsed["A"], parsed["B"], parsed["C"], parsed["D"]])
+    darija_cache[cache_key] = {"question": translated[0], "options": translated[1]}
+    save_darija_cache()
+    return translated
+
+
+async def get_darija_question(category: str, difficulty: str, used_keys: set,
+                              token: Optional[str] = None) -> Optional[dict]:
+    """المصدر الوحيد ديال الأسئلة فاللعبة — دايما كيرجع سؤال بالدارجة:
+      1) كيقلب أولا فـ البنك المحلي (فوري، بلا إنترنت، بلا فلوس)
+      2) إلا سالاو أسئلة هاد المجال/الصعوبة، كيجيب من OpenTDB وكيترجمو أوتوماتيك
+      3) إلا فشلات الترجمة تاهي، كيرجع لسؤال من البنك حتى لو تعاود
+    """
+    q = build_bank_question(category, difficulty, used_keys)
+    if q:
+        return q
+
+    online = await fetch_trivia_question(category, difficulty, token)
+    if online:
+        translated = await translate_question_to_darija(online["question"], online["options"])
+        if translated:
+            new_question, new_options = translated
+            correct_idx = online["options"].index(online["correct"])
+            online["question"] = new_question
+            online["options"] = new_options
+            online["correct"] = new_options[correct_idx]
+            online["category"] = TRIVIA_CATEGORY_LABELS.get(category, online["category"])
+            online["key"] = f"otdb:{new_question[:60]}"
+            return online
+
+    # آخر حل: نعاودو من البنك (كنمسحو التاريخ ديال هاد المجال/الصعوبة)
+    fallback_keys = {k for k in used_keys if not k.startswith(f"{category}:{difficulty}:")}
+    return build_bank_question(category, difficulty, fallback_keys)
 
 
 # ═══════════════════════════════════════════════════════
@@ -3713,8 +4109,11 @@ class TriviaView(discord.ui.View):
 
 
 async def send_trivia_question(channel: discord.abc.Messageable, category: str = None):
-    """كتجيب سؤال وتبعثو فـ channel معينة، بـ view ديال الأجوبة. مستعملة من الأمر ومن الـ loop التلقائي."""
-    q = await fetch_trivia_question(category)
+    """كتجيب سؤال بالدارجة وتبعثو فـ channel معينة، بـ view ديال الأجوبة.
+    مستعملة من الأمر /trivia ومن الـ loop التلقائي."""
+    cat = category if category in TRIVIA_CATEGORIES else random.choice(list(TRIVIA_CATEGORIES))
+    difficulty = random.choice(["easy", "medium", "medium", "hard"])
+    q = await get_darija_question(cat, difficulty, set())
     if not q:
         return None
 
@@ -3724,8 +4123,8 @@ async def send_trivia_question(channel: discord.abc.Messageable, category: str =
         color=discord.Color.teal(),
         timestamp=datetime.now()
     )
-    embed.add_field(name="📚 الفئة", value=q["category"], inline=True)
-    embed.add_field(name="🎯 الصعوبة", value=q["difficulty"].capitalize(), inline=True)
+    embed.add_field(name="📚 المجال", value=q["category"], inline=True)
+    embed.add_field(name="🎯 الصعوبة", value=TRIVIA_DIFFICULTY_LABELS.get(q["difficulty"], q["difficulty"]), inline=True)
     embed.set_footer(text=f"عندك {TRIVIA_ANSWER_SECONDS} ثانية — أول واحد يجاوب صحيح ياخد +{TRIVIA_XP_REWARD} XP")
 
     view = TriviaView(q["correct"], q["options"], TRIVIA_XP_REWARD, TRIVIA_ANSWER_SECONDS)
@@ -3738,6 +4137,13 @@ async def send_trivia_question(channel: discord.abc.Messageable, category: str =
 # ║   Trivia — panel دائم فـ channel خاص (صعوبة متصاعدة)   ║
 # ═══════════════════════════════════════════════════════
 
+TRIVIA_DIFFICULTY_LABELS = {
+    "easy": "🟢 ساهل",
+    "medium": "🟡 متوسط",
+    "hard": "🔴 صعيب",
+}
+
+
 def get_trivia_difficulty(round_num: int) -> str:
     if round_num <= TRIVIA_ROUNDS_PER_DIFFICULTY:
         return "easy"
@@ -3747,10 +4153,9 @@ def get_trivia_difficulty(round_num: int) -> str:
 
 
 def build_trivia_session_embed(question_text: str, options: list, category_label: str, difficulty: str,
-                                round_num: int, streak: int, lang: str, expires_at: datetime,
-                                prefix: str = "") -> discord.Embed:
+                               round_num: int, streak: int, expires_at: datetime,
+                               prefix: str = "") -> discord.Embed:
     reward = TRIVIA_XP_BY_DIFFICULTY.get(difficulty, TRIVIA_XP_BY_DIFFICULTY["easy"])
-    lang_flag, _ = TRIVIA_LANGUAGES.get(lang, TRIVIA_LANGUAGES["en"])
     letters = ["🇦", "🇧", "🇨", "🇩"]
     options_text = "\n".join(f"{letters[i]} {opt}" for i, opt in enumerate(options))
     embed = discord.Embed(
@@ -3758,11 +4163,10 @@ def build_trivia_session_embed(question_text: str, options: list, category_label
         description=f"{prefix}**{question_text}**\n\n{options_text}",
         color=discord.Color.teal(),
     )
-    embed.add_field(name="📚 الفئة", value=category_label, inline=True)
-    embed.add_field(name="🎯 الصعوبة", value=difficulty.capitalize(), inline=True)
+    embed.add_field(name="📚 المجال", value=category_label, inline=True)
+    embed.add_field(name="🎯 الصعوبة", value=TRIVIA_DIFFICULTY_LABELS.get(difficulty, difficulty), inline=True)
     embed.add_field(name="🔥 السلسلة", value=f"{streak} صحيح متتالي", inline=True)
     embed.add_field(name="⏱️ الوقت", value=f"<t:{int(expires_at.timestamp())}:R>", inline=True)
-    embed.add_field(name="🌐 اللغة", value=lang_flag, inline=True)
     embed.set_footer(text=f"جاوب صحيح تربح +{reward} XP")
     return embed
 
@@ -3771,7 +4175,7 @@ class TriviaReplayView(discord.ui.View):
     """زر 'العب مرة أخرى' فآخر الجلسة — كيرجع لاختيار المجال بلا ما يحتاج العضو يرجع لـ channel."""
 
     def __init__(self, user: discord.abc.User):
-        super().__init__(timeout=120)
+        super().__init__(timeout=300)
         self.user = user
 
     @discord.ui.button(label="🔄 العب مرة أخرى", style=discord.ButtonStyle.success)
@@ -3780,110 +4184,92 @@ class TriviaReplayView(discord.ui.View):
             await interaction.response.send_message("❌ هاد اللعبة ماشي ديالك.", ephemeral=True)
             return
         view = TriviaCategorySelectView(self.user)
-        await interaction.response.edit_message(content="📚 شنو المجال لي بغيتي تلعب فيه؟", embed=None, view=view)
+        await interaction.response.edit_message(
+            content="📚 شنو المجال لي بغيتي تلعب فيه؟", embed=None, view=view
+        )
 
 
 class TriviaSessionView(discord.ui.View):
     """جلسة لعب فردية (ephemeral، غير صاحبها كيشوفها): كل ما جاوب صحيح، كيجي سؤال جديد
-    أصعب وبـ XP أكثر، حتى يغلط ولا يخلص الوقت. فيها select لكل لغة باش يبدل الترجمة ديال
-    السؤال الحالي بلا ما يبدل شي حاجة أخرى (الجواب الصحيح كيتحسب بالـ index باش الترجمة
-    ما تأثرش على المنطق).
+    أصعب وبـ XP أكثر، حتى يغلط ولا يخلص الوقت.
+
+    🇲🇦 كاع الأسئلة والأجوبة كيبانو بالدارجة مباشرة — ماكاينش شي قائمة ديال اللغات
+    وماكاينش انتظار ديال الترجمة.
 
     ⏱️ الوقت كيتحسب بـ watchdog يدوي (asyncio.sleep) مربوط بـ self.expires_at الثابتة —
-    ماشي بـ discord.py timeout العادي (timeout=None) — باش يبقى دقيق حتى لو تبدلت اللغة
-    بزاف مرات ولا تعاود edit_message بزاف مرات على نفس الـ view."""
+    ماشي بـ discord.py timeout العادي (timeout=None).
+
+    ⚠️ ملاحظة تقنية مهمة: الرسالة ephemeral، وDiscord ماكيسمحش تعدلها بـ message.edit().
+    علاش كنحتافظو بآخر Interaction وكنعدلو بـ interaction.edit_original_response() —
+    هادشي هو اللي كان خلي شاشة «سالا الوقت» ماكتبانش فالنسخة القديمة."""
 
     def __init__(self, user: discord.abc.User, category: str, round_num: int, streak: int,
-                 question: dict, token: Optional[str] = None):
+                 question: dict, interaction: discord.Interaction,
+                 used_keys: Optional[set] = None, token: Optional[str] = None):
         super().__init__(timeout=None)   # كنعطلو الـ timeout الأوتوماتيكي، وكنديرو واحد يدوي تحت
         self.user = user
         self.category = category
         self.round_num = round_num
         self.streak = streak
         self.token = token
-        self.message: Optional[discord.Message] = None
+        self.interaction = interaction          # ← آخر interaction، بيه كنعدلو الرسالة ephemeral
+        self.used_keys = used_keys if used_keys is not None else set()
         self.ended = False
-        self.current_lang = "en"
 
-        # الأصل بالإنجليزية (بلا ما نبدلوه)، مع الـ index ديال الجواب الصحيح
-        self.original_question = question["question"]
-        self.original_options = list(question["options"])
-        self.correct_index = self.original_options.index(question["correct"])
+        self.question_text = question["question"]
+        self.options = list(question["options"])
+        self.correct_index = self.options.index(question["correct"])
         self.difficulty = question["difficulty"]
-        self.category_label = question["category"]
-        self.translations_cache = {"en": (self.original_question, self.original_options)}
-        self.expires_at = datetime.now() + timedelta(seconds=TRIVIA_ANSWER_SECONDS)
+        self.category_label = question.get("category", TRIVIA_CATEGORY_LABELS.get(category, category))
+        if question.get("key"):
+            self.used_keys.add(question["key"])
 
+        self.expires_at = datetime.now() + timedelta(seconds=TRIVIA_ANSWER_SECONDS)
         self._build_components()
         self._watchdog_task = asyncio.create_task(self._watchdog())
 
+    def build_embed(self, prefix: str = "") -> discord.Embed:
+        return build_trivia_session_embed(
+            self.question_text, self.options, self.category_label, self.difficulty,
+            self.round_num, self.streak, self.expires_at, prefix=prefix
+        )
+
     async def _watchdog(self):
         """كيستنى بالضبط حتى الوقت ديال expires_at، وإلا حتى واحد ما جاوب، كيسالي اللعبة."""
-        remaining = (self.expires_at - datetime.now()).total_seconds()
-        if remaining > 0:
-            await asyncio.sleep(remaining)
-        if self.ended or not self.message:
-            return
-        await self._end_session_timeout()
+        try:
+            remaining = (self.expires_at - datetime.now()).total_seconds()
+            if remaining > 0:
+                await asyncio.sleep(remaining)
+            if self.ended:
+                return
+            await self._end_session_timeout()
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            print(f"[TRIVIA] خطأ فـ watchdog: {e}")
 
     def _cancel_watchdog(self):
         if self._watchdog_task and not self._watchdog_task.done():
             self._watchdog_task.cancel()
 
-    def _current_texts(self):
-        return self.translations_cache[self.current_lang]
-
     def _build_components(self):
         self.clear_items()
-        _, options = self._current_texts()
         letters = ["🇦", "🇧", "🇨", "🇩"]
-        for i, option in enumerate(options):
-            btn = discord.ui.Button(label=f"{letters[i]} {option}"[:80], style=discord.ButtonStyle.secondary, row=0)
+        for i, option in enumerate(self.options):
+            btn = discord.ui.Button(
+                label=f"{letters[i]} {option}"[:80],
+                style=discord.ButtonStyle.secondary,
+                row=i // 2
+            )
             btn.callback = self._make_answer_callback(i)
             self.add_item(btn)
 
-        lang_select = discord.ui.Select(
-            placeholder="🌐 بدل لغة السؤال...",
-            options=[
-                discord.SelectOption(label=name, value=code, emoji=flag, default=(code == self.current_lang))
-                for code, (flag, name) in TRIVIA_LANGUAGES.items()
-            ],
-            row=1
-        )
-        lang_select.callback = self._lang_callback
-        self.add_item(lang_select)
-
-    async def _lang_callback(self, interaction: discord.Interaction):
-        if interaction.user.id != self.user.id:
-            await interaction.response.send_message("❌ هاد اللعبة ماشي ديالك.", ephemeral=True)
-            return
-        if self.ended:
-            return
-
-        # كنعلمو ديسكورد فالحين بلي وصلنا (بلا ما نبدلو المحتوى بعد)، باش الترجمة
-        # (اللي ممكن تاخد أكثر من 3 ثواني) ما تسببش "didn't respond in time"
-        await interaction.response.defer()
-
-        lang = interaction.data["values"][0]
-        if lang not in self.translations_cache:
-            _, lang_name_en = TRIVIA_LANGUAGES[lang]
-            result = await translate_trivia_question(self.original_question, self.original_options, lang_name_en)
-            if not result:
-                await interaction.followup.send("❌ ما قدرتش نترجم دابا، جرب مرة أخرى بعد شوية.", ephemeral=True)
-                return
-            self.translations_cache[lang] = result
-
-        if self.ended:  # ممكن الوقت يكون خلص وحنا كنترجمو
-            return
-
-        self.current_lang = lang
-        self._build_components()
-        question_text, options = self._current_texts()
-        embed = build_trivia_session_embed(
-            question_text, options, self.category_label, self.difficulty,
-            self.round_num, self.streak, self.current_lang, self.expires_at
-        )
-        await interaction.edit_original_response(embed=embed, view=self)
+    def _disable_and_reveal(self):
+        for i, child in enumerate(self.children):
+            if isinstance(child, discord.ui.Button):
+                child.disabled = True
+                if i == self.correct_index:
+                    child.style = discord.ButtonStyle.success
 
     def _make_answer_callback(self, index: int):
         async def callback(interaction: discord.Interaction):
@@ -3891,73 +4277,69 @@ class TriviaSessionView(discord.ui.View):
                 await interaction.response.send_message("❌ هاد اللعبة ماشي ديالك.", ephemeral=True)
                 return
             if self.ended:
+                await interaction.response.defer()
                 return
 
             self.ended = True
             self._cancel_watchdog()
             self.stop()
-            await interaction.response.defer()   # الترجمة/الجلب/XP ممكن ياخدو أكثر من 3 ثواني
-            _, options = self._current_texts()
+            self.interaction = interaction
+            await interaction.response.defer()   # جلب السؤال الجاي + XP ممكن ياخدو أكثر من 3 ثواني
 
+            # ═══ جواب غالط → سالات اللعبة ═══
             if index != self.correct_index:
-                for i, child in enumerate(self.children):
-                    if isinstance(child, discord.ui.Button):
-                        child.disabled = True
-                        if i == self.correct_index:
-                            child.style = discord.ButtonStyle.success
+                self._disable_and_reveal()
                 embed = discord.Embed(
                     title="❌ جواب غالط!",
                     description=(
-                        f"الجواب الصحيح كان: **{options[self.correct_index]}**\n\n"
-                        f"🏁 خلصتي بـ **{self.streak}** سؤال صحيح متتالي "
-                        f"(مجال: {TRIVIA_CATEGORY_LABELS.get(self.category, self.category)})."
+                        f"الجواب الصحيح كان: **{self.options[self.correct_index]}**\n\n"
+                        f"🏁 سالتي بـ **{self.streak}** سؤال صحيح متتالي "
+                        f"(المجال: {TRIVIA_CATEGORY_LABELS.get(self.category, self.category)})."
                     ),
                     color=discord.Color.red()
                 )
                 await interaction.edit_original_response(embed=embed, view=TriviaReplayView(self.user))
                 return
 
-            # جواب صحيح
+            # ═══ جواب صحيح ═══
             reward = TRIVIA_XP_BY_DIFFICULTY.get(self.difficulty, TRIVIA_XP_BY_DIFFICULTY["easy"])
             if interaction.guild:
-                await grant_xp_and_announce(interaction.user, interaction.guild, reward, fallback_channel=interaction.channel)
+                await grant_xp_and_announce(interaction.user, interaction.guild, reward,
+                                            fallback_channel=interaction.channel)
                 bump_trivia_score(interaction.guild.id, interaction.user.id)
 
             next_round = self.round_num + 1
             next_streak = self.streak + 1
-            next_q = await fetch_trivia_question(self.category, get_trivia_difficulty(next_round), self.token)
+            next_q = await get_darija_question(
+                self.category, get_trivia_difficulty(next_round), self.used_keys, self.token
+            )
 
             if not next_q:
                 embed = discord.Embed(
                     title=f"🎉 صحيح! (+{reward} XP)",
                     description=(
                         f"وصلتي لـ **{next_streak}** سؤال صحيح متتالي! 🔥\n\n"
-                        f"ما قدرتش نجيب سؤال جديد دابا (مشكل فـ OpenTDB) — جرب مرة أخرى بعد شوية."
+                        f"سالاو الأسئلة ديال هاد المجال دابا — جرب مجال آخر."
                     ),
                     color=discord.Color.gold()
                 )
                 await interaction.edit_original_response(embed=embed, view=TriviaReplayView(self.user))
                 return
 
-            new_view = TriviaSessionView(self.user, self.category, next_round, next_streak, next_q, self.token)
-            embed = build_trivia_session_embed(
-                new_view.original_question, new_view.original_options, new_view.category_label,
-                new_view.difficulty, next_round, next_streak, "en", new_view.expires_at,
-                prefix=f"✅ صحيح! (+{reward} XP)\n\n"
+            new_view = TriviaSessionView(
+                self.user, self.category, next_round, next_streak, next_q,
+                interaction, self.used_keys, self.token
             )
-            await interaction.edit_original_response(embed=embed, view=new_view)
-            new_view.message = interaction.message
+            await interaction.edit_original_response(
+                embed=new_view.build_embed(prefix=f"✅ صحيح! (+{reward} XP)\n\n"),
+                view=new_view
+            )
 
         return callback
 
     async def _end_session_timeout(self):
         self.ended = True
-        _, options = self._current_texts()
-        for i, child in enumerate(self.children):
-            if isinstance(child, discord.ui.Button):
-                child.disabled = True
-                if i == self.correct_index:
-                    child.style = discord.ButtonStyle.success
+        self.stop()
         funny_lines = [
             "حاول مرة أخرى! ⏱️",
             "معرفتيش لعيبة بحالك 😅 جرب عاود!",
@@ -3966,27 +4348,29 @@ class TriviaSessionView(discord.ui.View):
         embed = discord.Embed(
             title="⏱️ سالا الوقت!",
             description=(
-                f"الجواب الصحيح كان: **{options[self.correct_index]}**\n\n"
-                f"🏁 خلصتي بـ **{self.streak}** سؤال صحيح متتالي.\n\n"
+                f"الجواب الصحيح كان: **{self.options[self.correct_index]}**\n\n"
+                f"🏁 سالتي بـ **{self.streak}** سؤال صحيح متتالي.\n\n"
                 f"{random.choice(funny_lines)}"
             ),
             color=discord.Color.orange()
         )
         try:
-            await self.message.edit(embed=embed, view=TriviaReplayView(self.user))
-        except discord.HTTPException:
-            pass
+            await self.interaction.edit_original_response(embed=embed, view=TriviaReplayView(self.user))
+        except (discord.HTTPException, discord.NotFound) as e:
+            print(f"[TRIVIA] ماقدرتش نعدل رسالة نهاية الوقت: {e}")
 
 
 class TriviaCategorySelectView(discord.ui.View):
-    """Select menu باش يختار المجال قبل ما تبدا الجلسة."""
+    """Select menu باش يختار المجال قبل ما تبدا الجلسة.
+    ⚡ دابا السؤال كيجي من البنك المحلي بالدارجة → فوري، بلا API، بلا rate limit."""
 
     def __init__(self, user: discord.abc.User):
-        super().__init__(timeout=60)
+        super().__init__(timeout=300)
         self.user = user
 
     @discord.ui.select(
         placeholder="📚 اختار المجال لي بغيتي الأسئلة ديالو...",
+        min_values=1, max_values=1,
         options=[discord.SelectOption(label=TRIVIA_CATEGORY_LABELS[c], value=c) for c in TRIVIA_CATEGORIES]
     )
     async def select_category(self, interaction: discord.Interaction, select: discord.ui.Select):
@@ -3994,25 +4378,22 @@ class TriviaCategorySelectView(discord.ui.View):
             await interaction.response.send_message("❌ هاد الاختيار ماشي ديالك.", ephemeral=True)
             return
 
-        await interaction.response.defer()   # طلب الطوكن + السؤال ممكن ياخدو أكثر من 3 ثواني
+        await interaction.response.defer()
+        self.stop()
 
         category = select.values[0]
-        token = await get_new_trivia_token()
-        q = await fetch_trivia_question(category, "easy", token)
+        used_keys = set()
+        q = await get_darija_question(category, "easy", used_keys)
+
         if not q:
             await interaction.edit_original_response(
-                content="❌ ما قدرتش نجيب سؤال دابا (مشكل فـ OpenTDB)، جرب مرة أخرى بعد شوية.",
+                content="❌ ما قدرتش نجيب سؤال دابا، جرب مجال آخر ولا عاود من بعد شوية.",
                 embed=None, view=None
             )
             return
 
-        view = TriviaSessionView(self.user, category, 1, 0, q, token)
-        embed = build_trivia_session_embed(
-            view.original_question, view.original_options, view.category_label,
-            view.difficulty, 1, 0, "en", view.expires_at
-        )
-        await interaction.edit_original_response(content=None, embed=embed, view=view)
-        view.message = interaction.message
+        view = TriviaSessionView(self.user, category, 1, 0, q, interaction, used_keys)
+        await interaction.edit_original_response(content=None, embed=view.build_embed(), view=view)
 
 
 class TriviaGamePanelView(discord.ui.View):
@@ -4030,18 +4411,25 @@ class TriviaGamePanelView(discord.ui.View):
         await interaction.response.send_message("📚 شنو المجال لي بغيتي تلعب فيه؟", view=view, ephemeral=True)
 
 
-async def setup_trivia_panel(guild: discord.Guild):
-    """كيبعث (مرة وحدة، أول مرة) رسالة الشرح + زر البداية فـ channel اللعبة."""
-    if not TRIVIA_CHANNEL_ID:
-        return
-    channel = bot.get_channel(TRIVIA_CHANNEL_ID)
+async def setup_trivia_panel(guild: discord.Guild, channel: Optional[discord.abc.Messageable] = None,
+                             force: bool = False):
+    """كيبعث رسالة الشرح + زر البداية فـ channel اللعبة.
+    إلا ماعطيتيش channel، كيستعمل TRIVIA_CHANNEL_ID."""
+    if channel is None:
+        if not TRIVIA_CHANNEL_ID:
+            return False
+        channel = bot.get_channel(TRIVIA_CHANNEL_ID)
     if not channel:
-        return
+        return False
 
-    async for message in channel.history(limit=15):
-        if message.author == bot.user and message.embeds and message.embeds[0].title and "Trivia" in message.embeds[0].title:
-            return
+    if not force:
+        async for message in channel.history(limit=15):
+            if message.author == bot.user and message.embeds and message.embeds[0].title and "Trivia" in message.embeds[0].title:
+                return True
 
+    total_questions = sum(
+        len(qs) for diffs in TRIVIA_DARIJA_BANK.values() for qs in diffs.values()
+    )
     embed = discord.Embed(
         title="🧠 مرحبا بيك فـ لعبة Trivia",
         description="اختبر معلوماتك وربح XP! كليكي على الزر تحت، اختار المجال لي بغيتي، وابدا تجاوب على الأسئلة.",
@@ -4059,8 +4447,11 @@ async def setup_trivia_panel(guild: discord.Guild):
         inline=False
     )
     embed.add_field(
-        name="🌐 الترجمة",
-        value="تقدر تبدل لغة السؤال فأي وقت (🇬🇧 إنجليزية، 🇫🇷 فرنسية، 🇪🇸 إسبانية، 🇸🇦 فصحى، 🇲🇦 دارجة) من القائمة تحت السؤال، بلا ما يأثر على الوقت ديالك.",
+        name="🇲🇦 كلشي بالدارجة",
+        value=(
+            f"كاع الأسئلة والأجوبة مكتوبين بالدارجة المغربية من الأصل ({total_questions} سؤال) — "
+            "بلا ترجمة، بلا انتظار، وكيبانو ليك فالحين ملي تختار المجال."
+        ),
         inline=False
     )
     embed.add_field(
@@ -4074,19 +4465,29 @@ async def setup_trivia_panel(guild: discord.Guild):
         inline=False
     )
     embed.set_footer(text=f"{SERVER_NAME} | Trivia Game")
-    await channel.send(embed=embed, view=TriviaGamePanelView())
+    try:
+        await channel.send(embed=embed, view=TriviaGamePanelView())
+        return True
+    except discord.HTTPException as e:
+        print(f"[TRIVIA] ما قدرتش نبعث panel: {e}")
+        return False
 
 
 @bot.hybrid_command(name="setuptrivia")
 @app_commands.default_permissions(administrator=True)
 @commands.has_permissions(administrator=True)
 async def setuptrivia_cmd(ctx):
-    """كيصاوب/يعاود يصاوب panel لعبة Trivia فـ TRIVIA_CHANNEL_ID (Admin)"""
-    if not TRIVIA_CHANNEL_ID:
-        await ctx.send("❌ حط `TRIVIA_CHANNEL_ID` فالـ CONFIG أولاً (دير channel تحت category بحال '🎮 Mini Games').", delete_after=10)
+    """كيصاوب panel لعبة Trivia. إلا TRIVIA_CHANNEL_ID = 0، كيصاوبو فالـ channel
+    اللي درتي فيها الأمر — يعني ماعندكش علاش تبدل الـ CONFIG (Admin)"""
+    target = bot.get_channel(TRIVIA_CHANNEL_ID) if TRIVIA_CHANNEL_ID else ctx.channel
+    if not target:
+        await ctx.send("❌ ما لقيتش الـ channel ديال Trivia — تأكد من `TRIVIA_CHANNEL_ID`.", delete_after=10)
         return
-    await setup_trivia_panel(ctx.guild)
-    await ctx.send("✅ panel لعبة Trivia تصاوب (ولا كان ديجا موجود).", delete_after=8)
+    ok = await setup_trivia_panel(ctx.guild, channel=target, force=True)
+    if ok:
+        await ctx.send(f"✅ panel لعبة Trivia تصاوب فـ {target.mention}.", delete_after=8)
+    else:
+        await ctx.send("❌ ما قدرتش نصاوب الـ panel — شوف الصلاحيات ديال البوت فهاد الـ channel.", delete_after=10)
 
 
 @bot.hybrid_command(name="trivia", description="لعبة أسئلة ثقافة عامة — جاوب صحيح وربح XP!")
@@ -4100,6 +4501,7 @@ async def setuptrivia_cmd(ctx):
     app_commands.Choice(name="🎬 أفلام", value="movies"),
     app_commands.Choice(name="🎵 موسيقى", value="music"),
     app_commands.Choice(name="🎮 ألعاب فيديو", value="games"),
+    app_commands.Choice(name="📺 أنمي ومانغا", value="anime"),
 ])
 async def trivia_cmd(ctx, category: Optional[str] = None):
     if not TRIVIA_ENABLED:
@@ -4157,6 +4559,127 @@ async def before_trivia_auto_loop():
 @trivia_auto_loop.error
 async def trivia_auto_loop_error(error):
     print(f"[TRIVIA] خطأ كبير وقف trivia_auto_loop: {error}")
+
+
+# ═══════════════════════════════════════════════════════
+# ║   🔎 /aicheck — تشيك مباشر على الموديل والرصيد ديال OpenRouter   ║
+# ═══════════════════════════════════════════════════════
+
+async def test_single_model(model: str) -> tuple:
+    """كيجرب موديل واحد بالضبط (بلا fallback) بسؤال صغير بزاف.
+    كيرجع (نجح?, وصف, الوقت بالثواني)."""
+    if not OPENROUTER_API_KEY:
+        return False, "ماكاينش OPENROUTER_API_KEY فـ الـ environment", 0.0
+
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://discord.com",
+        "X-Title": "AI Assistant BOT",
+    }
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": "Reply with exactly: OK"}],
+        "max_tokens": 20,
+        "temperature": 0,
+    }
+    if AI_DISABLE_REASONING:
+        payload["reasoning"] = {"enabled": False, "exclude": True}
+
+    start = asyncio.get_event_loop().time()
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=25)) as session:
+            async with session.post(OPENROUTER_URL, headers=headers, json=payload) as resp:
+                took = asyncio.get_event_loop().time() - start
+                body = await resp.text()
+                if resp.status != 200:
+                    short = body[:120].replace("\n", " ")
+                    return False, f"HTTP {resp.status} — {short}", took
+                data = json.loads(body)
+                msg = data.get("choices", [{}])[0].get("message", {}) or {}
+                content = (msg.get("content") or msg.get("reasoning") or "").strip()
+                if not content:
+                    return False, "رجع رد فارغ (reasoning صرف كاع الـ tokens)", took
+                return True, content[:60], took
+    except asyncio.TimeoutError:
+        return False, "Timeout (تعدا 25 ثانية)", 25.0
+    except Exception as e:
+        return False, f"{type(e).__name__}: {e}"[:120], asyncio.get_event_loop().time() - start
+
+
+async def get_openrouter_credits() -> Optional[dict]:
+    """كيجيب الرصيد الحقيقي من OpenRouter."""
+    if not OPENROUTER_API_KEY:
+        return None
+    headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}"}
+    data = await fetch_json("https://openrouter.ai/api/v1/credits", headers=headers)
+    return (data or {}).get("data")
+
+
+@bot.hybrid_command(name="aicheck", description="تشيك واش الموديل ديال الـ AI والرصيد خدامين مزيان")
+@app_commands.default_permissions(administrator=True)
+@commands.has_permissions(administrator=True)
+async def aicheck_cmd(ctx):
+    """كيدير تشيك حقيقي (ماشي نظري): كيبعث طلب فعلي للموديل المدفوع، كيقيس الوقت،
+    كيجيب الرصيد اللي باقي، وكيجرب الترجمة للدارجة."""
+    msg = await ctx.send("🔎 كنشيكي على OpenRouter... صبر شوية (تقريبا 30 ثانية).")
+
+    lines = []
+
+    # 1) الرصيد
+    credits = await get_openrouter_credits()
+    if credits:
+        total = float(credits.get("total_credits", 0) or 0)
+        used = float(credits.get("total_usage", 0) or 0)
+        left = total - used
+        lines.append(
+            f"💳 **الرصيد**: خلصتي `${total:.2f}` — صرفتي `${used:.4f}` — "
+            f"باقي ليك **`${left:.4f}`**"
+        )
+        # DeepSeek V4 Flash: $0.0983/M in, $0.1966/M out
+        approx_msgs = int(left / 0.0004) if left > 0 else 0
+        lines.append(f"   └ يعني تقريبا **{approx_msgs:,}** رد آخر بهاد الموديل 🎯")
+    else:
+        lines.append("💳 **الرصيد**: ما قدرتش نجيبو (تأكد من `OPENROUTER_API_KEY`)")
+
+    # 2) الموديل الأساسي المدفوع
+    ok, detail, took = await test_single_model(AI_MODEL)
+    icon = "✅" if ok else "❌"
+    lines.append(f"\n{icon} **الموديل الأساسي** `{AI_MODEL}`")
+    lines.append(f"   └ {'خدام مزيان' if ok else 'ماخدامش'} — `{took:.2f}s` — {detail}")
+
+    # 3) موديلات الاحتياط
+    lines.append("\n🔁 **موديلات الاحتياط (المجانية):**")
+    for fb in AI_MODEL_FALLBACKS:
+        fok, fdetail, ftook = await test_single_model(fb)
+        lines.append(f"   {'✅' if fok else '❌'} `{fb}` — `{ftook:.2f}s`" + ("" if fok else f" — {fdetail}"))
+
+    # 4) تجربة الترجمة للدارجة
+    test = await translate_question_to_darija(
+        "What is the capital city of Japan?", ["Tokyo", "Osaka", "Kyoto", "Nagoya"]
+    )
+    if test:
+        lines.append(f"\n🇲🇦 **الترجمة للدارجة**: ✅ خدامة\n   └ مثال: *{test[0]}*")
+    else:
+        lines.append("\n🇲🇦 **الترجمة للدارجة**: ❌ ماخدماش — ولكن اللعبة ماغاديش تتأثر "
+                     "حيت الأسئلة ديال Trivia مكتوبة بالدارجة من الأصل.")
+
+    # 5) بنك الأسئلة
+    total_q = sum(len(qs) for diffs in TRIVIA_DARIJA_BANK.values() for qs in diffs.values())
+    lines.append(f"\n🧠 **بنك أسئلة Trivia بالدارجة**: ✅ {total_q} سؤال فـ {len(TRIVIA_DARIJA_BANK)} مجالات "
+                 f"(كيخدم بلا إنترنت وبلا فلوس)")
+
+    embed = discord.Embed(
+        title="🔎 تشيك على نظام الـ AI",
+        description="\n".join(lines)[:4000],
+        color=discord.Color.green() if ok else discord.Color.red(),
+        timestamp=datetime.now()
+    )
+    embed.set_footer(text=f"{SERVER_NAME} | AI Health Check")
+    try:
+        await msg.edit(content=None, embed=embed)
+    except discord.HTTPException:
+        await ctx.send(embed=embed)
 
 
 @bot.hybrid_command(name="suggest")
