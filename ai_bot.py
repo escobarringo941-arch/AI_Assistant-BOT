@@ -778,6 +778,63 @@ def bump_trivia_score(guild_id: int, user_id: int):
 load_trivia_scores()
 
 
+# ═══════ مجموع XP + أحسن سلسلة ديال كل عضو فـ Trivia (تاريخ دائم) ═══════
+# باش ملي العضو يخسر نقدرو نوريوه: «جمعتي X XP من هاد الجولة، ومجموعك من اللعبة كامل هو Y»
+TRIVIA_XP_FILE = os.path.join(DATA_DIR, "trivia_xp_totals.json")
+trivia_xp_totals = {}  # {guild_id (str): {user_id (str): {"xp": int, "games": int, "best_streak": int}}}
+
+
+def load_trivia_xp_totals():
+    global trivia_xp_totals
+    try:
+        with open(TRIVIA_XP_FILE, "r", encoding="utf-8") as f:
+            trivia_xp_totals = json.load(f)
+    except FileNotFoundError:
+        trivia_xp_totals = {}
+    except Exception as e:
+        print(f"[TRIVIA] خطأ فـ تحميل مجموع XP: {e}")
+        trivia_xp_totals = {}
+
+
+def save_trivia_xp_totals():
+    try:
+        with open(TRIVIA_XP_FILE, "w", encoding="utf-8") as f:
+            json.dump(trivia_xp_totals, f, ensure_ascii=False)
+    except Exception as e:
+        print(f"[TRIVIA] خطأ فـ حفظ مجموع XP: {e}")
+
+
+def get_trivia_stats(guild_id: int, user_id: int) -> dict:
+    g = trivia_xp_totals.setdefault(str(guild_id), {})
+    entry = g.setdefault(str(user_id), {})
+    entry.setdefault("xp", 0)
+    entry.setdefault("games", 0)
+    entry.setdefault("best_streak", 0)
+    return entry
+
+
+def add_trivia_xp(guild_id: int, user_id: int, amount: int):
+    """كيزيد XP اللي ربح العضو دابا للمجموع الدائم ديالو."""
+    entry = get_trivia_stats(guild_id, user_id)
+    entry["xp"] += amount
+    save_trivia_xp_totals()
+
+
+def finish_trivia_game(guild_id: int, user_id: int, streak: int) -> dict:
+    """كيتسجل ملي تسالا جولة: كيزيد عداد الجولات وكيحدث أحسن سلسلة.
+    كيرجع الإحصائيات الكاملة ديال العضو + واش هادي رقم قياسي جديد."""
+    entry = get_trivia_stats(guild_id, user_id)
+    entry["games"] += 1
+    is_record = streak > entry["best_streak"]
+    if is_record:
+        entry["best_streak"] = streak
+    save_trivia_xp_totals()
+    return {**entry, "is_record": is_record}
+
+
+load_trivia_xp_totals()
+
+
 def xp_needed_for_level(level: int) -> int:
     """صيغة كتخلي كل مستوى محتاج XP أكثر من لي قبلو (بحال MEE6 تقريباً).
     من بعد Level 30، كتزاد صعوبة إضافية (نمو أسرع) باش المستويات العالية
@@ -4171,6 +4228,7 @@ class TriviaView(discord.ui.View):
             if interaction.guild:
                 await grant_xp_and_announce(interaction.user, interaction.guild, self.reward, fallback_channel=interaction.channel)
                 bump_trivia_score(interaction.guild.id, interaction.user.id)
+                add_trivia_xp(interaction.guild.id, interaction.user.id, self.reward)
 
         return callback
 
@@ -4286,7 +4344,8 @@ class TriviaSessionView(discord.ui.View):
 
     def __init__(self, user: discord.abc.User, category: str, round_num: int, streak: int,
                  question: dict, interaction: discord.Interaction,
-                 used_keys: Optional[set] = None, token: Optional[str] = None):
+                 used_keys: Optional[set] = None, token: Optional[str] = None,
+                 session_xp: int = 0, correct_by_difficulty: Optional[dict] = None):
         super().__init__(timeout=None)   # كنعطلو الـ timeout الأوتوماتيكي، وكنديرو واحد يدوي تحت
         self.user = user
         self.category = category
@@ -4296,6 +4355,10 @@ class TriviaSessionView(discord.ui.View):
         self.interaction = interaction          # ← آخر interaction، بيه كنعدلو الرسالة ephemeral
         self.used_keys = used_keys if used_keys is not None else set()
         self.ended = False
+
+        # ═══ تتبع الربح ديال هاد الجولة (باش نوريوه ملي يخسر) ═══
+        self.session_xp = session_xp
+        self.correct_by_difficulty = correct_by_difficulty or {"easy": 0, "medium": 0, "hard": 0}
 
         self.question_text = question["question"]
         self.options = list(question["options"])
@@ -4314,6 +4377,53 @@ class TriviaSessionView(discord.ui.View):
             self.question_text, self.options, self.category_label, self.difficulty,
             self.round_num, self.streak, self.expires_at, prefix=prefix
         )
+
+    def build_summary(self, title: str, top_text: str, color: discord.Color,
+                      guild: Optional[discord.Guild]) -> discord.Embed:
+        """ملخص نهاية الجولة — كيبين شحال جمع من XP فهاد اللعبة، التفصيل حسب الصعوبة،
+        والمجموع الدائم ديالو من Trivia كامل."""
+        embed = discord.Embed(title=title, description=top_text, color=color)
+
+        # ═══ الربح ديال هاد الجولة ═══
+        breakdown = []
+        for diff in ("easy", "medium", "hard"):
+            n = self.correct_by_difficulty.get(diff, 0)
+            if n:
+                gained = n * TRIVIA_XP_BY_DIFFICULTY[diff]
+                breakdown.append(f"{TRIVIA_DIFFICULTY_LABELS[diff]} × {n} = **{gained}** XP")
+
+        embed.add_field(
+            name="💰 ربحتي فهاد الجولة",
+            value=(
+                f"**+{self.session_xp} XP**\n" + ("\n".join(breakdown) if breakdown else "*ماجاوبتي على حتى سؤال صحيح*")
+            ),
+            inline=True
+        )
+        embed.add_field(
+            name="🎯 النتيجة",
+            value=f"**{self.streak}** صحيح متتالي\n📚 {TRIVIA_CATEGORY_LABELS.get(self.category, self.category)}",
+            inline=True
+        )
+
+        # ═══ المجموع الدائم ═══
+        if guild:
+            stats = finish_trivia_game(guild.id, self.user.id, self.streak)
+            total_correct = trivia_scores.get(str(guild.id), {}).get(str(self.user.id), 0)
+            record_line = "\n🏅 **رقم قياسي جديد ديالك!** 🎉" if stats["is_record"] else \
+                          f"\n🥇 أحسن سلسلة ديالك: **{stats['best_streak']}**"
+            embed.add_field(
+                name="🏆 المجموع ديالك من Trivia",
+                value=(
+                    f"💎 **{stats['xp']}** XP إجمالي\n"
+                    f"✅ **{total_correct}** جواب صحيح\n"
+                    f"🎮 **{stats['games']}** جولة تلعبات"
+                    f"{record_line}"
+                ),
+                inline=False
+            )
+
+        embed.set_footer(text="كليكي 🔄 باش تعاود من جديد")
+        return embed
 
     async def _watchdog(self):
         """كيستنى بالضبط حتى الوقت ديال expires_at، وإلا حتى واحد ما جاوب، كيسالي اللعبة."""
@@ -4370,24 +4480,24 @@ class TriviaSessionView(discord.ui.View):
             # ═══ جواب غالط → سالات اللعبة ═══
             if index != self.correct_index:
                 self._disable_and_reveal()
-                embed = discord.Embed(
-                    title="❌ جواب غالط!",
-                    description=(
-                        f"الجواب الصحيح كان: **{self.options[self.correct_index]}**\n\n"
-                        f"🏁 سالتي بـ **{self.streak}** سؤال صحيح متتالي "
-                        f"(المجال: {TRIVIA_CATEGORY_LABELS.get(self.category, self.category)})."
-                    ),
-                    color=discord.Color.red()
+                embed = self.build_summary(
+                    title="❌ جواب غالط — سالات اللعبة!",
+                    top_text=f"الجواب الصحيح كان: **{self.options[self.correct_index]}**",
+                    color=discord.Color.red(),
+                    guild=interaction.guild
                 )
                 await interaction.edit_original_response(embed=embed, view=TriviaReplayView(self.user))
                 return
 
             # ═══ جواب صحيح ═══
             reward = TRIVIA_XP_BY_DIFFICULTY.get(self.difficulty, TRIVIA_XP_BY_DIFFICULTY["easy"])
+            self.session_xp += reward
+            self.correct_by_difficulty[self.difficulty] = self.correct_by_difficulty.get(self.difficulty, 0) + 1
             if interaction.guild:
                 await grant_xp_and_announce(interaction.user, interaction.guild, reward,
                                             fallback_channel=interaction.channel)
                 bump_trivia_score(interaction.guild.id, interaction.user.id)
+                add_trivia_xp(interaction.guild.id, interaction.user.id, reward)
 
             next_round = self.round_num + 1
             next_streak = self.streak + 1
@@ -4396,23 +4506,28 @@ class TriviaSessionView(discord.ui.View):
             )
 
             if not next_q:
-                embed = discord.Embed(
-                    title=f"🎉 صحيح! (+{reward} XP)",
-                    description=(
-                        f"وصلتي لـ **{next_streak}** سؤال صحيح متتالي! 🔥\n\n"
-                        f"سالاو الأسئلة ديال هاد المجال دابا — جرب مجال آخر."
+                self.streak = next_streak
+                embed = self.build_summary(
+                    title=f"🎉 صحيح! سالاو الأسئلة ديال هاد المجال",
+                    top_text=(
+                        f"وصلتي لـ **{next_streak}** سؤال صحيح متتالي وكملتي المجال كامل! 🔥\n"
+                        f"جرب مجال آخر باش تكمل تجمع."
                     ),
-                    color=discord.Color.gold()
+                    color=discord.Color.gold(),
+                    guild=interaction.guild
                 )
                 await interaction.edit_original_response(embed=embed, view=TriviaReplayView(self.user))
                 return
 
             new_view = TriviaSessionView(
                 self.user, self.category, next_round, next_streak, next_q,
-                interaction, self.used_keys, self.token
+                interaction, self.used_keys, self.token,
+                session_xp=self.session_xp, correct_by_difficulty=self.correct_by_difficulty
             )
             await interaction.edit_original_response(
-                embed=new_view.build_embed(prefix=f"✅ صحيح! (+{reward} XP)\n\n"),
+                embed=new_view.build_embed(
+                    prefix=f"✅ صحيح! (+{reward} XP) — مجموعك فهاد الجولة: **{self.session_xp} XP**\n\n"
+                ),
                 view=new_view
             )
 
@@ -4426,14 +4541,15 @@ class TriviaSessionView(discord.ui.View):
             "معرفتيش لعيبة بحالك 😅 جرب عاود!",
             "الوقت هرب منك هاد المرة، عاود الكرة!",
         ]
-        embed = discord.Embed(
+        guild = self.interaction.guild if self.interaction else None
+        embed = self.build_summary(
             title="⏱️ سالا الوقت!",
-            description=(
+            top_text=(
                 f"الجواب الصحيح كان: **{self.options[self.correct_index]}**\n\n"
-                f"🏁 سالتي بـ **{self.streak}** سؤال صحيح متتالي.\n\n"
                 f"{random.choice(funny_lines)}"
             ),
-            color=discord.Color.orange()
+            color=discord.Color.orange(),
+            guild=guild
         )
         try:
             await self.interaction.edit_original_response(embed=embed, view=TriviaReplayView(self.user))
@@ -4596,18 +4712,30 @@ async def trivia_cmd(ctx, category: Optional[str] = None):
 @bot.hybrid_command(name="triviatop", aliases=["trivialb"], description="أفضل 10 أعضاء فـ Trivia (الأكثر إجابات صحيحة)")
 async def triviatop_cmd(ctx):
     guild_scores = trivia_scores.get(str(ctx.guild.id), {})
-    if not guild_scores:
+    guild_xp = trivia_xp_totals.get(str(ctx.guild.id), {})
+    if not guild_scores and not guild_xp:
         await ctx.send("ماكاين حتى عضو جاوب صحيح فـ Trivia دابا — كون أول واحد بـ `/trivia`!")
         return
 
-    ranked = sorted(guild_scores.items(), key=lambda x: x[1], reverse=True)[:10]
+    # كنرتبو بـ XP (وإلا ماكاينش، بعدد الأجوبة الصحيحة)
+    all_ids = set(guild_scores) | set(guild_xp)
+    def _xp(uid):
+        return int(guild_xp.get(uid, {}).get("xp", 0))
+    ranked = sorted(all_ids, key=lambda u: (_xp(u), guild_scores.get(u, 0)), reverse=True)[:10]
+
     medals = ["🥇", "🥈", "🥉"]
     lines = []
-    for i, (user_id, count) in enumerate(ranked):
+    for i, user_id in enumerate(ranked):
         member = ctx.guild.get_member(int(user_id))
         name = member.display_name if member else f"عضو غادر ({user_id})"
         prefix = medals[i] if i < 3 else f"#{i + 1}"
-        lines.append(f"{prefix} **{name}** — {count} إجابة صحيحة")
+        correct = guild_scores.get(user_id, 0)
+        stats = guild_xp.get(user_id, {})
+        best = int(stats.get("best_streak", 0))
+        lines.append(
+            f"{prefix} **{name}** — 💎 {_xp(user_id)} XP • ✅ {correct} صحيح"
+            + (f" • 🔥 أحسن سلسلة {best}" if best else "")
+        )
 
     embed = discord.Embed(
         title="🧠 أفضل 10 فـ Trivia",
@@ -4615,6 +4743,17 @@ async def triviatop_cmd(ctx):
         color=discord.Color.teal(),
         timestamp=datetime.now()
     )
+    # الإحصائيات الشخصية ديال اللي طلب الأمر
+    me = get_trivia_stats(ctx.guild.id, ctx.author.id)
+    if me["games"] or me["xp"]:
+        embed.add_field(
+            name="👤 أنت",
+            value=(
+                f"💎 **{me['xp']}** XP • ✅ **{guild_scores.get(str(ctx.author.id), 0)}** صحيح • "
+                f"🎮 **{me['games']}** جولة • 🔥 أحسن سلسلة **{me['best_streak']}**"
+            ),
+            inline=False
+        )
     embed.set_footer(text=f"{SERVER_NAME} | Trivia Leaderboard")
     await ctx.send(embed=embed)
 
