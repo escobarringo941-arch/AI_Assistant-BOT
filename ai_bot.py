@@ -354,9 +354,26 @@ VOICE_XP_ENABLED = True
 VOICE_XP_PER_INTERVAL = 10        # ← شحال ديال XP كياخد العضو كل VOICE_XP_INTERVAL_MINUTES (غير كيهضر/كيتواجد فـ فويس عادي)
 VOICE_XP_INTERVAL_MINUTES = 5
 VOICE_XP_MIN_HUMANS_IN_CHANNEL = 2   # ← خاص يكونو على الأقل هاد العدد ديال البشر (ماشي بوتات) فنفس الروم باش ياخدو XP (كيمنع الفارمينغ وحدك)
-VOICE_XP_COUNT_MUTED_DEAFENED = False  # ← False = العضو اللي self-mute/self-deafen ما كياخدش Voice XP (كيمنع AFK farming)
-VOICE_XP_EXCLUDE_CHANNEL_IDS = []   # ← زيد هنا IDs ديال أي voice channel ماباغيش يعطي XP فيه (مثلا AFK channel)
+VOICE_XP_COUNT_MUTED_DEAFENED = False  # ← False = العضو اللي self-mute/self-deafen كياخد نسبة AFK المخفضة (ماشي القيمة الكاملة). True = كياخد نفس XP بحال اللي حال المايك
+VOICE_XP_EXCLUDE_CHANNEL_IDS = []   # ← زيد هنا IDs ديال أي voice channel ماباغيش يعطي حتى XP فيه (كيتحيد كامل، حتى XP ديال AFK)
 STREAM_XP_PER_INTERVAL = 20   # ← شحال ديال XP كياخد العضو كل VOICE_XP_INTERVAL_MINUTES ملي كيدير Go Live (لايفستريم) — بالافتراض أكثر من الفويس العادي حيت المجهود أكبر (كيبان لكل الروم، ماشي غير كيتواجد)
+
+# ═══════ نظام الصوت — XP ديال الـ AFK (درجات مخفضة) ═══════
+# الفكرة: حتى اللي سد المايك ولا دار Deafen كياخد XP، ولكن أقل من اللي كيهضر.
+# وباش نشجعو الناس يمشيو للروم ديال AFK بدل ما يبقاو ساكنين فالرومات النشيطة،
+# الـ AFK فالروم الرسمية ديال AFK كياخد أكثر من الـ AFK فروم عادية.
+#
+# 📊 الترتيب من الأكثر للأقل:
+#    🎥 لايفستريم (Go Live)          → STREAM_XP_PER_INTERVAL      (20)
+#    🎤 مايك محلول / كيهضر          → VOICE_XP_PER_INTERVAL       (10)
+#    💤 AFK فالروم الرسمية ديال AFK  → AFK_CHANNEL_XP_PER_INTERVAL  (4)
+#    🔇 AFK (مايك مسدود) فروم عادية → AFK_MUTED_XP_PER_INTERVAL    (2)
+AFK_XP_ENABLED = True
+AFK_CHANNEL_XP_PER_INTERVAL = 4   # ← XP كل فترة للي مريح فالروم ديال AFK (guild.afk_channel ولا AFK_CHANNEL_IDS تحت)
+AFK_MUTED_XP_PER_INTERVAL = 2     # ← XP كل فترة للي سد المايك/دار Deafen وهو فروم عادية
+AFK_CHANNEL_IDS = []              # ← (اختياري) زيد هنا IDs ديال رومات AFK إضافية. البوت أصلا كيعرف الروم الرسمية ديال السيرفر (Server Settings → Overview → Inactive Channel)
+AFK_XP_REQUIRE_MIN_HUMANS = False # ← False = XP ديال AFK كيتعطى حتى لو كان بوحدو (طبيعي، حيت الروم ديال AFK غالبا خاوية)
+AFK_XP_DAILY_CAP = 150            # ← سقف يومي لـ XP ديال AFK لكل عضو (0 = بلا سقف). كيمنع اللي كيخلي البيسي شعال 24/24 يفرمي
 
 # ⚠️ القيم اللي فوق (XP_MIN_PER_MESSAGE, XP_MAX_PER_MESSAGE, XP_COOLDOWN_SECONDS,
 # VOICE_XP_PER_INTERVAL, VOICE_XP_INTERVAL_MINUTES, VOICE_XP_MIN_HUMANS_IN_CHANNEL,
@@ -850,6 +867,9 @@ xp_settings = {
     "voice_interval_minutes": VOICE_XP_INTERVAL_MINUTES,
     "voice_min_humans": VOICE_XP_MIN_HUMANS_IN_CHANNEL,
     "stream_per_interval": STREAM_XP_PER_INTERVAL,
+    "afk_channel_per_interval": AFK_CHANNEL_XP_PER_INTERVAL,
+    "afk_muted_per_interval": AFK_MUTED_XP_PER_INTERVAL,
+    "afk_daily_cap": AFK_XP_DAILY_CAP,
 }
 
 
@@ -875,6 +895,67 @@ def save_xp_settings():
 
 
 load_xp_settings()
+
+# ═══════════════════════════════════════════════════════
+# ║   عداد يومي لـ XP ديال AFK (باش السقف اليومي يخدم)     ║
+# ═══════════════════════════════════════════════════════
+# كيتصيفط أوتوماتيكيا كل نهار جديد (حسب UTC). كيتحفظ فـ الديسك باش السقف
+# يبقى محترم حتى إلا تعاود ريستارت البوت وسط النهار.
+AFK_XP_DAILY_FILE = os.path.join(DATA_DIR, "afk_xp_daily.json")
+afk_xp_daily = {"date": "", "users": {}}
+
+
+def load_afk_xp_daily():
+    global afk_xp_daily
+    try:
+        with open(AFK_XP_DAILY_FILE, "r", encoding="utf-8") as f:
+            afk_xp_daily = json.load(f)
+    except FileNotFoundError:
+        afk_xp_daily = {"date": "", "users": {}}
+    except Exception as e:
+        print(f"[AFK-XP] خطأ فـ التحميل: {e}")
+        afk_xp_daily = {"date": "", "users": {}}
+
+
+def save_afk_xp_daily():
+    try:
+        with open(AFK_XP_DAILY_FILE, "w", encoding="utf-8") as f:
+            json.dump(afk_xp_daily, f, ensure_ascii=False)
+    except Exception as e:
+        print(f"[AFK-XP] خطأ فـ الحفظ: {e}")
+
+
+def _afk_reset_if_new_day():
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    if afk_xp_daily.get("date") != today:
+        afk_xp_daily["date"] = today
+        afk_xp_daily["users"] = {}
+        save_afk_xp_daily()
+
+
+def afk_xp_used_today(guild_id: int, user_id: int) -> int:
+    _afk_reset_if_new_day()
+    return int(afk_xp_daily["users"].get(f"{guild_id}:{user_id}", 0))
+
+
+def afk_xp_allowed(guild_id: int, user_id: int, wanted: int) -> int:
+    """كيرجع شحال من XP مسموح لهاد العضو ياخد دابا (كيحترم السقف اليومي).
+    0 = وصل للسقف ديال النهار."""
+    cap = int(xp_settings.get("afk_daily_cap", 0) or 0)
+    if cap <= 0:
+        return wanted
+    used = afk_xp_used_today(guild_id, user_id)
+    return max(0, min(wanted, cap - used))
+
+
+def bump_afk_xp_used(guild_id: int, user_id: int, amount: int):
+    _afk_reset_if_new_day()
+    key = f"{guild_id}:{user_id}"
+    afk_xp_daily["users"][key] = afk_xp_used_today(guild_id, user_id) + amount
+    save_afk_xp_daily()
+
+
+load_afk_xp_daily()
 
 # ═══════ Leaderboard أوتوماتيكي — تخزين ID ديال الرسالة (باش تتبدل ماشي تتبعث من جديد) ═══════
 LEADERBOARD_MESSAGE_FILE = os.path.join(DATA_DIR, "leaderboard_message.json")
@@ -5451,35 +5532,94 @@ async def voiceunlock_cmd(ctx):
         await ctx.send(f"❌ خطأ: {e}", ephemeral=True)
 
 
+def is_afk_channel(channel: discord.VoiceChannel, guild: discord.Guild) -> bool:
+    """واش هاد الروم هي روم AFK؟ (الروم الرسمية ديال السيرفر ولا وحدة من AFK_CHANNEL_IDS)"""
+    if guild.afk_channel and channel.id == guild.afk_channel.id:
+        return True
+    return channel.id in AFK_CHANNEL_IDS
+
+
+def classify_voice_member(m: discord.Member, channel: discord.VoiceChannel,
+                          guild: discord.Guild) -> tuple:
+    """كيحدد أشمن درجة ديال XP تستاهل هاد العضو دابا.
+    كيرجع (نوع, شحال من XP, واش هو AFK).
+
+    الدرجات:
+      stream  🎥 كيدير Go Live / كاميرا      → أكبر XP
+      voice   🎤 حال المايك / كيهضر          → XP عادي
+      afk_ch  💤 مريح فالروم ديال AFK        → XP مخفض (ولكن أكثر من اللي تحت)
+      afk_mut 🔇 سد المايك/Deafen فروم عادية → أصغر XP
+    """
+    v = m.voice
+    if not v:
+        return None, 0, False
+
+    # 🎥 لايفستريم ولا كاميرا مشعولة = أعلى درجة، حتى لو المايك مسدود
+    if v.self_stream or v.self_video:
+        return "stream", int(xp_settings["stream_per_interval"]), False
+
+    in_afk_room = is_afk_channel(channel, guild)
+    is_quiet = bool(v.self_mute or v.self_deaf or v.deaf or v.mute)
+
+    # 💤 الروم ديال AFK: مهما كان الحال، هادي درجة AFK ديال الروم
+    if in_afk_room:
+        return "afk_channel", int(xp_settings["afk_channel_per_interval"]), True
+
+    # 🔇 مايك مسدود / Deafen فروم عادية
+    if is_quiet:
+        if VOICE_XP_COUNT_MUTED_DEAFENED:
+            return "voice", int(xp_settings["voice_per_interval"]), False
+        return "afk_muted", int(xp_settings["afk_muted_per_interval"]), True
+
+    # 🎤 المايك محلول = مشارك عادي
+    return "voice", int(xp_settings["voice_per_interval"]), False
+
+
 @tasks.loop(minutes=xp_settings["voice_interval_minutes"])
 async def voice_xp_loop():
     if not bot_settings['voice_xp_enabled'] or not bot_settings['leveling_enabled']:
         return
     for guild in bot.guilds:
-        afk_channel_id = guild.afk_channel.id if guild.afk_channel else None
         for channel in guild.voice_channels:
+            # رومات محيدة كامل — حتى XP ديال AFK ماكيتعطاش فيهم
             if channel.id in VOICE_XP_EXCLUDE_CHANNEL_IDS:
                 continue
-            if afk_channel_id and channel.id == afk_channel_id:
-                continue
+            # روم "دير روم" (Join to Create) ماشي روم حقيقية، غير ممر
             if bot_settings['join_to_create_enabled'] and channel.id == JOIN_TO_CREATE_CHANNEL_ID:
                 continue
 
             humans = [m for m in channel.members if not m.bot]
+            if not humans:
+                continue
             meets_min_humans = len(humans) >= xp_settings["voice_min_humans"]
 
             for m in humans:
-                is_streaming = bool(m.voice and m.voice.self_stream)  # كيدير Go Live
-                # إلا ماكافيش عدد كافي ديال الناس فالروم، نعطيو XP بوحدو للي كيدير لايف (ماشي AFK)
-                if not meets_min_humans and not is_streaming:
+                kind, amount, is_afk = classify_voice_member(m, channel, guild)
+                if not kind or amount <= 0:
                     continue
-                if not VOICE_XP_COUNT_MUTED_DEAFENED and m.voice and (m.voice.self_mute or m.voice.self_deaf):
-                    continue
-                # اللي كيدير Go Live كياخد قيمة "لايفستريم" خاصة بيه (عادة أكثر من الفويس العادي)،
-                # والباقي (غير متواجد/كيهضر) كياخد قيمة "فويس" العادية.
-                amount = xp_settings["stream_per_interval"] if is_streaming else xp_settings["voice_per_interval"]
+
+                # ═══ شرط عدد الناس فالروم (مكافحة الفارمينغ بوحدك) ═══
+                if kind == "stream":
+                    pass                      # اللايفستريم دايما كيتحسب
+                elif is_afk:
+                    if not AFK_XP_ENABLED:
+                        continue
+                    # الروم ديال AFK طبيعي تكون خاوية، علاش الشرط اختياري هنا
+                    if AFK_XP_REQUIRE_MIN_HUMANS and not meets_min_humans:
+                        continue
+                elif not meets_min_humans:
+                    continue                  # فويس عادي بوحدو = ماكاين XP
+
+                # ═══ السقف اليومي ديال XP ديال AFK ═══
+                if is_afk:
+                    amount = afk_xp_allowed(guild.id, m.id, amount)
+                    if amount <= 0:
+                        continue
+
                 try:
                     await grant_xp_and_announce(m, guild, amount, fallback_channel=channel)
+                    if is_afk:
+                        bump_afk_xp_used(guild.id, m.id, amount)
                 except Exception as e:
                     print(f"[VOICE-XP] خطأ فـ إعطاء XP لـ {m}: {e}")
 
@@ -5514,6 +5654,10 @@ async def setup_levels_info_message(guild: discord.Guild):
             f"🎙️ **الفويس:** كتربح **{xp_settings['voice_per_interval']} XP** كل {xp_settings['voice_interval_minutes']} دقايق "
             f"(خاص يكونو على الأقل {xp_settings['voice_min_humans']} ديال البشر فنفس الروم).\n\n"
             f"📡 **اللايفستريم:** ملي تدير Go Live، كتربح **{xp_settings['stream_per_interval']} XP** كل {xp_settings['voice_interval_minutes']} دقايق — أكثر من الفويس العادي حيت المجهود أكبر.\n\n"
+            f"💤 **الـ AFK:** حتى إلا سديتي المايك ولا درتي Deafen، باقي كتربح XP ولكن أقل:\n"
+            f"• مريح فالروم ديال **AFK** → **{xp_settings['afk_channel_per_interval']} XP** كل {xp_settings['voice_interval_minutes']} دقايق\n"
+            f"• مايك مسدود فروم عادية → **{xp_settings['afk_muted_per_interval']} XP** كل {xp_settings['voice_interval_minutes']} دقايق\n"
+            f"(علاش الروم ديال AFK كتعطي أكثر؟ باش الرومات النشيطة يبقاو خاوية للي باغي يهضر 😉)\n\n"
             f"كل ما تجمع XP كفاية، كتطلع **Level** جديد. من **Level 30** لفوق، كل مستوى كيصعب أكثر بشكل ملحوظ — "
             f"يعني الوصول لمستويات عالية كيستاهل جهد حقيقي! 💪\n\n"
             f"**الأوامر:**\n"
@@ -7155,14 +7299,26 @@ def _xp_panel_embed() -> discord.Embed:
         value=f"**{xp_settings['stream_per_interval']}** XP / {xp_settings['voice_interval_minutes']} دقايق",
         inline=True
     )
+    cap = int(xp_settings.get("afk_daily_cap", 0) or 0)
+    embed.add_field(
+        name="💤 الـ AFK",
+        value=(
+            f"فالروم ديال AFK: **{xp_settings['afk_channel_per_interval']}** XP\n"
+            f"مايك مسدود فروم عادية: **{xp_settings['afk_muted_per_interval']}** XP\n"
+            f"سقف يومي: **{cap if cap > 0 else 'بلا سقف'}**"
+        ),
+        inline=True
+    )
     per_hour = 60 / xp_settings["voice_interval_minutes"]
     ratio_voice = (xp_settings["stream_per_interval"] / xp_settings["voice_per_interval"]) if xp_settings["voice_per_interval"] else 0
     embed.add_field(
         name="📐 مقارنة سريعة (تقريبية، فـ الساعة)",
         value=(
             f"اللايفستريم كياخد تقريبا **×{ratio_voice:.1f}** من الفويس العادي.\n"
-            f"🎙️ فويس ≈ **{xp_settings['voice_per_interval'] * per_hour:.0f} XP/ساعة** | "
-            f"📡 لايفستريم ≈ **{xp_settings['stream_per_interval'] * per_hour:.0f} XP/ساعة**"
+            f"📡 لايفستريم ≈ **{xp_settings['stream_per_interval'] * per_hour:.0f}** | "
+            f"🎙️ فويس ≈ **{xp_settings['voice_per_interval'] * per_hour:.0f}** | "
+            f"💤 AFK روم ≈ **{xp_settings['afk_channel_per_interval'] * per_hour:.0f}** | "
+            f"🔇 AFK عادي ≈ **{xp_settings['afk_muted_per_interval'] * per_hour:.0f}** XP/ساعة"
         ),
         inline=False
     )
@@ -7279,6 +7435,52 @@ class StreamXPModal(discord.ui.Modal, title="📡 إعدادات XP اللايف
         await interaction.response.edit_message(embed=_xp_panel_embed(), view=XPPanelView())
 
 
+class AfkXPModal(discord.ui.Modal, title="💤 إعدادات XP ديال الـ AFK"):
+    def __init__(self):
+        super().__init__()
+        self.afk_channel_xp = discord.ui.TextInput(
+            label="XP كل فترة فالروم ديال AFK",
+            default=str(xp_settings["afk_channel_per_interval"]), max_length=5
+        )
+        self.afk_muted_xp = discord.ui.TextInput(
+            label="XP كل فترة (مايك مسدود فروم عادية)",
+            default=str(xp_settings["afk_muted_per_interval"]), max_length=5
+        )
+        self.daily_cap = discord.ui.TextInput(
+            label="سقف يومي لـ XP ديال AFK (0 = بلا سقف)",
+            default=str(xp_settings.get("afk_daily_cap", 0)), max_length=6
+        )
+        self.add_item(self.afk_channel_xp)
+        self.add_item(self.afk_muted_xp)
+        self.add_item(self.daily_cap)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            ch_xp = int(self.afk_channel_xp.value)
+            mut_xp = int(self.afk_muted_xp.value)
+            cap = int(self.daily_cap.value)
+        except ValueError:
+            await interaction.response.send_message("❌ خاص كاع القيم يكونو أرقام صحيحة.", ephemeral=True)
+            return
+        if min(ch_xp, mut_xp, cap) < 0:
+            await interaction.response.send_message("❌ ماكاينش رقم سالب.", ephemeral=True)
+            return
+        if ch_xp > xp_settings["voice_per_interval"] or mut_xp > xp_settings["voice_per_interval"]:
+            await interaction.response.send_message(
+                f"❌ XP ديال AFK خاصو يكون **أقل** من الفويس العادي "
+                f"({xp_settings['voice_per_interval']} XP) — وإلا الناس غادي يفرميو وهوما ناعسين 😴",
+                ephemeral=True
+            )
+            return
+
+        xp_settings["afk_channel_per_interval"] = ch_xp
+        xp_settings["afk_muted_per_interval"] = mut_xp
+        xp_settings["afk_daily_cap"] = cap
+        save_xp_settings()
+
+        await interaction.response.edit_message(embed=_xp_panel_embed(), view=XPPanelView())
+
+
 class XPPanelView(discord.ui.View):
     """أزرار لوحة تحكم XP — كل واحد كيحل Modal باش تبدل القيم ديال طريقة معينة.
     خاص Administrator باش يستعملها، حتى ملي تكون الرسالة بانة لكل واحد."""
@@ -7304,6 +7506,10 @@ class XPPanelView(discord.ui.View):
     async def edit_stream(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(StreamXPModal())
 
+    @discord.ui.button(label="عدل الـ AFK", emoji="💤", style=discord.ButtonStyle.primary)
+    async def edit_afk(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(AfkXPModal())
+
     @discord.ui.button(label="رجّع الافتراضي", emoji="↩️", style=discord.ButtonStyle.danger, row=1)
     async def reset_defaults(self, interaction: discord.Interaction, button: discord.ui.Button):
         interval_changed = xp_settings["voice_interval_minutes"] != VOICE_XP_INTERVAL_MINUTES
@@ -7314,6 +7520,9 @@ class XPPanelView(discord.ui.View):
         xp_settings["voice_interval_minutes"] = VOICE_XP_INTERVAL_MINUTES
         xp_settings["voice_min_humans"] = VOICE_XP_MIN_HUMANS_IN_CHANNEL
         xp_settings["stream_per_interval"] = STREAM_XP_PER_INTERVAL
+        xp_settings["afk_channel_per_interval"] = AFK_CHANNEL_XP_PER_INTERVAL
+        xp_settings["afk_muted_per_interval"] = AFK_MUTED_XP_PER_INTERVAL
+        xp_settings["afk_daily_cap"] = AFK_XP_DAILY_CAP
         save_xp_settings()
         if interval_changed and voice_xp_loop.is_running():
             voice_xp_loop.change_interval(minutes=VOICE_XP_INTERVAL_MINUTES)
