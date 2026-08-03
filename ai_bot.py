@@ -8,6 +8,7 @@ import json
 import re
 import io
 import math
+import html
 from typing import Optional
 from datetime import datetime, timedelta
 from discord.ext import commands, tasks
@@ -104,6 +105,29 @@ AUTO_INFO_GAMES_ENABLED = False
 AUTO_INFO_MOVIES_ENABLED = False
 AUTO_INFO_ANIME_ENABLED = False
 AUTO_INFO_MUSIC_ENABLED = False
+
+# ═══════════════════════════════════════════════════════
+# ║              🧠 Trivia — لعبة أسئلة ثقافة عامة          ║
+# ═══════════════════════════════════════════════════════
+# كتستعمل OpenTDB (API مجاني 100%، بلا key، بلا علاقة بـ OpenRouter) —
+# ماكاينش خطر على الحصة ديال الترجمة/AI.
+TRIVIA_ENABLED = True
+TRIVIA_XP_REWARD = 15          # ← شحال XP كياخد اللي جاوب صحيح
+TRIVIA_ANSWER_SECONDS = 30     # ← شحال ديال الوقت (بالثواني) معطى للجواب قبل ما يتسالا السؤال
+# ═══════ Trivia أوتوماتيكي (اختياري) ═══════
+TRIVIA_AUTO_CHANNEL_IDS = []           # ← خاوية = معطل. عامرة بـ IDs = كيبعث سؤال أوتوماتيك فهاد الـ channels
+TRIVIA_AUTO_INTERVAL_MINUTES = 60      # ← كل شحال ديال الدقايق كيبعث سؤال جديد أوتوماتيك
+
+# ═══════ Trivia Channel — panel دائم فـ channel خاص (زر "ابدأ اللعب" → اختار مجال → أسئلة متتالية) ═══════
+# 1) دير category جديدة فديسكورد سميها مثلا "🎮 Mini Games"
+# 2) دير channel جوجها (مثلا "🧠│trivia") وحط الـ ID ديالها هنا:
+TRIVIA_CHANNEL_ID = 1533700465576116236
+TRIVIA_ROUNDS_PER_DIFFICULTY = 3   # ← كل ما جاوب صحيح هاد العدد ديال الأسئلة متتالية، الصعوبة تطلع درجة (سهل ← متوسط ← صعيب)
+TRIVIA_XP_BY_DIFFICULTY = {        # ← تحكم كامل فشحال XP كل درجة صعوبة (بدلها كيفما بغيتي)
+    "easy": 10,
+    "medium": 20,
+    "hard": 35,
+}
 
 # ═══════════════════════════════════════════════════════
 # ║              MODERATION & VERIFICATION CONFIG          ║
@@ -689,6 +713,39 @@ def save_levels():
             json.dump(levels_db, f, ensure_ascii=False)
     except Exception as e:
         print(f"[LEVELS] خطأ فـ الحفظ: {e}")
+
+
+TRIVIA_SCORES_FILE = os.path.join(DATA_DIR, "trivia_scores.json")
+trivia_scores = {}  # {guild_id (str): {user_id (str): عدد الإجابات الصحيحة}}
+
+
+def load_trivia_scores():
+    global trivia_scores
+    try:
+        with open(TRIVIA_SCORES_FILE, "r", encoding="utf-8") as f:
+            trivia_scores = json.load(f)
+    except FileNotFoundError:
+        trivia_scores = {}
+    except Exception as e:
+        print(f"[TRIVIA] خطأ فـ تحميل النقط: {e}")
+        trivia_scores = {}
+
+
+def save_trivia_scores():
+    try:
+        with open(TRIVIA_SCORES_FILE, "w", encoding="utf-8") as f:
+            json.dump(trivia_scores, f, ensure_ascii=False)
+    except Exception as e:
+        print(f"[TRIVIA] خطأ فـ حفظ النقط: {e}")
+
+
+def bump_trivia_score(guild_id: int, user_id: int):
+    g = trivia_scores.setdefault(str(guild_id), {})
+    g[str(user_id)] = g.get(str(user_id), 0) + 1
+    save_trivia_scores()
+
+
+load_trivia_scores()
 
 
 def xp_needed_for_level(level: int) -> int:
@@ -1998,6 +2055,49 @@ async def get_news_from_api() -> dict:
 
     # ماكاينش خبر جديد دابا فـ كاع الفئات، غادي نعاودو نجربو فـ الدورة الجاية
     return {}
+
+
+TRIVIA_CATEGORIES = {
+    "general": 9, "science": 17, "sports": 21, "history": 23,
+    "geography": 22, "movies": 11, "music": 12, "games": 15, "anime": 31,
+}
+TRIVIA_CATEGORY_LABELS = {
+    "general": "🌍 ثقافة عامة",
+    "science": "🔬 علوم",
+    "sports": "⚽ رياضة",
+    "history": "📜 تاريخ",
+    "geography": "🗺️ جغرافيا",
+    "movies": "🎬 أفلام",
+    "music": "🎵 موسيقى",
+    "games": "🎮 ألعاب فيديو",
+    "anime": "📺 أنمي ومانغا",
+}
+
+
+async def fetch_trivia_question(category: str = None, difficulty: str = None) -> Optional[dict]:
+    """جيب سؤال Trivia من OpenTDB (API مجاني بلا حتى key). كيرجع None إلا فشل."""
+    params = {"amount": 1, "type": "multiple"}
+    if category and category in TRIVIA_CATEGORIES:
+        params["category"] = TRIVIA_CATEGORIES[category]
+    if difficulty in ("easy", "medium", "hard"):
+        params["difficulty"] = difficulty
+
+    data = await fetch_json("https://opentdb.com/api.php", params=params)
+    if not data or data.get("response_code") != 0 or not data.get("results"):
+        return None
+
+    q = data["results"][0]
+    correct = html.unescape(q["correct_answer"])
+    options = [html.unescape(a) for a in q["incorrect_answers"]] + [correct]
+    random.shuffle(options)
+
+    return {
+        "question": html.unescape(q["question"]),
+        "correct": correct,
+        "options": options,
+        "category": html.unescape(q.get("category", "عامة")),
+        "difficulty": q.get("difficulty", "medium"),
+    }
 
 
 # ═══════════════════════════════════════════════════════
@@ -3476,6 +3576,390 @@ class SuggestionReviewView(discord.ui.View):
                     await author.send(f"❌ الاقتراح ديالك (#{sug_id}) تُرفض هاد المرة فـ **{SERVER_NAME}**.")
             except Exception:
                 pass
+
+
+# ═══════════════════════════════════════════════════════
+# ║              🧠 Trivia — لعبة أسئلة ثقافة عامة          ║
+# ═══════════════════════════════════════════════════════
+
+class TriviaView(discord.ui.View):
+    """أزرار الأجوبة ديال سؤال Trivia. أول واحد يكليكي على الجواب الصحيح كيربح XP.
+    ماشي Persistent (timeout محدد) حيت كل سؤال مرتبط بمثيل واحد ديال هاد الـ View."""
+
+    def __init__(self, correct_answer: str, options: list, reward: int, timeout_seconds: int):
+        super().__init__(timeout=timeout_seconds)
+        self.correct_answer = correct_answer
+        self.reward = reward
+        self.answered_users = set()
+        self.winner = None
+        self.message: Optional[discord.Message] = None
+
+        for option in options:
+            btn = discord.ui.Button(label=option[:80], style=discord.ButtonStyle.secondary)
+            btn.callback = self._make_callback(option)
+            self.add_item(btn)
+
+    def _make_callback(self, option_text: str):
+        async def callback(interaction: discord.Interaction):
+            if self.winner:
+                await interaction.response.send_message("⏱️ هاد السؤال تسالا ديجا، استنى السؤال الجاي!", ephemeral=True)
+                return
+            if interaction.user.id in self.answered_users:
+                await interaction.response.send_message("❌ درتي جواب ديجا فهاد السؤال — استنى السؤال الجاي.", ephemeral=True)
+                return
+            self.answered_users.add(interaction.user.id)
+
+            if option_text != self.correct_answer:
+                await interaction.response.send_message("❌ جواب غالط، جرب مرة أخرى!", ephemeral=True)
+                return
+
+            self.winner = interaction.user
+            for child in self.children:
+                child.disabled = True
+                if isinstance(child, discord.ui.Button) and child.label == self.correct_answer[:80]:
+                    child.style = discord.ButtonStyle.success
+            self.stop()
+
+            await interaction.response.edit_message(view=self)
+            await interaction.followup.send(
+                f"🎉 {interaction.user.mention} جاوب صحيح! الجواب هو **{self.correct_answer}** (+{self.reward} XP)"
+            )
+            if interaction.guild:
+                await grant_xp_and_announce(interaction.user, interaction.guild, self.reward, fallback_channel=interaction.channel)
+                bump_trivia_score(interaction.guild.id, interaction.user.id)
+
+        return callback
+
+    async def on_timeout(self):
+        if self.winner or not self.message:
+            return
+        for child in self.children:
+            child.disabled = True
+        try:
+            await self.message.edit(view=self)
+            await self.message.reply(
+                f"⏱️ خلص الوقت! حتى واحد ما جاوب صحيح. الجواب الصحيح كان: **{self.correct_answer}**",
+                mention_author=False
+            )
+        except discord.HTTPException:
+            pass
+
+
+async def send_trivia_question(channel: discord.abc.Messageable, category: str = None):
+    """كتجيب سؤال وتبعثو فـ channel معينة، بـ view ديال الأجوبة. مستعملة من الأمر ومن الـ loop التلقائي."""
+    q = await fetch_trivia_question(category)
+    if not q:
+        return None
+
+    embed = discord.Embed(
+        title="🧠 Trivia — سؤال ثقافة عامة",
+        description=f"**{q['question']}**",
+        color=discord.Color.teal(),
+        timestamp=datetime.now()
+    )
+    embed.add_field(name="📚 الفئة", value=q["category"], inline=True)
+    embed.add_field(name="🎯 الصعوبة", value=q["difficulty"].capitalize(), inline=True)
+    embed.set_footer(text=f"عندك {TRIVIA_ANSWER_SECONDS} ثانية — أول واحد يجاوب صحيح ياخد +{TRIVIA_XP_REWARD} XP")
+
+    view = TriviaView(q["correct"], q["options"], TRIVIA_XP_REWARD, TRIVIA_ANSWER_SECONDS)
+    msg = await channel.send(embed=embed, view=view)
+    view.message = msg
+    return msg
+
+
+# ═══════════════════════════════════════════════════════
+# ║   Trivia — panel دائم فـ channel خاص (صعوبة متصاعدة)   ║
+# ═══════════════════════════════════════════════════════
+
+def get_trivia_difficulty(round_num: int) -> str:
+    if round_num <= TRIVIA_ROUNDS_PER_DIFFICULTY:
+        return "easy"
+    elif round_num <= TRIVIA_ROUNDS_PER_DIFFICULTY * 2:
+        return "medium"
+    return "hard"
+
+
+def build_trivia_session_embed(q: dict, round_num: int, streak: int, prefix: str = "") -> discord.Embed:
+    reward = TRIVIA_XP_BY_DIFFICULTY.get(q["difficulty"], TRIVIA_XP_BY_DIFFICULTY["easy"])
+    embed = discord.Embed(
+        title=f"🧠 Trivia — سؤال #{round_num}",
+        description=f"{prefix}**{q['question']}**",
+        color=discord.Color.teal(),
+    )
+    embed.add_field(name="📚 الفئة", value=q["category"], inline=True)
+    embed.add_field(name="🎯 الصعوبة", value=q["difficulty"].capitalize(), inline=True)
+    embed.add_field(name="🔥 السلسلة", value=f"{streak} صحيح متتالي", inline=True)
+    embed.set_footer(text=f"عندك {TRIVIA_ANSWER_SECONDS} ثانية — جاوب صحيح تربح +{reward} XP")
+    return embed
+
+
+class TriviaSessionView(discord.ui.View):
+    """جلسة لعب فردية (ephemeral، غير صاحبها كيشوفها): كل ما جاوب صحيح، كيجي سؤال جديد
+    أصعب وبـ XP أكثر، حتى يغلط ولا يخلص الوقت."""
+
+    def __init__(self, user: discord.abc.User, category: str, round_num: int, streak: int, question: dict):
+        super().__init__(timeout=TRIVIA_ANSWER_SECONDS)
+        self.user = user
+        self.category = category
+        self.round_num = round_num
+        self.streak = streak
+        self.question = question
+        self.message: Optional[discord.Message] = None
+        self.ended = False
+
+        for option in question["options"]:
+            btn = discord.ui.Button(label=option[:80], style=discord.ButtonStyle.secondary)
+            btn.callback = self._make_callback(option)
+            self.add_item(btn)
+
+    def _make_callback(self, option_text: str):
+        async def callback(interaction: discord.Interaction):
+            if interaction.user.id != self.user.id:
+                await interaction.response.send_message("❌ هاد اللعبة ماشي ديالك.", ephemeral=True)
+                return
+
+            self.ended = True
+            self.stop()
+
+            if option_text != self.question["correct"]:
+                for child in self.children:
+                    child.disabled = True
+                    if isinstance(child, discord.ui.Button) and child.label == self.question["correct"][:80]:
+                        child.style = discord.ButtonStyle.success
+                embed = discord.Embed(
+                    title="❌ جواب غالط!",
+                    description=(
+                        f"الجواب الصحيح كان: **{self.question['correct']}**\n\n"
+                        f"🏁 خلصتي بـ **{self.streak}** سؤال صحيح متتالي "
+                        f"(مجال: {TRIVIA_CATEGORY_LABELS.get(self.category, self.category)}).\n\n"
+                        f"بغيتي تلعب مرة أخرى؟ رجع لـ channel اللعبة وكليكي 🎮 ابدأ اللعب."
+                    ),
+                    color=discord.Color.red()
+                )
+                await interaction.response.edit_message(embed=embed, view=self)
+                return
+
+            # جواب صحيح
+            reward = TRIVIA_XP_BY_DIFFICULTY.get(self.question["difficulty"], TRIVIA_XP_BY_DIFFICULTY["easy"])
+            if interaction.guild:
+                await grant_xp_and_announce(interaction.user, interaction.guild, reward, fallback_channel=interaction.channel)
+                bump_trivia_score(interaction.guild.id, interaction.user.id)
+
+            next_round = self.round_num + 1
+            next_streak = self.streak + 1
+            next_q = await fetch_trivia_question(self.category, get_trivia_difficulty(next_round))
+
+            if not next_q:
+                for child in self.children:
+                    child.disabled = True
+                embed = discord.Embed(
+                    title=f"🎉 صحيح! (+{reward} XP)",
+                    description=(
+                        f"وصلتي لـ **{next_streak}** سؤال صحيح متتالي! 🔥\n\n"
+                        f"ما قدرتش نجيب سؤال جديد دابا (مشكل فـ OpenTDB) — جرب مرة أخرى بعد شوية."
+                    ),
+                    color=discord.Color.gold()
+                )
+                await interaction.response.edit_message(embed=embed, view=self)
+                return
+
+            new_view = TriviaSessionView(self.user, self.category, next_round, next_streak, next_q)
+            embed = build_trivia_session_embed(next_q, next_round, next_streak, prefix=f"✅ صحيح! (+{reward} XP)\n\n")
+            await interaction.response.edit_message(embed=embed, view=new_view)
+            new_view.message = interaction.message
+
+        return callback
+
+    async def on_timeout(self):
+        if self.ended or not self.message:
+            return
+        for child in self.children:
+            child.disabled = True
+            if isinstance(child, discord.ui.Button) and child.label == self.question["correct"][:80]:
+                child.style = discord.ButtonStyle.success
+        embed = discord.Embed(
+            title="⏱️ خلص الوقت!",
+            description=(
+                f"الجواب الصحيح كان: **{self.question['correct']}**\n\n"
+                f"🏁 خلصتي بـ **{self.streak}** سؤال صحيح متتالي.\n\n"
+                f"رجع لـ channel اللعبة وكليكي 🎮 ابدأ اللعب باش تعاود."
+            ),
+            color=discord.Color.orange()
+        )
+        try:
+            await self.message.edit(embed=embed, view=self)
+        except discord.HTTPException:
+            pass
+
+
+class TriviaCategorySelectView(discord.ui.View):
+    """Select menu باش يختار المجال قبل ما تبدا الجلسة."""
+
+    def __init__(self, user: discord.abc.User):
+        super().__init__(timeout=60)
+        self.user = user
+
+    @discord.ui.select(
+        placeholder="📚 اختار المجال لي بغيتي الأسئلة ديالو...",
+        options=[discord.SelectOption(label=TRIVIA_CATEGORY_LABELS[c], value=c) for c in TRIVIA_CATEGORIES]
+    )
+    async def select_category(self, interaction: discord.Interaction, select: discord.ui.Select):
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message("❌ هاد الاختيار ماشي ديالك.", ephemeral=True)
+            return
+
+        category = select.values[0]
+        q = await fetch_trivia_question(category, "easy")
+        if not q:
+            await interaction.response.edit_message(
+                content="❌ ما قدرتش نجيب سؤال دابا (مشكل فـ OpenTDB)، جرب مرة أخرى بعد شوية.",
+                embed=None, view=None
+            )
+            return
+
+        view = TriviaSessionView(self.user, category, 1, 0, q)
+        embed = build_trivia_session_embed(q, 1, 0)
+        await interaction.response.edit_message(content=None, embed=embed, view=view)
+        view.message = interaction.message
+
+
+class TriviaGamePanelView(discord.ui.View):
+    """الزر الدائم فـ channel اللعبة. Persistent."""
+
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="🎮 ابدأ اللعب", style=discord.ButtonStyle.success, custom_id="trivia_start_game_button")
+    async def start_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not TRIVIA_ENABLED:
+            await interaction.response.send_message("❌ لعبة Trivia معطلة دابا.", ephemeral=True)
+            return
+        view = TriviaCategorySelectView(interaction.user)
+        await interaction.response.send_message("📚 شنو المجال لي بغيتي تلعب فيه؟", view=view, ephemeral=True)
+
+
+async def setup_trivia_panel(guild: discord.Guild):
+    """كيبعث (مرة وحدة، أول مرة) رسالة الشرح + زر البداية فـ channel اللعبة."""
+    if not TRIVIA_CHANNEL_ID:
+        return
+    channel = bot.get_channel(TRIVIA_CHANNEL_ID)
+    if not channel:
+        return
+
+    async for message in channel.history(limit=15):
+        if message.author == bot.user and message.embeds and message.embeds[0].title and "Trivia" in message.embeds[0].title:
+            return
+
+    embed = discord.Embed(
+        title="🧠 مرحبا بيك فـ لعبة Trivia",
+        description="اختبر معلوماتك وربح XP! كليكي على الزر تحت، اختار المجال لي بغيتي، وابدا تجاوب على الأسئلة.",
+        color=discord.Color.teal(),
+        timestamp=datetime.now()
+    )
+    embed.add_field(
+        name="🎯 كيفاش كتخدم",
+        value=(
+            "1️⃣ كليكي **🎮 ابدأ اللعب** تحت\n"
+            f"2️⃣ اختار المجال لي بغيتي (من {len(TRIVIA_CATEGORIES)} مجالات)\n"
+            f"3️⃣ جاوب على الأسئلة — عندك {TRIVIA_ANSWER_SECONDS} ثانية لكل سؤال\n"
+            "4️⃣ كل ما جاوبتي صحيح، الأسئلة كتزاد صعوبة وXP كتزاد معاها — حتى تغلط ولا يخلص الوقت!"
+        ),
+        inline=False
+    )
+    embed.add_field(
+        name="💰 شحال XP كتربح",
+        value=(
+            f"🟢 سهل: **{TRIVIA_XP_BY_DIFFICULTY['easy']}** XP\n"
+            f"🟡 متوسط: **{TRIVIA_XP_BY_DIFFICULTY['medium']}** XP\n"
+            f"🔴 صعيب: **{TRIVIA_XP_BY_DIFFICULTY['hard']}** XP\n"
+            "(غلطة وحدة كتوقف السلسلة وخاصك تبدا من جديد)"
+        ),
+        inline=False
+    )
+    embed.set_footer(text=f"{SERVER_NAME} | Trivia Game")
+    await channel.send(embed=embed, view=TriviaGamePanelView())
+
+
+@bot.hybrid_command(name="setuptrivia")
+@app_commands.default_permissions(administrator=True)
+@commands.has_permissions(administrator=True)
+async def setuptrivia_cmd(ctx):
+    """كيصاوب/يعاود يصاوب panel لعبة Trivia فـ TRIVIA_CHANNEL_ID (Admin)"""
+    if not TRIVIA_CHANNEL_ID:
+        await ctx.send("❌ حط `TRIVIA_CHANNEL_ID` فالـ CONFIG أولاً (دير channel تحت category بحال '🎮 Mini Games').", delete_after=10)
+        return
+    await setup_trivia_panel(ctx.guild)
+    await ctx.send("✅ panel لعبة Trivia تصاوب (ولا كان ديجا موجود).", delete_after=8)
+
+
+@bot.hybrid_command(name="trivia", description="لعبة أسئلة ثقافة عامة — جاوب صحيح وربح XP!")
+@app_commands.describe(category="اختياري: فئة السؤال")
+@app_commands.choices(category=[
+    app_commands.Choice(name="🌍 ثقافة عامة", value="general"),
+    app_commands.Choice(name="🔬 علوم", value="science"),
+    app_commands.Choice(name="⚽ رياضة", value="sports"),
+    app_commands.Choice(name="📜 تاريخ", value="history"),
+    app_commands.Choice(name="🗺️ جغرافيا", value="geography"),
+    app_commands.Choice(name="🎬 أفلام", value="movies"),
+    app_commands.Choice(name="🎵 موسيقى", value="music"),
+    app_commands.Choice(name="🎮 ألعاب فيديو", value="games"),
+])
+async def trivia_cmd(ctx, category: Optional[str] = None):
+    if not TRIVIA_ENABLED:
+        await ctx.send("❌ لعبة Trivia معطلة دابا.", delete_after=6)
+        return
+    result = await send_trivia_question(ctx.channel, category)
+    if not result:
+        await ctx.send("❌ ما قدرتش نجيب سؤال دابا (مشكل فـ OpenTDB)، جرب مرة أخرى بعد شوية.", delete_after=8)
+
+
+@bot.hybrid_command(name="triviatop", aliases=["trivialb"], description="أفضل 10 أعضاء فـ Trivia (الأكثر إجابات صحيحة)")
+async def triviatop_cmd(ctx):
+    guild_scores = trivia_scores.get(str(ctx.guild.id), {})
+    if not guild_scores:
+        await ctx.send("ماكاين حتى عضو جاوب صحيح فـ Trivia دابا — كون أول واحد بـ `/trivia`!")
+        return
+
+    ranked = sorted(guild_scores.items(), key=lambda x: x[1], reverse=True)[:10]
+    medals = ["🥇", "🥈", "🥉"]
+    lines = []
+    for i, (user_id, count) in enumerate(ranked):
+        member = ctx.guild.get_member(int(user_id))
+        name = member.display_name if member else f"عضو غادر ({user_id})"
+        prefix = medals[i] if i < 3 else f"#{i + 1}"
+        lines.append(f"{prefix} **{name}** — {count} إجابة صحيحة")
+
+    embed = discord.Embed(
+        title="🧠 أفضل 10 فـ Trivia",
+        description="\n".join(lines),
+        color=discord.Color.teal(),
+        timestamp=datetime.now()
+    )
+    embed.set_footer(text=f"{SERVER_NAME} | Trivia Leaderboard")
+    await ctx.send(embed=embed)
+
+
+@tasks.loop(minutes=TRIVIA_AUTO_INTERVAL_MINUTES)
+async def trivia_auto_loop():
+    if not TRIVIA_ENABLED or not TRIVIA_AUTO_CHANNEL_IDS:
+        return
+    for channel_id in TRIVIA_AUTO_CHANNEL_IDS:
+        channel = bot.get_channel(channel_id)
+        if channel:
+            try:
+                await send_trivia_question(channel)
+            except Exception as e:
+                print(f"[TRIVIA] خطأ فـ trivia_auto_loop لـ channel {channel_id}: {e}")
+
+
+@trivia_auto_loop.before_loop
+async def before_trivia_auto_loop():
+    await bot.wait_until_ready()
+
+
+@trivia_auto_loop.error
+async def trivia_auto_loop_error(error):
+    print(f"[TRIVIA] خطأ كبير وقف trivia_auto_loop: {error}")
 
 
 @bot.hybrid_command(name="suggest")
@@ -7724,6 +8208,9 @@ async def on_ready():
     if not voice_xp_loop.is_running():
         voice_xp_loop.start()
 
+    if TRIVIA_ENABLED and TRIVIA_AUTO_CHANNEL_IDS and not trivia_auto_loop.is_running():
+        trivia_auto_loop.start()
+
     bot.add_view(RulesVerifyView())  # باش الأزرار يبقاو خدامين حتى بعد ريستارت البوت
     bot.add_view(RolePickerView())   # باش الـ Dropdown ديال الأدوار يبقى خدام حتى بعد ريستارت البوت
     bot.add_view(TicketPanelView())    # باش زر "دير Ticket" يبقى خدام حتى بعد ريستارت البوت
@@ -7732,6 +8219,7 @@ async def on_ready():
     bot.add_view(ApplicationReviewView())  # باش أزرار قبول/رفض الطلبات يبقاو خدامين
     bot.add_view(SuggestionReviewView())   # باش أزرار قبول/رفض الاقتراحات يبقاو خدامين
     bot.add_view(RoomMuteToggleView())     # باش زر كتم/فك كتم الروم يبقى خدام حتى بعد ريستارت البوت
+    bot.add_view(TriviaGamePanelView())    # باش زر "🎮 ابدأ اللعب" ديال Trivia يبقى خدام حتى بعد ريستارت البوت
 
     for guild in bot.guilds:
         # ملاحظة: ماعادش كنبعثو رسالة "تفعيل العضوية" القديمة (بالريأكشن ✅)
@@ -7747,6 +8235,8 @@ async def on_ready():
             await setup_levels_info_message(guild)
         if SUGGESTIONS_CHANNEL_ID:
             await setup_suggestions_info(guild)
+        if TRIVIA_CHANNEL_ID:
+            await setup_trivia_panel(guild)
 
         problems = check_role_hierarchy(guild)
         if problems:
