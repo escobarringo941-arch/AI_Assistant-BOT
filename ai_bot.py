@@ -3863,13 +3863,9 @@ load_room_mute()
 
 
 def can_toggle_room_mute(member: discord.Member, channel: discord.VoiceChannel) -> bool:
-    """شكون يقدر "يستعمل" البانل (يدوس على الأزرار/الـ Select) — هادي صلاحية
-    التحكم فالبانل، ماشي علاقة بشكون كيتكتم (كتم الكل كيمس الجميع بلا استثناء)."""
-    if OWNER_ID and member.id == OWNER_ID:
-        return True
-    if member.guild_permissions.mute_members:
-        return True
-    return is_temp_voice_owner(member, channel)
+    """شكون يقدر "يستعمل" البانل (يدوس على الأزرار/الـ Select ولا يصاوب بانل جديد)
+    — Owner بوحدو، حتى Admin/Moderator/صاحب الروم المؤقت ماشي معنيين."""
+    return bool(OWNER_ID) and member.id == OWNER_ID
 
 
 async def apply_room_mute_state(channel: discord.VoiceChannel, muted: bool):
@@ -3946,7 +3942,7 @@ class RoomMemberSelect(discord.ui.Select):
             await interaction.response.send_message("❌ الروم ماعادش موجودة.", ephemeral=True)
             return
         if not isinstance(actor, discord.Member) or not can_toggle_room_mute(actor, channel):
-            await interaction.response.send_message("❌ ماعندكش صلاحية تستعمل هاد البانل.", ephemeral=True)
+            await interaction.response.send_message("❌ هاد البانل خاص غير بـ Owner.", ephemeral=True)
             return
 
         target = guild.get_member(int(self.values[0]))
@@ -4003,7 +3999,7 @@ class RoomMuteToggleView(discord.ui.View):
             return
 
         if not isinstance(member, discord.Member) or not can_toggle_room_mute(member, channel):
-            await interaction.response.send_message("❌ ماعندكش صلاحية تستعمل هاد البانل.", ephemeral=True)
+            await interaction.response.send_message("❌ هاد البانل خاص غير بـ Owner.", ephemeral=True)
             return
 
         await interaction.response.defer()
@@ -4028,8 +4024,9 @@ class RoomMuteToggleView(discord.ui.View):
 
 @bot.hybrid_command(
     name="roommutepanel",
-    description="صاوب بانل كامل: كتم الكل بلا استثناء / فك الكل / كتم-فك شخص معين، فروم صوتي معين"
+    description="صاوب بانل كامل: كتم الكل بلا استثناء / فك الكل / كتم-فك شخص معين، فروم صوتي معين (Owner فقط)"
 )
+@app_commands.default_permissions(administrator=True)
 async def roommutepanel_cmd(ctx, channel: Optional[discord.VoiceChannel] = None):
     target_channel = channel
     if not target_channel:
@@ -4040,7 +4037,7 @@ async def roommutepanel_cmd(ctx, channel: Optional[discord.VoiceChannel] = None)
             return
 
     if not can_toggle_room_mute(ctx.author, target_channel):
-        await ctx.send("❌ ماعندكش صلاحية تصاوب بانل لهاد الروم.", delete_after=8)
+        await ctx.send("❌ هاد الأمر خاص غير بـ Owner.", delete_after=8)
         return
 
     muted = target_channel.id in room_mute_db.get("muted_channels", [])
