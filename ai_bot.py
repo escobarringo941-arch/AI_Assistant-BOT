@@ -3785,13 +3785,17 @@ class TriviaReplayView(discord.ui.View):
 
 class TriviaSessionView(discord.ui.View):
     """جلسة لعب فردية (ephemeral، غير صاحبها كيشوفها): كل ما جاوب صحيح، كيجي سؤال جديد
-    أصعب وبـ XP أكثر، حتى يغلط ولا يخلص الوقت. فيها زر لكل لغة باش يبدل الترجمة ديال
+    أصعب وبـ XP أكثر، حتى يغلط ولا يخلص الوقت. فيها select لكل لغة باش يبدل الترجمة ديال
     السؤال الحالي بلا ما يبدل شي حاجة أخرى (الجواب الصحيح كيتحسب بالـ index باش الترجمة
-    ما تأثرش على المنطق)."""
+    ما تأثرش على المنطق).
+
+    ⏱️ الوقت كيتحسب بـ watchdog يدوي (asyncio.sleep) مربوط بـ self.expires_at الثابتة —
+    ماشي بـ discord.py timeout العادي (timeout=None) — باش يبقى دقيق حتى لو تبدلت اللغة
+    بزاف مرات ولا تعاود edit_message بزاف مرات على نفس الـ view."""
 
     def __init__(self, user: discord.abc.User, category: str, round_num: int, streak: int,
                  question: dict, token: Optional[str] = None):
-        super().__init__(timeout=TRIVIA_ANSWER_SECONDS)
+        super().__init__(timeout=None)   # كنعطلو الـ timeout الأوتوماتيكي، وكنديرو واحد يدوي تحت
         self.user = user
         self.category = category
         self.round_num = round_num
@@ -3811,6 +3815,20 @@ class TriviaSessionView(discord.ui.View):
         self.expires_at = datetime.now() + timedelta(seconds=TRIVIA_ANSWER_SECONDS)
 
         self._build_components()
+        self._watchdog_task = asyncio.create_task(self._watchdog())
+
+    async def _watchdog(self):
+        """كيستنى بالضبط حتى الوقت ديال expires_at، وإلا حتى واحد ما جاوب، كيسالي اللعبة."""
+        remaining = (self.expires_at - datetime.now()).total_seconds()
+        if remaining > 0:
+            await asyncio.sleep(remaining)
+        if self.ended or not self.message:
+            return
+        await self._end_session_timeout()
+
+    def _cancel_watchdog(self):
+        if self._watchdog_task and not self._watchdog_task.done():
+            self._watchdog_task.cancel()
 
     def _current_texts(self):
         return self.translations_cache[self.current_lang]
@@ -3839,15 +3857,24 @@ class TriviaSessionView(discord.ui.View):
         if interaction.user.id != self.user.id:
             await interaction.response.send_message("❌ هاد اللعبة ماشي ديالك.", ephemeral=True)
             return
+        if self.ended:
+            return
+
+        # كنعلمو ديسكورد فالحين بلي وصلنا (بلا ما نبدلو المحتوى بعد)، باش الترجمة
+        # (اللي ممكن تاخد أكثر من 3 ثواني) ما تسببش "didn't respond in time"
+        await interaction.response.defer()
 
         lang = interaction.data["values"][0]
         if lang not in self.translations_cache:
             _, lang_name_en = TRIVIA_LANGUAGES[lang]
             result = await translate_trivia_question(self.original_question, self.original_options, lang_name_en)
             if not result:
-                await interaction.response.send_message("❌ ما قدرتش نترجم دابا، جرب مرة أخرى بعد شوية.", ephemeral=True)
+                await interaction.followup.send("❌ ما قدرتش نترجم دابا، جرب مرة أخرى بعد شوية.", ephemeral=True)
                 return
             self.translations_cache[lang] = result
+
+        if self.ended:  # ممكن الوقت يكون خلص وحنا كنترجمو
+            return
 
         self.current_lang = lang
         self._build_components()
@@ -3856,16 +3883,20 @@ class TriviaSessionView(discord.ui.View):
             question_text, options, self.category_label, self.difficulty,
             self.round_num, self.streak, self.current_lang, self.expires_at
         )
-        await interaction.response.edit_message(embed=embed, view=self)
+        await interaction.edit_original_response(embed=embed, view=self)
 
     def _make_answer_callback(self, index: int):
         async def callback(interaction: discord.Interaction):
             if interaction.user.id != self.user.id:
                 await interaction.response.send_message("❌ هاد اللعبة ماشي ديالك.", ephemeral=True)
                 return
+            if self.ended:
+                return
 
             self.ended = True
+            self._cancel_watchdog()
             self.stop()
+            await interaction.response.defer()   # الترجمة/الجلب/XP ممكن ياخدو أكثر من 3 ثواني
             _, options = self._current_texts()
 
             if index != self.correct_index:
@@ -3883,7 +3914,7 @@ class TriviaSessionView(discord.ui.View):
                     ),
                     color=discord.Color.red()
                 )
-                await interaction.response.edit_message(embed=embed, view=TriviaReplayView(self.user))
+                await interaction.edit_original_response(embed=embed, view=TriviaReplayView(self.user))
                 return
 
             # جواب صحيح
@@ -3905,7 +3936,7 @@ class TriviaSessionView(discord.ui.View):
                     ),
                     color=discord.Color.gold()
                 )
-                await interaction.response.edit_message(embed=embed, view=TriviaReplayView(self.user))
+                await interaction.edit_original_response(embed=embed, view=TriviaReplayView(self.user))
                 return
 
             new_view = TriviaSessionView(self.user, self.category, next_round, next_streak, next_q, self.token)
@@ -3914,25 +3945,30 @@ class TriviaSessionView(discord.ui.View):
                 new_view.difficulty, next_round, next_streak, "en", new_view.expires_at,
                 prefix=f"✅ صحيح! (+{reward} XP)\n\n"
             )
-            await interaction.response.edit_message(embed=embed, view=new_view)
+            await interaction.edit_original_response(embed=embed, view=new_view)
             new_view.message = interaction.message
 
         return callback
 
-    async def on_timeout(self):
-        if self.ended or not self.message:
-            return
+    async def _end_session_timeout(self):
+        self.ended = True
         _, options = self._current_texts()
         for i, child in enumerate(self.children):
             if isinstance(child, discord.ui.Button):
                 child.disabled = True
                 if i == self.correct_index:
                     child.style = discord.ButtonStyle.success
+        funny_lines = [
+            "حاول مرة أخرى! ⏱️",
+            "معرفتيش لعيبة بحالك 😅 جرب عاود!",
+            "الوقت هرب منك هاد المرة، عاود الكرة!",
+        ]
         embed = discord.Embed(
-            title="⏱️ خلص الوقت!",
+            title="⏱️ سالا الوقت!",
             description=(
                 f"الجواب الصحيح كان: **{options[self.correct_index]}**\n\n"
-                f"🏁 خلصتي بـ **{self.streak}** سؤال صحيح متتالي."
+                f"🏁 خلصتي بـ **{self.streak}** سؤال صحيح متتالي.\n\n"
+                f"{random.choice(funny_lines)}"
             ),
             color=discord.Color.orange()
         )
@@ -3958,11 +3994,13 @@ class TriviaCategorySelectView(discord.ui.View):
             await interaction.response.send_message("❌ هاد الاختيار ماشي ديالك.", ephemeral=True)
             return
 
+        await interaction.response.defer()   # طلب الطوكن + السؤال ممكن ياخدو أكثر من 3 ثواني
+
         category = select.values[0]
         token = await get_new_trivia_token()
         q = await fetch_trivia_question(category, "easy", token)
         if not q:
-            await interaction.response.edit_message(
+            await interaction.edit_original_response(
                 content="❌ ما قدرتش نجيب سؤال دابا (مشكل فـ OpenTDB)، جرب مرة أخرى بعد شوية.",
                 embed=None, view=None
             )
@@ -3973,7 +4011,7 @@ class TriviaCategorySelectView(discord.ui.View):
             view.original_question, view.original_options, view.category_label,
             view.difficulty, 1, 0, "en", view.expires_at
         )
-        await interaction.response.edit_message(content=None, embed=embed, view=view)
+        await interaction.edit_original_response(content=None, embed=embed, view=view)
         view.message = interaction.message
 
 
