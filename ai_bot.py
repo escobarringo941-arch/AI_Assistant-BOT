@@ -3964,6 +3964,14 @@ class RoomMemberSelect(discord.ui.Select):
         await interaction.followup.send(
             f"{'🔇 تكتم' if new_mute else '🔊 تفك عليه الكتم'} {target.mention}.", ephemeral=True
         )
+        if guild:
+            await log_action(
+                guild,
+                "🎯 Room Mute Panel — تبديل عضو معين",
+                f"**الروم:** {channel.mention}\n**العضو:** {target.mention}\n"
+                f"**الحالة الجديدة:** {'🔇 مكتوم' if new_mute else '🔊 مسموع'}\n**من طرف:** {actor.mention}",
+                discord.Color.orange()
+            )
 
 
 class RoomMuteToggleView(discord.ui.View):
@@ -4020,6 +4028,13 @@ class RoomMuteToggleView(discord.ui.View):
             f"{'🔇 الروم تقفلات، تكتمو' if new_state else '🔊 الروم تحلات، تفك الكتم على'} {count} عضو.",
             ephemeral=True
         )
+        if guild:
+            await log_action(
+                guild,
+                "🔇 Room Mute Panel — كتم الكل" if new_state else "🔊 Room Mute Panel — فك الكل",
+                f"**الروم:** {channel.mention}\n**العدد المتأثر:** {count}\n**من طرف:** {member.mention}",
+                discord.Color.red() if new_state else discord.Color.green()
+            )
 
 
 @bot.hybrid_command(
@@ -4047,6 +4062,13 @@ async def roommutepanel_cmd(ctx, channel: Optional[discord.VoiceChannel] = None)
 
     room_mute_db.setdefault("panels", {})[str(msg.id)] = target_channel.id
     save_room_mute()
+
+    await log_action(
+        ctx.guild,
+        "🎛️ Room Mute Panel — تصاوب",
+        f"**الروم:** {target_channel.mention}\n**channel البانل:** {ctx.channel.mention}\n**من طرف:** {ctx.author.mention}",
+        discord.Color.blue()
+    )
 
 
 @bot.event
