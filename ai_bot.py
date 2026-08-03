@@ -156,6 +156,11 @@ ZODIAC_ROLE_IDS = {
     "pisces": 1533245967275393137,       # ♓ الحوت (19 فبراير - 20 مارس)
 }
 
+# ═══════ شكون يقدر يستعمل Room Mute Panel (/roommutepanel) — Owner + هاد اللائحة بوحدهم ═══════
+ROOM_MUTE_PANEL_ALLOWED_USER_IDS = [
+    900839094106603671,  # ← الأدمين اللي زدتي
+]
+
 UNVERIFIED_ROLE_ID = 1526452828267085915
 MEMBER_ROLE_ID = 1526451890399739934
 MUTED_ROLE_ID = 1526468718534590574
@@ -3864,8 +3869,11 @@ load_room_mute()
 
 def can_toggle_room_mute(member: discord.Member, channel: discord.VoiceChannel) -> bool:
     """شكون يقدر "يستعمل" البانل (يدوس على الأزرار/الـ Select ولا يصاوب بانل جديد)
-    — Owner بوحدو، حتى Admin/Moderator/صاحب الروم المؤقت ماشي معنيين."""
-    return bool(OWNER_ID) and member.id == OWNER_ID
+    — Owner + ROOM_MUTE_PANEL_ALLOWED_USER_IDS بوحدهم، حتى Admin/Moderator
+    العاديين ماشي معنيين."""
+    if OWNER_ID and member.id == OWNER_ID:
+        return True
+    return member.id in ROOM_MUTE_PANEL_ALLOWED_USER_IDS
 
 
 async def apply_room_mute_state(channel: discord.VoiceChannel, muted: bool):
@@ -3942,7 +3950,7 @@ class RoomMemberSelect(discord.ui.Select):
             await interaction.response.send_message("❌ الروم ماعادش موجودة.", ephemeral=True)
             return
         if not isinstance(actor, discord.Member) or not can_toggle_room_mute(actor, channel):
-            await interaction.response.send_message("❌ هاد البانل خاص غير بـ Owner.", ephemeral=True)
+            await interaction.response.send_message("❌ ماعندكش صلاحية تستعمل هاد البانل.", ephemeral=True)
             return
 
         target = guild.get_member(int(self.values[0]))
@@ -4007,7 +4015,7 @@ class RoomMuteToggleView(discord.ui.View):
             return
 
         if not isinstance(member, discord.Member) or not can_toggle_room_mute(member, channel):
-            await interaction.response.send_message("❌ هاد البانل خاص غير بـ Owner.", ephemeral=True)
+            await interaction.response.send_message("❌ ماعندكش صلاحية تستعمل هاد البانل.", ephemeral=True)
             return
 
         await interaction.response.defer()
@@ -4052,7 +4060,7 @@ async def roommutepanel_cmd(ctx, channel: Optional[discord.VoiceChannel] = None)
             return
 
     if not can_toggle_room_mute(ctx.author, target_channel):
-        await ctx.send("❌ هاد الأمر خاص غير بـ Owner.", delete_after=8)
+        await ctx.send("❌ ماعندكش صلاحية تصاوب هاد البانل.", delete_after=8)
         return
 
     muted = target_channel.id in room_mute_db.get("muted_channels", [])
