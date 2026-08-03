@@ -2167,19 +2167,6 @@ async def translate_trivia_question(question: str, options: list, target_languag
     return parsed["Q"], [parsed["A"], parsed["B"], parsed["C"], parsed["D"]]
 
 
-async def translate_trivia_to_darija(question: str, options: list) -> tuple:
-    """كيترجم سؤال Trivia والاختيارات كاملة للدارجة قبل ما يبان للاعب."""
-    result = await translate_trivia_question(
-        question,
-        options,
-        "Moroccan Darija"
-    )
-    if result:
-        return result
-    return question, options
-
-
-
 # ═══════════════════════════════════════════════════════
 # ║              MODERATION FUNCTIONS                       ║
 # ═══════════════════════════════════════════════════════
@@ -3816,10 +3803,9 @@ class TriviaSessionView(discord.ui.View):
         self.token = token
         self.message: Optional[discord.Message] = None
         self.ended = False
-        # السؤال والاختيارات كيوصلو مترجمين للدارجة قبل العرض
-        self.current_lang = "ma"
+        self.current_lang = "en"
 
-        # الأصل مع الـ index ديال الجواب الصحيح
+        # الأصل بالإنجليزية (بلا ما نبدلوه)، مع الـ index ديال الجواب الصحيح
         self.original_question = question["question"]
         self.original_options = list(question["options"])
         self.correct_index = self.original_options.index(question["correct"])
@@ -3855,6 +3841,49 @@ class TriviaSessionView(discord.ui.View):
             btn = discord.ui.Button(label=f"{letters[i]} {option}"[:80], style=discord.ButtonStyle.secondary, row=0)
             btn.callback = self._make_answer_callback(i)
             self.add_item(btn)
+
+        lang_select = discord.ui.Select(
+            placeholder="🌐 بدل لغة السؤال...",
+            options=[
+                discord.SelectOption(label=name, value=code, emoji=flag, default=(code == self.current_lang))
+                for code, (flag, name) in TRIVIA_LANGUAGES.items()
+            ],
+            row=1
+        )
+        lang_select.callback = self._lang_callback
+        self.add_item(lang_select)
+
+    async def _lang_callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message("❌ هاد اللعبة ماشي ديالك.", ephemeral=True)
+            return
+        if self.ended:
+            return
+
+        # كنعلمو ديسكورد فالحين بلي وصلنا (بلا ما نبدلو المحتوى بعد)، باش الترجمة
+        # (اللي ممكن تاخد أكثر من 3 ثواني) ما تسببش "didn't respond in time"
+        await interaction.response.defer()
+
+        lang = interaction.data["values"][0]
+        if lang not in self.translations_cache:
+            _, lang_name_en = TRIVIA_LANGUAGES[lang]
+            result = await translate_trivia_question(self.original_question, self.original_options, lang_name_en)
+            if not result:
+                await interaction.followup.send("❌ ما قدرتش نترجم دابا، جرب مرة أخرى بعد شوية.", ephemeral=True)
+                return
+            self.translations_cache[lang] = result
+
+        if self.ended:  # ممكن الوقت يكون خلص وحنا كنترجمو
+            return
+
+        self.current_lang = lang
+        self._build_components()
+        question_text, options = self._current_texts()
+        embed = build_trivia_session_embed(
+            question_text, options, self.category_label, self.difficulty,
+            self.round_num, self.streak, self.current_lang, self.expires_at
+        )
+        await interaction.edit_original_response(embed=embed, view=self)
 
     def _make_answer_callback(self, index: int):
         async def callback(interaction: discord.Interaction):
@@ -3909,10 +3938,6 @@ class TriviaSessionView(discord.ui.View):
                 )
                 await interaction.edit_original_response(embed=embed, view=TriviaReplayView(self.user))
                 return
-
-            next_q["question"], next_q["options"] = await translate_trivia_to_darija(
-                next_q["question"], next_q["options"]
-            )
 
             new_view = TriviaSessionView(self.user, self.category, next_round, next_streak, next_q, self.token)
             embed = build_trivia_session_embed(
@@ -3980,10 +4005,6 @@ class TriviaCategorySelectView(discord.ui.View):
                 embed=None, view=None
             )
             return
-
-        q["question"], q["options"] = await translate_trivia_to_darija(
-            q["question"], q["options"]
-        )
 
         view = TriviaSessionView(self.user, category, 1, 0, q, token)
         embed = build_trivia_session_embed(
