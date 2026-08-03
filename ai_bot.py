@@ -122,7 +122,7 @@ TRIVIA_AUTO_INTERVAL_MINUTES = 60      # ← كل شحال ديال الدقاي
 # 1) دير category جديدة فديسكورد سميها مثلا "🎮 Mini Games"
 # 2) دير channel جوجها (مثلا "🧠│trivia") وحط الـ ID ديالها هنا:
 TRIVIA_CHANNEL_ID = 1533700465576116236
-TRIVIA_ROUNDS_PER_DIFFICULTY = 3   # ← كل ما جاوب صحيح هاد العدد ديال الأسئلة متتالية، الصعوبة تطلع درجة (سهل ← متوسط ← صعيب)
+TRIVIA_ROUNDS_PER_DIFFICULTY = 10   # ← كل ما جاوب صحيح هاد العدد ديال الأسئلة متتالية، الصعوبة تطلع درجة (سهل ← متوسط ← صعيب)
 TRIVIA_XP_BY_DIFFICULTY = {        # ← تحكم كامل فشحال XP كل درجة صعوبة (بدلها كيفما بغيتي)
     "easy": 10,
     "medium": 20,
@@ -2074,16 +2074,36 @@ TRIVIA_CATEGORY_LABELS = {
 }
 
 
-async def fetch_trivia_question(category: str = None, difficulty: str = None) -> Optional[dict]:
-    """جيب سؤال Trivia من OpenTDB (API مجاني بلا حتى key). كيرجع None إلا فشل."""
+async def get_new_trivia_token() -> Optional[str]:
+    """يطلب Session Token من OpenTDB — هاد الطوكن كيخلي OpenTDB ماعادش يرجع نفس السؤال
+    مرتين لنفس الجلسة، حتى يتسناو كاع الأسئلة الممكنة (فهاد الحالة كيتصيفط أوتوماتيك)."""
+    data = await fetch_json("https://opentdb.com/api_token.php", params={"command": "request"})
+    if data and data.get("response_code") == 0:
+        return data.get("token")
+    return None
+
+
+async def fetch_trivia_question(category: str = None, difficulty: str = None, token: str = None) -> Optional[dict]:
+    """جيب سؤال Trivia من OpenTDB (API مجاني بلا حتى key). كيرجع None إلا فشل.
+    إلا عطيتي token، كيتفادى التكرار — وإلا خلص الطوكن كاع الأسئلة الممكنة (response_code=4)،
+    كيصيفطو أوتوماتيك ويعاود يجرب مرة وحدة."""
     params = {"amount": 1, "type": "multiple"}
     if category and category in TRIVIA_CATEGORIES:
         params["category"] = TRIVIA_CATEGORIES[category]
     if difficulty in ("easy", "medium", "hard"):
         params["difficulty"] = difficulty
+    if token:
+        params["token"] = token
 
     data = await fetch_json("https://opentdb.com/api.php", params=params)
-    if not data or data.get("response_code") != 0 or not data.get("results"):
+    code = data.get("response_code") if data else None
+
+    if code == 4 and token:   # الطوكن خلص كاع الأسئلة الممكنة لهاد الفئة/الصعوبة → نصيفطوه ونعاودو
+        await fetch_json("https://opentdb.com/api_token.php", params={"command": "reset", "token": token})
+        data = await fetch_json("https://opentdb.com/api.php", params=params)
+        code = data.get("response_code") if data else None
+
+    if not data or code != 0 or not data.get("results"):
         return None
 
     q = data["results"][0]
@@ -2098,6 +2118,53 @@ async def fetch_trivia_question(category: str = None, difficulty: str = None) ->
         "category": html.unescape(q.get("category", "عامة")),
         "difficulty": q.get("difficulty", "medium"),
     }
+
+
+TRIVIA_LANGUAGES = {
+    "en": ("🇬🇧", "English"),
+    "fr": ("🇫🇷", "French"),
+    "es": ("🇪🇸", "Spanish"),
+    "ar": ("🇸🇦", "Modern Standard Arabic"),
+    "ma": ("🇲🇦", "Moroccan Darija"),
+}
+
+
+async def translate_trivia_question(question: str, options: list, target_language_en: str) -> Optional[tuple]:
+    """يترجم السؤال والخيارات الأربعة بطلب واحد غير (باش نوفرو على الحصة ديال OpenRouter
+    بلاصة 5 طلبات). كيرجع (السؤال المترجم, [خيارات مترجمة]) ولا None إلا فشلت."""
+    if not OPENROUTER_API_KEY:
+        return None
+
+    lines = [f"Q: {question}"] + [f"{chr(65 + i)}: {opt}" for i, opt in enumerate(options)]
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                f"Translate the following quiz question and its 4 answer options into {target_language_en}. "
+                f"Reply with EXACTLY the same format: one line starting with 'Q:' then four lines "
+                f"starting with 'A:', 'B:', 'C:', 'D:' — with the translated text after each colon. "
+                f"No preamble, no explanations, nothing else."
+            )
+        },
+        {"role": "user", "content": "\n".join(lines)}
+    ]
+    result, error = await call_openrouter_chat(messages, 700, 0.3)
+    if error or not result:
+        return None
+
+    parsed = {}
+    for line in result.strip().split("\n"):
+        line = line.strip()
+        for key in ("Q", "A", "B", "C", "D"):
+            prefix = f"{key}:"
+            if line.startswith(prefix) and key not in parsed:
+                parsed[key] = line[len(prefix):].strip()
+                break
+
+    if not all(k in parsed for k in ("Q", "A", "B", "C", "D")):
+        return None
+
+    return parsed["Q"], [parsed["A"], parsed["B"], parsed["C"], parsed["D"]]
 
 
 # ═══════════════════════════════════════════════════════
@@ -3679,40 +3746,119 @@ def get_trivia_difficulty(round_num: int) -> str:
     return "hard"
 
 
-def build_trivia_session_embed(q: dict, round_num: int, streak: int, prefix: str = "") -> discord.Embed:
-    reward = TRIVIA_XP_BY_DIFFICULTY.get(q["difficulty"], TRIVIA_XP_BY_DIFFICULTY["easy"])
+def build_trivia_session_embed(question_text: str, options: list, category_label: str, difficulty: str,
+                                round_num: int, streak: int, lang: str, expires_at: datetime,
+                                prefix: str = "") -> discord.Embed:
+    reward = TRIVIA_XP_BY_DIFFICULTY.get(difficulty, TRIVIA_XP_BY_DIFFICULTY["easy"])
+    lang_flag, _ = TRIVIA_LANGUAGES.get(lang, TRIVIA_LANGUAGES["en"])
+    letters = ["🇦", "🇧", "🇨", "🇩"]
+    options_text = "\n".join(f"{letters[i]} {opt}" for i, opt in enumerate(options))
     embed = discord.Embed(
         title=f"🧠 Trivia — سؤال #{round_num}",
-        description=f"{prefix}**{q['question']}**",
+        description=f"{prefix}**{question_text}**\n\n{options_text}",
         color=discord.Color.teal(),
     )
-    embed.add_field(name="📚 الفئة", value=q["category"], inline=True)
-    embed.add_field(name="🎯 الصعوبة", value=q["difficulty"].capitalize(), inline=True)
+    embed.add_field(name="📚 الفئة", value=category_label, inline=True)
+    embed.add_field(name="🎯 الصعوبة", value=difficulty.capitalize(), inline=True)
     embed.add_field(name="🔥 السلسلة", value=f"{streak} صحيح متتالي", inline=True)
-    embed.set_footer(text=f"عندك {TRIVIA_ANSWER_SECONDS} ثانية — جاوب صحيح تربح +{reward} XP")
+    embed.add_field(name="⏱️ الوقت", value=f"<t:{int(expires_at.timestamp())}:R>", inline=True)
+    embed.add_field(name="🌐 اللغة", value=lang_flag, inline=True)
+    embed.set_footer(text=f"جاوب صحيح تربح +{reward} XP")
     return embed
+
+
+class TriviaReplayView(discord.ui.View):
+    """زر 'العب مرة أخرى' فآخر الجلسة — كيرجع لاختيار المجال بلا ما يحتاج العضو يرجع لـ channel."""
+
+    def __init__(self, user: discord.abc.User):
+        super().__init__(timeout=120)
+        self.user = user
+
+    @discord.ui.button(label="🔄 العب مرة أخرى", style=discord.ButtonStyle.success)
+    async def replay_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message("❌ هاد اللعبة ماشي ديالك.", ephemeral=True)
+            return
+        view = TriviaCategorySelectView(self.user)
+        await interaction.response.edit_message(content="📚 شنو المجال لي بغيتي تلعب فيه؟", embed=None, view=view)
 
 
 class TriviaSessionView(discord.ui.View):
     """جلسة لعب فردية (ephemeral، غير صاحبها كيشوفها): كل ما جاوب صحيح، كيجي سؤال جديد
-    أصعب وبـ XP أكثر، حتى يغلط ولا يخلص الوقت."""
+    أصعب وبـ XP أكثر، حتى يغلط ولا يخلص الوقت. فيها زر لكل لغة باش يبدل الترجمة ديال
+    السؤال الحالي بلا ما يبدل شي حاجة أخرى (الجواب الصحيح كيتحسب بالـ index باش الترجمة
+    ما تأثرش على المنطق)."""
 
-    def __init__(self, user: discord.abc.User, category: str, round_num: int, streak: int, question: dict):
+    def __init__(self, user: discord.abc.User, category: str, round_num: int, streak: int,
+                 question: dict, token: Optional[str] = None):
         super().__init__(timeout=TRIVIA_ANSWER_SECONDS)
         self.user = user
         self.category = category
         self.round_num = round_num
         self.streak = streak
-        self.question = question
+        self.token = token
         self.message: Optional[discord.Message] = None
         self.ended = False
+        self.current_lang = "en"
 
-        for option in question["options"]:
-            btn = discord.ui.Button(label=option[:80], style=discord.ButtonStyle.secondary)
-            btn.callback = self._make_callback(option)
+        # الأصل بالإنجليزية (بلا ما نبدلوه)، مع الـ index ديال الجواب الصحيح
+        self.original_question = question["question"]
+        self.original_options = list(question["options"])
+        self.correct_index = self.original_options.index(question["correct"])
+        self.difficulty = question["difficulty"]
+        self.category_label = question["category"]
+        self.translations_cache = {"en": (self.original_question, self.original_options)}
+        self.expires_at = datetime.now() + timedelta(seconds=TRIVIA_ANSWER_SECONDS)
+
+        self._build_components()
+
+    def _current_texts(self):
+        return self.translations_cache[self.current_lang]
+
+    def _build_components(self):
+        self.clear_items()
+        _, options = self._current_texts()
+        letters = ["🇦", "🇧", "🇨", "🇩"]
+        for i, option in enumerate(options):
+            btn = discord.ui.Button(label=f"{letters[i]} {option}"[:80], style=discord.ButtonStyle.secondary, row=0)
+            btn.callback = self._make_answer_callback(i)
             self.add_item(btn)
 
-    def _make_callback(self, option_text: str):
+        lang_select = discord.ui.Select(
+            placeholder="🌐 بدل لغة السؤال...",
+            options=[
+                discord.SelectOption(label=name, value=code, emoji=flag, default=(code == self.current_lang))
+                for code, (flag, name) in TRIVIA_LANGUAGES.items()
+            ],
+            row=1
+        )
+        lang_select.callback = self._lang_callback
+        self.add_item(lang_select)
+
+    async def _lang_callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message("❌ هاد اللعبة ماشي ديالك.", ephemeral=True)
+            return
+
+        lang = interaction.data["values"][0]
+        if lang not in self.translations_cache:
+            _, lang_name_en = TRIVIA_LANGUAGES[lang]
+            result = await translate_trivia_question(self.original_question, self.original_options, lang_name_en)
+            if not result:
+                await interaction.response.send_message("❌ ما قدرتش نترجم دابا، جرب مرة أخرى بعد شوية.", ephemeral=True)
+                return
+            self.translations_cache[lang] = result
+
+        self.current_lang = lang
+        self._build_components()
+        question_text, options = self._current_texts()
+        embed = build_trivia_session_embed(
+            question_text, options, self.category_label, self.difficulty,
+            self.round_num, self.streak, self.current_lang, self.expires_at
+        )
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    def _make_answer_callback(self, index: int):
         async def callback(interaction: discord.Interaction):
             if interaction.user.id != self.user.id:
                 await interaction.response.send_message("❌ هاد اللعبة ماشي ديالك.", ephemeral=True)
@@ -3720,38 +3866,37 @@ class TriviaSessionView(discord.ui.View):
 
             self.ended = True
             self.stop()
+            _, options = self._current_texts()
 
-            if option_text != self.question["correct"]:
-                for child in self.children:
-                    child.disabled = True
-                    if isinstance(child, discord.ui.Button) and child.label == self.question["correct"][:80]:
-                        child.style = discord.ButtonStyle.success
+            if index != self.correct_index:
+                for i, child in enumerate(self.children):
+                    if isinstance(child, discord.ui.Button):
+                        child.disabled = True
+                        if i == self.correct_index:
+                            child.style = discord.ButtonStyle.success
                 embed = discord.Embed(
                     title="❌ جواب غالط!",
                     description=(
-                        f"الجواب الصحيح كان: **{self.question['correct']}**\n\n"
+                        f"الجواب الصحيح كان: **{options[self.correct_index]}**\n\n"
                         f"🏁 خلصتي بـ **{self.streak}** سؤال صحيح متتالي "
-                        f"(مجال: {TRIVIA_CATEGORY_LABELS.get(self.category, self.category)}).\n\n"
-                        f"بغيتي تلعب مرة أخرى؟ رجع لـ channel اللعبة وكليكي 🎮 ابدأ اللعب."
+                        f"(مجال: {TRIVIA_CATEGORY_LABELS.get(self.category, self.category)})."
                     ),
                     color=discord.Color.red()
                 )
-                await interaction.response.edit_message(embed=embed, view=self)
+                await interaction.response.edit_message(embed=embed, view=TriviaReplayView(self.user))
                 return
 
             # جواب صحيح
-            reward = TRIVIA_XP_BY_DIFFICULTY.get(self.question["difficulty"], TRIVIA_XP_BY_DIFFICULTY["easy"])
+            reward = TRIVIA_XP_BY_DIFFICULTY.get(self.difficulty, TRIVIA_XP_BY_DIFFICULTY["easy"])
             if interaction.guild:
                 await grant_xp_and_announce(interaction.user, interaction.guild, reward, fallback_channel=interaction.channel)
                 bump_trivia_score(interaction.guild.id, interaction.user.id)
 
             next_round = self.round_num + 1
             next_streak = self.streak + 1
-            next_q = await fetch_trivia_question(self.category, get_trivia_difficulty(next_round))
+            next_q = await fetch_trivia_question(self.category, get_trivia_difficulty(next_round), self.token)
 
             if not next_q:
-                for child in self.children:
-                    child.disabled = True
                 embed = discord.Embed(
                     title=f"🎉 صحيح! (+{reward} XP)",
                     description=(
@@ -3760,11 +3905,15 @@ class TriviaSessionView(discord.ui.View):
                     ),
                     color=discord.Color.gold()
                 )
-                await interaction.response.edit_message(embed=embed, view=self)
+                await interaction.response.edit_message(embed=embed, view=TriviaReplayView(self.user))
                 return
 
-            new_view = TriviaSessionView(self.user, self.category, next_round, next_streak, next_q)
-            embed = build_trivia_session_embed(next_q, next_round, next_streak, prefix=f"✅ صحيح! (+{reward} XP)\n\n")
+            new_view = TriviaSessionView(self.user, self.category, next_round, next_streak, next_q, self.token)
+            embed = build_trivia_session_embed(
+                new_view.original_question, new_view.original_options, new_view.category_label,
+                new_view.difficulty, next_round, next_streak, "en", new_view.expires_at,
+                prefix=f"✅ صحيح! (+{reward} XP)\n\n"
+            )
             await interaction.response.edit_message(embed=embed, view=new_view)
             new_view.message = interaction.message
 
@@ -3773,21 +3922,22 @@ class TriviaSessionView(discord.ui.View):
     async def on_timeout(self):
         if self.ended or not self.message:
             return
-        for child in self.children:
-            child.disabled = True
-            if isinstance(child, discord.ui.Button) and child.label == self.question["correct"][:80]:
-                child.style = discord.ButtonStyle.success
+        _, options = self._current_texts()
+        for i, child in enumerate(self.children):
+            if isinstance(child, discord.ui.Button):
+                child.disabled = True
+                if i == self.correct_index:
+                    child.style = discord.ButtonStyle.success
         embed = discord.Embed(
             title="⏱️ خلص الوقت!",
             description=(
-                f"الجواب الصحيح كان: **{self.question['correct']}**\n\n"
-                f"🏁 خلصتي بـ **{self.streak}** سؤال صحيح متتالي.\n\n"
-                f"رجع لـ channel اللعبة وكليكي 🎮 ابدأ اللعب باش تعاود."
+                f"الجواب الصحيح كان: **{options[self.correct_index]}**\n\n"
+                f"🏁 خلصتي بـ **{self.streak}** سؤال صحيح متتالي."
             ),
             color=discord.Color.orange()
         )
         try:
-            await self.message.edit(embed=embed, view=self)
+            await self.message.edit(embed=embed, view=TriviaReplayView(self.user))
         except discord.HTTPException:
             pass
 
@@ -3809,7 +3959,8 @@ class TriviaCategorySelectView(discord.ui.View):
             return
 
         category = select.values[0]
-        q = await fetch_trivia_question(category, "easy")
+        token = await get_new_trivia_token()
+        q = await fetch_trivia_question(category, "easy", token)
         if not q:
             await interaction.response.edit_message(
                 content="❌ ما قدرتش نجيب سؤال دابا (مشكل فـ OpenTDB)، جرب مرة أخرى بعد شوية.",
@@ -3817,8 +3968,11 @@ class TriviaCategorySelectView(discord.ui.View):
             )
             return
 
-        view = TriviaSessionView(self.user, category, 1, 0, q)
-        embed = build_trivia_session_embed(q, 1, 0)
+        view = TriviaSessionView(self.user, category, 1, 0, q, token)
+        embed = build_trivia_session_embed(
+            view.original_question, view.original_options, view.category_label,
+            view.difficulty, 1, 0, "en", view.expires_at
+        )
         await interaction.response.edit_message(content=None, embed=embed, view=view)
         view.message = interaction.message
 
@@ -3864,6 +4018,11 @@ async def setup_trivia_panel(guild: discord.Guild):
             f"3️⃣ جاوب على الأسئلة — عندك {TRIVIA_ANSWER_SECONDS} ثانية لكل سؤال\n"
             "4️⃣ كل ما جاوبتي صحيح، الأسئلة كتزاد صعوبة وXP كتزاد معاها — حتى تغلط ولا يخلص الوقت!"
         ),
+        inline=False
+    )
+    embed.add_field(
+        name="🌐 الترجمة",
+        value="تقدر تبدل لغة السؤال فأي وقت (🇬🇧 إنجليزية، 🇫🇷 فرنسية، 🇪🇸 إسبانية، 🇸🇦 فصحى، 🇲🇦 دارجة) من القائمة تحت السؤال، بلا ما يأثر على الوقت ديالك.",
         inline=False
     )
     embed.add_field(
