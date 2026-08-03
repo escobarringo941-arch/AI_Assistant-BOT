@@ -860,10 +860,12 @@ def total_xp_earned(data: dict) -> int:
 
 
 async def grant_xp_and_announce(member: discord.Member, guild: discord.Guild, amount: int,
-                                 fallback_channel: Optional[discord.abc.Messageable] = None):
-    """كتزيد XP للعضو (من رسالة ولا من Voice)، كتشوف واش صعد لمستوى جديد،
+                                 fallback_channel: Optional[discord.abc.Messageable] = None,
+                                 source: str = "unknown"):
+    """كتزيد XP للعضو (من رسالة ولا من Voice ولا Trivia)، كتشوف واش صعد لمستوى جديد،
     كتعطي الرولات ديال LEVEL_ROLES، وكتبعث رسالة "مبروك" إلا صعد.
-    نفس المنطق اللي كان مستعمل غير مع رسائل الشات، دابا مشترك بين النصين والـ Voice."""
+    نفس المنطق اللي كان مستعمل غير مع رسائل الشات، دابا مشترك بين النصين والـ Voice.
+    'source' كيتسجل فـ xp_log.jsonl باش نقدرو نتبعو منين جاي كل XP (audit)."""
     if not bot_settings['leveling_enabled'] or not guild:
         return
 
@@ -877,6 +879,14 @@ async def grant_xp_and_announce(member: discord.Member, guild: discord.Guild, am
         leveled_up = True
 
     save_levels()
+
+    channel_id = getattr(fallback_channel, "id", None) if fallback_channel else None
+    log_xp_event(guild.id, member.id, source, amount, channel_id=channel_id,
+                 new_total_level=data["level"])
+    try:
+        await check_xp_anomaly(member, guild, source)
+    except Exception as e:
+        print(f"[XP-AUDIT] خطأ فـ check_xp_anomaly: {e}")
 
     if not leveled_up:
         return
@@ -1013,6 +1023,105 @@ def bump_afk_xp_used(guild_id: int, user_id: int, amount: int):
 
 
 load_afk_xp_daily()
+
+# ═══════════════════════════════════════════════════════
+# ║   XP Audit Log — سجل دائم لكل XP event (باش نكشفو الغش)   ║
+# ═══════════════════════════════════════════════════════
+# كل مرة كيتعطى XP (شات/فويس/trivia/afk) كيتسجل سطر JSON فهاد الملف.
+# ماكيتحيدش شي حاجة قديمة — فقط كيزاد. تقدر تفتحو بأي text editor
+# ولا تقراه بـ /xpaudit فديسكورد.
+XP_LOG_FILE = os.path.join(DATA_DIR, "xp_log.jsonl")
+
+# تتبع فالذاكرة (ماشي محفوظ فالديسك) باش نكتشفو سرعة مشبوهة فـ الوقت الحقيقي.
+# كل مفتاح (guild_id, user_id) → لائحة ديال الأوقات (datetime) ديال آخر XP events.
+xp_event_times: dict = defaultdict(list)
+# آخر مرة تبعث فيها تنبيه لهاد العضو، باش ما نبعتوش تنبيه على كل رسالة زايدة.
+xp_alert_cooldowns: dict = {}
+
+# ═══ إعدادات الكشف عن السرعة المشبوهة (بدلهم كيفما بغيتي) ═══
+XP_ANOMALY_WINDOW_MINUTES = 15   # ← النافذة الزمنية اللي كنشوفو فيها عدد الـ events
+XP_ANOMALY_THRESHOLD = 12        # ← إلا وصل عدد XP events لهاد الرقم فالنافذة ← تنبيه
+XP_ANOMALY_ALERT_COOLDOWN_MINUTES = 60  # ← ما نبعتوش تنبيه ثاني لنفس العضو قبل ما تعدي هاد المدة
+
+
+def log_xp_event(guild_id: int, user_id: int, source: str, amount: int,
+                  channel_id: Optional[int] = None, new_total_level: Optional[int] = None):
+    """كيسجل سطر واحد JSON فـ xp_log.jsonl لكل XP event. source مثلا:
+    'chat', 'voice', 'afk_channel', 'afk_muted', 'stream', 'trivia', 'trivia_panel'."""
+    entry = {
+        "ts": datetime.utcnow().isoformat(),
+        "guild": guild_id,
+        "user": user_id,
+        "source": source,
+        "amount": amount,
+        "channel": channel_id,
+    }
+    if new_total_level is not None:
+        entry["level_after"] = new_total_level
+    try:
+        with open(XP_LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except Exception as e:
+        print(f"[XP-AUDIT] خطأ فـ تسجيل XP event: {e}")
+
+
+async def check_xp_anomaly(member: discord.Member, guild: discord.Guild, source: str):
+    """كيشوف واش هاد العضو كيربح XP بسرعة مشبوهة، وإلا كان كيبعث تنبيه لـ MOD_LOGS
+    (بلا ما يعاقبو حتى واحد أوتوماتيكيا — غير كيعلم الإدارة باش تشيك بعينها)."""
+    key = (guild.id, member.id)
+    now = datetime.now()
+    window = timedelta(minutes=XP_ANOMALY_WINDOW_MINUTES)
+
+    times = [t for t in xp_event_times[key] if now - t < window]
+    times.append(now)
+    xp_event_times[key] = times
+
+    if len(times) < XP_ANOMALY_THRESHOLD:
+        return
+
+    last_alert = xp_alert_cooldowns.get(key)
+    if last_alert and (now - last_alert).total_seconds() < XP_ANOMALY_ALERT_COOLDOWN_MINUTES * 60:
+        return
+    xp_alert_cooldowns[key] = now
+
+    await log_action(
+        guild,
+        "🚩 سرعة مشبوهة فـ كسب XP",
+        f"**العضو:** {member.mention} (`{member.id}`)\n"
+        f"**آخر مصدر:** `{source}`\n"
+        f"**العدد:** {len(times)} XP events فـ آخر {XP_ANOMALY_WINDOW_MINUTES} دقيقة\n\n"
+        f"ماشي بالضرورة غش — يمكن نشاط عادي مكثف. تقدر تشيك التفاصيل بـ `/xpaudit @{member.display_name}`.",
+        discord.Color.orange()
+    )
+
+
+def get_xp_audit_summary(guild_id: int, user_id: int, limit: int = 20) -> dict:
+    """كيقرا xp_log.jsonl وكيرجع ملخص لعضو معين: التوزيع حسب المصدر + آخر events."""
+    by_source = defaultdict(lambda: {"count": 0, "total": 0})
+    events = []
+    try:
+        with open(XP_LOG_FILE, "r", encoding="utf-8") as f:
+            for line in f:
+                try:
+                    e = json.loads(line)
+                except Exception:
+                    continue
+                if e.get("guild") != guild_id or e.get("user") != user_id:
+                    continue
+                src = e.get("source", "unknown")
+                by_source[src]["count"] += 1
+                by_source[src]["total"] += int(e.get("amount", 0))
+                events.append(e)
+    except FileNotFoundError:
+        pass
+    events.sort(key=lambda e: e.get("ts", ""))
+    return {
+        "by_source": dict(by_source),
+        "total_events": len(events),
+        "total_xp": sum(int(e.get("amount", 0)) for e in events),
+        "recent": events[-limit:],
+    }
+
 
 # ═══════ Leaderboard أوتوماتيكي — تخزين ID ديال الرسالة (باش تتبدل ماشي تتبعث من جديد) ═══════
 LEADERBOARD_MESSAGE_FILE = os.path.join(DATA_DIR, "leaderboard_message.json")
@@ -4226,7 +4335,8 @@ class TriviaView(discord.ui.View):
                 f"🎉 {interaction.user.mention} جاوب صحيح! الجواب هو **{self.correct_answer}** (+{self.reward} XP)"
             )
             if interaction.guild:
-                await grant_xp_and_announce(interaction.user, interaction.guild, self.reward, fallback_channel=interaction.channel)
+                await grant_xp_and_announce(interaction.user, interaction.guild, self.reward,
+                                            fallback_channel=interaction.channel, source="trivia")
                 bump_trivia_score(interaction.guild.id, interaction.user.id)
                 add_trivia_xp(interaction.guild.id, interaction.user.id, self.reward)
 
@@ -4495,7 +4605,7 @@ class TriviaSessionView(discord.ui.View):
             self.correct_by_difficulty[self.difficulty] = self.correct_by_difficulty.get(self.difficulty, 0) + 1
             if interaction.guild:
                 await grant_xp_and_announce(interaction.user, interaction.guild, reward,
-                                            fallback_channel=interaction.channel)
+                                            fallback_channel=interaction.channel, source="trivia_panel")
                 bump_trivia_score(interaction.guild.id, interaction.user.id)
                 add_trivia_xp(interaction.guild.id, interaction.user.id, reward)
 
@@ -5756,7 +5866,7 @@ async def voice_xp_loop():
                         continue
 
                 try:
-                    await grant_xp_and_announce(m, guild, amount, fallback_channel=channel)
+                    await grant_xp_and_announce(m, guild, amount, fallback_channel=channel, source=kind)
                     if is_afk:
                         bump_afk_xp_used(guild.id, m.id, amount)
                 except Exception as e:
@@ -6515,7 +6625,8 @@ async def process_message_xp(message: discord.Message):
     xp_cooldowns[key] = now
 
     gained = random.randint(xp_settings["chat_min"], xp_settings["chat_max"])
-    await grant_xp_and_announce(message.author, message.guild, gained, fallback_channel=message.channel)
+    await grant_xp_and_announce(message.author, message.guild, gained,
+                                fallback_channel=message.channel, source="chat")
 
 
 @bot.event
@@ -7674,6 +7785,95 @@ class XPPanelView(discord.ui.View):
 async def xppanel_cmd(ctx):
     """لوحة تحكم تفاعلية باش تبدل شحال ديال XP كياخدو الأعضاء من الشات، الفويس، واللايفستريم — Admin"""
     await ctx.send(embed=_xp_panel_embed(), view=XPPanelView())
+
+
+SOURCE_LABELS_AR = {
+    "chat": "💬 شات",
+    "voice": "🎤 فويس",
+    "afk_channel": "💤 AFK (روم AFK)",
+    "afk_muted": "🔇 AFK (مايك مسدود)",
+    "stream": "🎥 لايفستريم",
+    "trivia": "🧠 Trivia (سؤال واحد)",
+    "trivia_panel": "🧠 Trivia (panel)",
+    "unknown": "❓ ماشي معروف",
+}
+
+
+@bot.hybrid_command(name="xpaudit")
+@app_commands.default_permissions(administrator=True)
+@commands.has_permissions(administrator=True)
+@app_commands.describe(member="العضو اللي بغيتي تشيك عليه")
+async def xpaudit_cmd(ctx, member: discord.Member):
+    """كيوري من فين جا كل XP ديال عضو معين (شات/فويس/trivia/afk) وآخر events ديالو — Admin"""
+    await ctx.defer()
+    summary = get_xp_audit_summary(ctx.guild.id, member.id)
+
+    if summary["total_events"] == 0:
+        await ctx.send(f"❌ ماكاينش أي سجل XP لـ {member.mention} حتى دابا (يمكن الميزة ماكانتش مفعلة ملي ربح XP، أو ماشي فهاد السيرفر).")
+        return
+
+    embed = discord.Embed(
+        title=f"🔍 XP Audit — {member.display_name}",
+        color=discord.Color.blurple(),
+        timestamp=datetime.now()
+    )
+    embed.set_thumbnail(url=member.display_avatar.url)
+
+    data = get_user_level_data(ctx.guild.id, member.id)
+    embed.add_field(
+        name="📊 الوضع الحالي",
+        value=f"Level **{data['level']}** • {data['xp']}/{xp_needed_for_level(data['level'])} XP للمستوى الجاي\n"
+              f"مجموع XP إجمالي (منذ البداية): **{total_xp_earned(data)}**",
+        inline=False
+    )
+
+    dist_lines = []
+    for src, info in sorted(summary["by_source"].items(), key=lambda x: -x[1]["total"]):
+        label = SOURCE_LABELS_AR.get(src, src)
+        dist_lines.append(f"{label}: **{info['total']}** XP ({info['count']} events)")
+    embed.add_field(
+        name=f"📈 التوزيع حسب المصدر ({summary['total_events']} events مسجلين إجمالي)",
+        value="\n".join(dist_lines) if dist_lines else "—",
+        inline=False
+    )
+
+    recent = summary["recent"][-15:]
+    recent_lines = []
+    for e in reversed(recent):
+        ts = e.get("ts", "")[:16].replace("T", " ")
+        label = SOURCE_LABELS_AR.get(e.get("source"), e.get("source"))
+        ch = f" <#{e['channel']}>" if e.get("channel") else ""
+        recent_lines.append(f"`{ts}` {label} +{e.get('amount')} XP{ch}")
+    embed.add_field(
+        name="🕒 آخر 15 events",
+        value="\n".join(recent_lines) if recent_lines else "—",
+        inline=False
+    )
+
+    # ═══ كشف سريع: واش الفارقات بين الرسائل قريبة بزاف من cooldown (علامة بوت/سكريبت) ═══
+    chat_events = [e for e in summary["recent"] if e.get("source") == "chat"]
+    if len(chat_events) >= 5:
+        gaps = []
+        for i in range(1, len(chat_events)):
+            try:
+                t1 = datetime.fromisoformat(chat_events[i - 1]["ts"])
+                t2 = datetime.fromisoformat(chat_events[i]["ts"])
+                gaps.append((t2 - t1).total_seconds())
+            except Exception:
+                pass
+        if gaps:
+            avg_gap = sum(gaps) / len(gaps)
+            tight = sum(1 for g in gaps if xp_settings["chat_cooldown"] <= g <= xp_settings["chat_cooldown"] + 3)
+            ratio = tight / len(gaps)
+            if ratio >= 0.7 and avg_gap < xp_settings["chat_cooldown"] + 5:
+                embed.add_field(
+                    name="⚠️ ملاحظة",
+                    value=f"{ratio*100:.0f}% من رسائلو الأخيرة جايين بفارق قريب بزاف من cooldown ({xp_settings['chat_cooldown']}ث) "
+                          f"— هادشي ممكن يكون نشاط عادي مكثف، ولكن يستاهل تشيك يدوي (سكريبت/أوتو-كليكر).",
+                    inline=False
+                )
+
+    await ctx.send(embed=embed)
 
 
 # ═══════════════════════════════════════════════════════
