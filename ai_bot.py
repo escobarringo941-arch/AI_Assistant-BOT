@@ -3839,7 +3839,9 @@ def is_temp_voice_owner(member: discord.Member, channel: discord.VoiceChannel) -
 ROOM_MUTE_FILE = os.path.join(DATA_DIR, "room_mute.json")
 # panels: {message_id (str): channel_id (int)} — رسايل البانل المرتبطة بكل روم
 # muted_channels: [channel_id, ...] — الروومات اللي دابا "مقفولة" (كاع لي فيها مكتوم، وأي واحد يدخل ليها يتكتم توا)
-room_mute_db = {"panels": {}, "muted_channels": []}
+# manual_mutes: {channel_id (str): [user_id, ...]} — الأعضاء اللي تكتمو يدوياً من الـ Select
+#               (بحماية): زر "فك الكل" ما كيمسهمش، خاصك تفك عليهم بيدك من الـ Select
+room_mute_db = {"panels": {}, "muted_channels": [], "manual_mutes": {}}
 
 
 def load_room_mute():
@@ -3849,11 +3851,12 @@ def load_room_mute():
             room_mute_db = json.load(f)
         room_mute_db.setdefault("panels", {})
         room_mute_db.setdefault("muted_channels", [])
+        room_mute_db.setdefault("manual_mutes", {})
     except FileNotFoundError:
-        room_mute_db = {"panels": {}, "muted_channels": []}
+        room_mute_db = {"panels": {}, "muted_channels": [], "manual_mutes": {}}
     except Exception as e:
         print(f"[ROOM_MUTE] خطأ فـ التحميل: {e}")
-        room_mute_db = {"panels": {}, "muted_channels": []}
+        room_mute_db = {"panels": {}, "muted_channels": [], "manual_mutes": {}}
 
 
 def save_room_mute():
@@ -3876,10 +3879,16 @@ def can_toggle_room_mute(member: discord.Member, channel: discord.VoiceChannel) 
     return member.id in ROOM_MUTE_PANEL_ALLOWED_USER_IDS
 
 
-async def apply_room_mute_state(channel: discord.VoiceChannel, muted: bool):
-    """كتكتم/تفك الكتم على *كاع* اللي كاينين فالروم دابا — بلا أي استثناء
-    (حتى Admin/Moderator/Owner/الأدوار المعفية)، بزربة (concurrent، بلا sleep)."""
-    targets = [m for m in channel.members if not m.bot and bool(m.voice and m.voice.mute) != muted]
+async def apply_room_mute_state(channel: discord.VoiceChannel, muted: bool, protected_ids=None):
+    """كتكتم/تفك الكتم على كاع اللي كاينين فالروم دابا — بلا أي استثناء (حتى
+    Admin/Moderator/Owner/الأدوار المعفية)، بزربة (concurrent، بلا sleep).
+    protected_ids: لائحة IDs ما غاديش تتمس (كيستعملها زر "فك الكل" باش يخلي
+    اللي تكتمو يدوياً من الـ Select كيفما هوما)."""
+    protected_ids = protected_ids or set()
+    targets = [
+        m for m in channel.members
+        if not m.bot and bool(m.voice and m.voice.mute) != muted and m.id not in protected_ids
+    ]
 
     async def _apply_one(m: discord.Member):
         try:
@@ -3916,15 +3925,23 @@ class RoomMemberSelect(discord.ui.Select):
     def __init__(self, channel: Optional[discord.VoiceChannel] = None):
         options = []
         if channel:
+            manual_list = room_mute_db.get("manual_mutes", {}).get(str(channel.id), [])
             for m in channel.members:
                 if m.bot:
                     continue
                 is_muted = bool(m.voice and m.voice.mute)
+                is_protected = is_muted and m.id in manual_list
+                if is_protected:
+                    desc = "🔒 مكتوم يدوياً (محمي من فك الكل) — اختارو باش تفك عليه"
+                    emoji = "🔒"
+                elif is_muted:
+                    desc = "مكتوم دابا — اختارو باش تفك عليه"
+                    emoji = "🔇"
+                else:
+                    desc = "مسموع دابا — اختارو باش تكتمو"
+                    emoji = "🎙️"
                 options.append(discord.SelectOption(
-                    label=m.display_name[:100],
-                    value=str(m.id),
-                    description="مكتوم دابا — اختارو باش تفك عليه" if is_muted else "مسموع دابا — اختارو باش تكتمو",
-                    emoji="🔇" if is_muted else "🎙️"
+                    label=m.display_name[:100], value=str(m.id), description=desc, emoji=emoji
                 ))
         if not options:
             options = [discord.SelectOption(label="ماكاين حتى عضو (بشري) فالروم دابا", value="none")]
@@ -3966,18 +3983,29 @@ class RoomMemberSelect(discord.ui.Select):
             await interaction.followup.send("❌ ما قدرتش نبدل الحالة ديالو (مشكل صلاحيات).", ephemeral=True)
             return
 
+        # كنسجلو/كنحيدو من manual_mutes باش زر "فك الكل" مايمسوش هاد العضو إلا كتمتيه بيدك
+        manual_list = room_mute_db.setdefault("manual_mutes", {}).setdefault(str(channel.id), [])
+        if new_mute:
+            if target.id not in manual_list:
+                manual_list.append(target.id)
+        else:
+            if target.id in manual_list:
+                manual_list.remove(target.id)
+        save_room_mute()
+
         muted_state = channel.id in room_mute_db.get("muted_channels", [])
         embed = build_room_mute_embed(channel, muted_state)
         await interaction.message.edit(embed=embed, view=RoomMuteToggleView(muted_state, channel))
+        protect_note = " 🔒 (محمي من زر فك الكل)" if new_mute else ""
         await interaction.followup.send(
-            f"{'🔇 تكتم' if new_mute else '🔊 تفك عليه الكتم'} {target.mention}.", ephemeral=True
+            f"{'🔇 تكتم' if new_mute else '🔊 تفك عليه الكتم'} {target.mention}.{protect_note}", ephemeral=True
         )
         if guild:
             await log_action(
                 guild,
                 "🎯 Room Mute Panel — تبديل عضو معين",
                 f"**الروم:** {channel.mention}\n**العضو:** {target.mention}\n"
-                f"**الحالة الجديدة:** {'🔇 مكتوم' if new_mute else '🔊 مسموع'}\n**من طرف:** {actor.mention}",
+                f"**الحالة الجديدة:** {'🔇 مكتوم (محمي من فك الكل)' if new_mute else '🔊 مسموع'}\n**من طرف:** {actor.mention}",
                 discord.Color.orange()
             )
 
@@ -4023,17 +4051,22 @@ class RoomMuteToggleView(discord.ui.View):
         if new_state:
             if channel_id not in room_mute_db.setdefault("muted_channels", []):
                 room_mute_db["muted_channels"].append(channel_id)
+            protected_ids = set()  # كتم الكل كيمس الجميع، حتى المحميين (باش يبقى فعلاً "الكل")
         else:
             room_mute_db["muted_channels"] = [c for c in room_mute_db.get("muted_channels", []) if c != channel_id]
+            # "فك الكل" ما كيمسش اللي تكتمو يدوياً من الـ Select — كيبقاو مكتومين
+            protected_ids = set(room_mute_db.get("manual_mutes", {}).get(str(channel.id), []))
         save_room_mute()
 
-        count = await apply_room_mute_state(channel, new_state)
+        count = await apply_room_mute_state(channel, new_state, protected_ids=protected_ids)
+        protected_still_muted = len(protected_ids) if not new_state else 0
 
         embed = build_room_mute_embed(channel, new_state)
         await interaction.message.edit(embed=embed, view=RoomMuteToggleView(new_state, channel))
 
+        protect_note = f" (🔒 {protected_still_muted} عضو بقاو مكتومين حيت تكتمو يدوياً)" if protected_still_muted else ""
         await interaction.followup.send(
-            f"{'🔇 الروم تقفلات، تكتمو' if new_state else '🔊 الروم تحلات، تفك الكتم على'} {count} عضو.",
+            f"{'🔇 الروم تقفلات، تكتمو' if new_state else '🔊 الروم تحلات، تفك الكتم على'} {count} عضو.{protect_note}",
             ephemeral=True
         )
         if guild:
