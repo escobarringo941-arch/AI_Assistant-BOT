@@ -459,8 +459,8 @@ STREAM_XP_PER_INTERVAL = 20   # ← شحال ديال XP كياخد العضو �
 #    💤 AFK فالروم الرسمية ديال AFK  → AFK_CHANNEL_XP_PER_INTERVAL  (4)
 #    🔇 AFK (مايك مسدود) فروم عادية → AFK_MUTED_XP_PER_INTERVAL    (2)
 AFK_XP_ENABLED = True
-AFK_CHANNEL_XP_PER_INTERVAL = 4   # ← XP كل فترة للي مريح فالروم ديال AFK (guild.afk_channel ولا AFK_CHANNEL_IDS تحت)
-AFK_MUTED_XP_PER_INTERVAL = 2     # ← XP كل فترة للي سد المايك/دار Deafen وهو فروم عادية
+AFK_CHANNEL_XP_PER_INTERVAL = 10   # ← XP كل فترة للي مريح فالروم ديال AFK (guild.afk_channel ولا AFK_CHANNEL_IDS تحت)
+AFK_MUTED_XP_PER_INTERVAL = 6     # ← XP كل فترة للي سد المايك/دار Deafen وهو فروم عادية
 AFK_CHANNEL_IDS = []              # ← (اختياري) زيد هنا IDs ديال رومات AFK إضافية. البوت أصلا كيعرف الروم الرسمية ديال السيرفر (Server Settings → Overview → Inactive Channel)
 AFK_XP_REQUIRE_MIN_HUMANS = False # ← False = XP ديال AFK كيتعطى حتى لو كان بوحدو (طبيعي، حيت الروم ديال AFK غالبا خاوية)
 AFK_XP_DAILY_CAP = 150            # ← سقف يومي لـ XP ديال AFK لكل عضو (0 = بلا سقف). كيمنع اللي كيخلي البيسي شعال 24/24 يفرمي
