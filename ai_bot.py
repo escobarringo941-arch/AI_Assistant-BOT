@@ -14,6 +14,8 @@ from datetime import datetime, timedelta
 from discord.ext import commands, tasks
 from discord import app_commands
 from collections import defaultdict
+import sys as _sys, os as _os
+_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
 
 try:
     from PIL import Image, ImageDraw, ImageFont, ImageOps, ImageFilter
@@ -10926,6 +10928,48 @@ async def on_ready():
         except Exception as e:
             print(f"⚠️ خطأ فـ sync ديال Slash Commands: {e}")
         _slash_synced = True
+
+
+# ═══════════════════════════════════════════════════════
+# ║   🎮 Mini Games + 🪙 نظام الدراهم — تحميل الـ Cogs      ║
+# ═══════════════════════════════════════════════════════
+# الجسر (Bridge): كنعطيو للـ cogs الجداد الدوال اللي محتاجينها من هاد
+# الملف، بلا ما نديرو import متبادل (circular import). الـ cogs كيوصلو
+# ليهم بـ  self.bot.gg["..."]
+
+bot.gg = {
+    "DATA_DIR": DATA_DIR,
+    "OWNER_ID": OWNER_ID,
+    "get_user_level_data": get_user_level_data,   # ← باش XP Boost ديال الـ shop يخدم
+    "save_levels": save_levels,
+    "log_action": log_action,
+    "is_exempt": is_exempt,
+}
+
+# باش تطفي الألعاب كاملة وترجع للبوت القديم: عمّرها خاوية →  GAMES_COGS = []
+GAMES_COGS = [
+    "cogs.economy",          # ← خاصو يكون الأول (الباقي كيعتمدو عليه)
+    "cogs.games_panel",
+    "cogs.game_counting",
+    "cogs.game_tictactoe",
+    "cogs.game_hangman",
+    "cogs.game_wordle",
+    "cogs.game_reaction",
+]
+
+
+@bot.event
+async def setup_hook():
+    """discord.py كيسمي هادي **قبل** on_ready — يعني قبل sync ديال الأوامر.
+    وهادشي بالضبط اللي بغينا: الـ cogs خاصهم يتحمّلو قبل ما يتزامنو الـ slash
+    commands، وإلا الأوامر الجداد ما غاديش يبانو فديسكورد."""
+    for ext in GAMES_COGS:
+        try:
+            await bot.load_extension(ext)
+            print(f"✅ Cog محمّل: {ext}")
+        except Exception as e:
+            print(f"❌ فشل تحميل {ext}: {type(e).__name__}: {e}")
+
 
 
 if __name__ == "__main__":
