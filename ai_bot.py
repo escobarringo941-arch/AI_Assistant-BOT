@@ -176,9 +176,13 @@ BIRTHDAY_ROLE_ID = 1533241332473008229               # ← (اختياري) رو
 BIRTHDAY_ANNOUNCE_HOUR = 9         # ← فأي ساعة (UTC، من 0 لـ 23) كيتبعث التهنئة كل نهار
 
 # ═══════ نظام Marry/Bestfriend (أزواج/أصدقاء) ═══════
-MARRIAGE_ROLE_ID = 1533987822216810706     # ← (اختياري) رول 💍 كيتعطى للجوج ملي يتزوجو — خليها 0 إلا مابغيتيش
-BESTFRIEND_ROLE_ID = 1533988290011594824   # ← (اختياري) رول 🤝 كيتعطى للجوج ملي يوليو Best Friends — خليها 0 إلا مابغيتيش
+MARRIAGE_ROLE_ID = 1533987822216810706     # ← (اختياري) رول عام 💍 كيتعطى للجوج ملي يتزوجو (بزيادة على الرول الشخصي) — خليها 0 إلا مابغيتيش
+BESTFRIEND_ROLE_ID = 1533988290011594824   # ← (اختياري) رول عام 🤝 كيتعطى للجوج ملي يوليو Best Friends (بزيادة على الرول الشخصي) — خليها 0 إلا مابغيتيش
 RELATIONSHIP_PROPOSAL_TIMEOUT_SECONDS = 300   # ← شحال ديال الوقت (بالثواني) عندو الشخص التاني باش يرد على الطلب
+RELATIONSHIP_DM_PROPOSALS = True    # ← الطلب يتبعث فـ DM للشخص المطلوب (True)، ولا فنفس الـ channel ديال السيرفر (False)
+RELATIONSHIP_PERSONAL_ROLE_ENABLED = True   # ← كل واحد فالعلاقة ياخد رول شخصي بسمية الشريك ديالو (بحال "💍 Aya")
+MARRIAGE_PERSONAL_ROLE_COLOR = 0xFF5DA2     # ← لون الرولات الشخصية ديال الزواج (روز)
+BESTFRIEND_PERSONAL_ROLE_COLOR = 0x55C1FF   # ← لون الرولات الشخصية ديال الصداقة (أزرق فاتح)
 
 # ═══════ رولات الأبراج — كيتعطى أوتوماتيكياً ملي العضو يدير /setbirthday حسب التاريخ ═══════
 # ⚠️ بدل كل 0 برقم الـ Role ID الحقيقي ديالك (Server Settings → Roles → كليك يمين → Copy Role ID)
@@ -723,10 +727,23 @@ def create_relationship(kind: str, user_id_1: int, user_id_2: int) -> str:
     key = _pair_key(user_id_1, user_id_2)
     relationships_db.setdefault(kind, {})[key] = {
         "user_a": user_id_1, "user_b": user_id_2,
-        "since": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        "since": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "personal_role_ids": {}  # {"<user_id>": role_id} — الرول الشخصي بسمية الشريك، لكل واحد فيهم
     }
     save_relationships()
     return key
+
+
+def set_relationship_personal_roles(kind: str, pair_key: str, role_id_for_user: dict):
+    """كتسجل الـ IDs ديال الرولات الشخصية (بسمية الشريك) باش نقدرو نحيدوهم/نمسحوهم منين تنتهي العلاقة.
+    role_id_for_user: {user_id (int): role_id (int)}"""
+    record = relationships_db.get(kind, {}).get(pair_key)
+    if not record:
+        return
+    record.setdefault("personal_role_ids", {})
+    for uid, rid in role_id_for_user.items():
+        record["personal_role_ids"][str(uid)] = rid
+    save_relationships()
 
 
 def end_relationship(kind: str, pair_key: str):
@@ -5382,8 +5399,16 @@ async def birthdays_cmd(ctx):
 # ═══════════════════════════════════════════════════════
 
 RELATIONSHIP_LABELS = {
-    "marriages": {"verb_propose": "يتزوج", "noun": "زواج", "emoji": "💍", "role_id": None, "verb_done": "تزوجو"},
-    "bestfriends": {"verb_propose": "يكون Best Friend ديال", "noun": "صداقة", "emoji": "🤝", "role_id": None, "verb_done": "وليو Best Friends"},
+    "marriages": {
+        "verb_propose": "يتزوج", "noun": "زواج", "emoji": "💍", "verb_done": "تزوجو",
+        "role_prefix": "💍", "color": discord.Color.from_rgb(255, 93, 162),
+        "title_propose": "💍 طلب زواج جديد", "title_accept": "💍 مبروك! زواج جديد",
+    },
+    "bestfriends": {
+        "verb_propose": "يكون Best Friend ديال", "noun": "صداقة", "emoji": "🤝", "verb_done": "وليو Best Friends",
+        "role_prefix": "🤝", "color": discord.Color.from_rgb(85, 193, 255),
+        "title_propose": "🤝 طلب صداقة (Best Friend) جديد", "title_accept": "🤝 مبروك! صداقة جديدة",
+    },
 }
 
 
@@ -5391,14 +5416,69 @@ def _relationship_role_id(kind: str) -> int:
     return MARRIAGE_ROLE_ID if kind == "marriages" else BESTFRIEND_ROLE_ID
 
 
-class RelationshipProposalView(discord.ui.View):
-    """طلب الزواج/الصداقة — زوج أزرار قبول/رفض، غير الشخص المطلوب يقدر يدوس عليهم."""
+def _personal_role_color(kind: str) -> int:
+    return MARRIAGE_PERSONAL_ROLE_COLOR if kind == "marriages" else BESTFRIEND_PERSONAL_ROLE_COLOR
 
-    def __init__(self, kind: str, proposer: discord.Member, target: discord.Member):
+
+def _safe_role_name(prefix: str, display_name: str) -> str:
+    """كيبني سمية رول صحيحة (Discord كيسمح بحد أقصى 100 حرف)."""
+    name = f"{prefix} {display_name}"
+    return name[:100]
+
+
+async def _create_personal_partner_roles(guild: discord.Guild, kind: str,
+                                          proposer: discord.Member, target: discord.Member):
+    """كتصاوب جوج رولات شخصية: وحدة للـ proposer بسمية الـ target، ووحدة للـ target بسمية الـ proposer.
+    كترجع dict {user_id: role} — وإلا فشلات (صلاحيات ناقصة مثلا)، كترجع {}."""
+    if not RELATIONSHIP_PERSONAL_ROLE_ENABLED:
+        return {}
+    label = RELATIONSHIP_LABELS[kind]
+    color = discord.Color(_personal_role_color(kind))
+    result = {}
+    try:
+        role_for_proposer = await guild.create_role(
+            name=_safe_role_name(label["role_prefix"], target.display_name),
+            color=color, hoist=False, mentionable=False,
+            reason=f"{label['noun']} — رول شخصي لـ {proposer} بسمية {target}"
+        )
+        role_for_target = await guild.create_role(
+            name=_safe_role_name(label["role_prefix"], proposer.display_name),
+            color=color, hoist=False, mentionable=False,
+            reason=f"{label['noun']} — رول شخصي لـ {target} بسمية {proposer}"
+        )
+        await proposer.add_roles(role_for_proposer, reason=f"{label['noun']} — قبول")
+        await target.add_roles(role_for_target, reason=f"{label['noun']} — قبول")
+        result = {proposer.id: role_for_proposer.id, target.id: role_for_target.id}
+    except (discord.Forbidden, discord.HTTPException) as e:
+        print(f"[RELATIONSHIPS] ما قدرتش نصاوب الرولات الشخصية: {e}")
+    return result
+
+
+async def _delete_personal_partner_roles(guild: discord.Guild, record: dict):
+    """كتحيد وكتمسح الرولات الشخصية المرتبطة بهاد العلاقة (منين تنتهي)."""
+    role_ids = record.get("personal_role_ids", {}) or {}
+    for uid_str, role_id in role_ids.items():
+        role = guild.get_role(role_id)
+        if not role:
+            continue
+        try:
+            await role.delete(reason="العلاقة انتهات")
+        except (discord.Forbidden, discord.HTTPException) as e:
+            print(f"[RELATIONSHIPS] ما قدرتش نمسح الرول {role_id}: {e}")
+
+
+class RelationshipProposalView(discord.ui.View):
+    """طلب الزواج/الصداقة — كتتبعث فـ DM للشخص المطلوب، غير هو لي يقدر يدوس على الأزرار.
+    كنخزنو الـ guild و IDs (ماشي discord.Member) حيت فـ DM ماكاينش guild context."""
+
+    def __init__(self, kind: str, guild: discord.Guild, proposer: discord.Member, target: discord.Member):
         super().__init__(timeout=RELATIONSHIP_PROPOSAL_TIMEOUT_SECONDS)
         self.kind = kind
-        self.proposer = proposer
-        self.target = target
+        self.guild = guild
+        self.proposer_id = proposer.id
+        self.target_id = target.id
+        self.proposer_display = str(proposer)
+        self.target_display = str(target)
         self.responded = False
         self.message: Optional[discord.Message] = None
 
@@ -5410,66 +5490,111 @@ class RelationshipProposalView(discord.ui.View):
         if self.message:
             try:
                 await self.message.edit(
-                    content=f"⏱️ الطلب انتهت مدتو، {self.target.mention} ما ردش فالوقت.", view=self
+                    content=None,
+                    embed=discord.Embed(
+                        description=f"⏱️ الطلب انتهت مدتو، {self.target_display} ما ردش فالوقت.",
+                        color=discord.Color.dark_grey()
+                    ),
+                    view=self
                 )
             except discord.HTTPException:
                 pass
+        proposer = self.guild.get_member(self.proposer_id)
+        if proposer:
+            try:
+                await proposer.send(f"⏱️ الطلب ديالك لـ **{self.target_display}** انتهت مدتو بلا رد.")
+            except discord.HTTPException:
+                pass
+
+    async def _fetch_pair(self):
+        target = self.guild.get_member(self.target_id) or await self.guild.fetch_member(self.target_id)
+        proposer = self.guild.get_member(self.proposer_id) or await self.guild.fetch_member(self.proposer_id)
+        return proposer, target
 
     @discord.ui.button(label="✅ قبول", style=discord.ButtonStyle.success)
     async def accept_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id != self.target.id:
+        if interaction.user.id != self.target_id:
             await interaction.response.send_message("❌ هاد الطلب ماشي ليك.", ephemeral=True)
             return
         if self.responded:
             return
         self.responded = True
+        label = RELATIONSHIP_LABELS[self.kind]
+
+        try:
+            proposer, target = await self._fetch_pair()
+        except discord.NotFound:
+            for child in self.children:
+                child.disabled = True
+            await interaction.response.edit_message(embed=discord.Embed(
+                description="❌ ما قدرتش نلقى العضو فالسيرفر (يمكن خرج).", color=discord.Color.red()
+            ), view=self)
+            return
 
         # نتأكدو مرة أخرى بلي حتى واحد فيهم مادار شي علاقة أخرى (بين ما تصاوب الطلب ودابا)
-        existing_key_1, _ = find_relationship(self.kind, self.proposer.id)
-        existing_key_2, _ = find_relationship(self.kind, self.target.id)
+        existing_key_1, _ = find_relationship(self.kind, proposer.id)
+        existing_key_2, _ = find_relationship(self.kind, target.id)
         if existing_key_1 or existing_key_2:
             for child in self.children:
                 child.disabled = True
-            await interaction.response.edit_message(
-                content="❌ واحد منكم ولا ديال منكم عندو ديجا علاقة، الطلب لغي.", view=self
-            )
+            await interaction.response.edit_message(embed=discord.Embed(
+                description="❌ واحد منكم عندو ديجا هاد النوع ديال العلاقة، الطلب لغي.",
+                color=discord.Color.red()
+            ), view=self)
             return
 
-        create_relationship(self.kind, self.proposer.id, self.target.id)
+        pair_key = create_relationship(self.kind, proposer.id, target.id)
 
-        role_id = _relationship_role_id(self.kind)
+        # ═══ الرول العام (اختياري) ═══
         role_note = ""
-        if role_id:
-            role = interaction.guild.get_role(role_id) if interaction.guild else None
-            if role:
+        general_role_id = _relationship_role_id(self.kind)
+        if general_role_id:
+            general_role = self.guild.get_role(general_role_id)
+            if general_role:
                 try:
-                    await self.proposer.add_roles(role, reason=f"{self.kind} — قبول")
-                    await self.target.add_roles(role, reason=f"{self.kind} — قبول")
-                    role_note = f"\n{role.mention} تعطى للجوج!"
+                    await proposer.add_roles(general_role, reason=f"{label['noun']} — قبول")
+                    await target.add_roles(general_role, reason=f"{label['noun']} — قبول")
                 except (discord.Forbidden, discord.HTTPException):
                     pass
 
-        label = RELATIONSHIP_LABELS[self.kind]
+        # ═══ الرولات الشخصية بسمية الشريك ═══
+        personal_roles = await _create_personal_partner_roles(self.guild, self.kind, proposer, target)
+        if personal_roles:
+            set_relationship_personal_roles(self.kind, pair_key, personal_roles)
+            role_note = "\n✨ كل واحد فيكم ياخد رول شخصي بسمية الآخر."
+
         for child in self.children:
             child.disabled = True
-        await interaction.response.edit_message(
-            content=(
-                f"{label['emoji']} مبروك! {self.proposer.mention} و {self.target.mention} "
-                f"{label['verb_done']} دابا! {label['emoji']}{role_note}"
+        result_embed = discord.Embed(
+            title=label["title_accept"],
+            description=(
+                f"**{proposer.mention}** {label['emoji']} **{target.mention}**\n\n"
+                f"{label['verb_done'].capitalize()} رسمياً دابا!{role_note}"
             ),
-            view=self
+            color=label["color"], timestamp=datetime.now()
         )
-        if interaction.guild:
-            await log_action(
-                interaction.guild,
-                f"{label['emoji']} {label['noun'].capitalize()} جديد",
-                f"**{self.proposer.mention}** + **{self.target.mention}**",
-                discord.Color.magenta() if self.kind == "marriages" else discord.Color.blue()
+        result_embed.set_footer(text=SERVER_NAME)
+        await interaction.response.edit_message(content=None, embed=result_embed, view=self)
+
+        # نعلمو الـ proposer بلي تقبل (هو ماشي حاضر فهاد الـ DM)
+        try:
+            notify_embed = discord.Embed(
+                title=label["title_accept"],
+                description=f"{target.mention} قبل الطلب ديالك ديال {label['noun']}! {label['emoji']}{role_note}",
+                color=label["color"]
             )
+            await proposer.send(embed=notify_embed)
+        except discord.HTTPException:
+            pass
+
+        await log_action(
+            self.guild, f"{label['emoji']} {label['noun'].capitalize()} جديد",
+            f"**{proposer.mention}** + **{target.mention}**", label["color"]
+        )
 
     @discord.ui.button(label="❌ رفض", style=discord.ButtonStyle.danger)
     async def decline_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id != self.target.id:
+        if interaction.user.id != self.target_id:
             await interaction.response.send_message("❌ هاد الطلب ماشي ليك.", ephemeral=True)
             return
         if self.responded:
@@ -5478,8 +5603,21 @@ class RelationshipProposalView(discord.ui.View):
         for child in self.children:
             child.disabled = True
         await interaction.response.edit_message(
-            content=f"💔 {self.target.mention} رفض الطلب ديال {self.proposer.mention}.", view=self
+            content=None,
+            embed=discord.Embed(description=f"💔 رفضتي الطلب ديال **{self.proposer_display}**.",
+                                 color=discord.Color.dark_grey()),
+            view=self
         )
+        proposer = self.guild.get_member(self.proposer_id)
+        if proposer:
+            try:
+                label = RELATIONSHIP_LABELS[self.kind]
+                await proposer.send(embed=discord.Embed(
+                    description=f"💔 **{self.target_display}** رفض الطلب ديالك ديال {label['noun']}.",
+                    color=discord.Color.dark_grey()
+                ))
+            except discord.HTTPException:
+                pass
 
 
 async def _propose_relationship(ctx, kind: str, target: discord.Member):
@@ -5504,12 +5642,38 @@ async def _propose_relationship(ctx, kind: str, target: discord.Member):
         await ctx.send(f"❌ {target.mention} عندو ديجا {label['noun']} مع شي حد آخر.", delete_after=8)
         return
 
-    view = RelationshipProposalView(kind, proposer, target)
-    msg = await ctx.send(
-        f"{label['emoji']} {target.mention}، {proposer.mention} بغا {label['verb_propose']}ك! واش كتقبل؟",
-        view=view
+    view = RelationshipProposalView(kind, ctx.guild, proposer, target)
+    proposal_embed = discord.Embed(
+        title=label["title_propose"],
+        description=(
+            f"{proposer.mention} بغا {label['verb_propose']}ك فـ **{ctx.guild.name}**! {label['emoji']}\n\n"
+            f"واش كتقبل؟ (عندك {RELATIONSHIP_PROPOSAL_TIMEOUT_SECONDS // 60} دقايق باش تجاوب)"
+        ),
+        color=label["color"], timestamp=datetime.now()
     )
-    view.message = msg
+    proposal_embed.set_thumbnail(url=proposer.display_avatar.url)
+    proposal_embed.set_footer(text=SERVER_NAME)
+
+    sent_in_dm = False
+    if RELATIONSHIP_DM_PROPOSALS:
+        try:
+            msg = await target.send(embed=proposal_embed, view=view)
+            view.message = msg
+            sent_in_dm = True
+        except discord.HTTPException:
+            sent_in_dm = False
+
+    if sent_in_dm:
+        await ctx.send(
+            f"📨 بعثت الطلب ديال {label['noun']} لـ {target.mention} فـ DM ديالو، فـ انتظار الرد.",
+            delete_after=15
+        )
+    else:
+        # الـ DMs ديالو سادين — نبعثو الطلب هنا فنفس الـ channel كـ fallback
+        note = "" if not RELATIONSHIP_DM_PROPOSALS else "\n*(ما قدرتش نبعثلو DM — الطلب هنا)*"
+        proposal_embed.description += note
+        msg = await ctx.send(content=target.mention, embed=proposal_embed, view=view)
+        view.message = msg
 
 
 async def _end_relationship_cmd(ctx, kind: str):
@@ -5520,7 +5684,6 @@ async def _end_relationship_cmd(ctx, kind: str):
         return
 
     partner_id = get_partner_id(record, ctx.author.id)
-    end_relationship(kind, key)
 
     role_id = _relationship_role_id(kind)
     if role_id and ctx.guild:
@@ -5533,6 +5696,10 @@ async def _end_relationship_cmd(ctx, kind: str):
                         await m.remove_roles(role, reason=f"{kind} — سالات")
                     except (discord.Forbidden, discord.HTTPException):
                         pass
+    if ctx.guild:
+        await _delete_personal_partner_roles(ctx.guild, record)
+
+    end_relationship(kind, key)
 
     verb = "طلقتي" if kind == "marriages" else "قطعتي الصداقة مع"
     await ctx.send(f"{label['emoji']} {verb} <@{partner_id}>. 💔")
@@ -5542,6 +5709,15 @@ async def _end_relationship_cmd(ctx, kind: str):
             f"**{ctx.author.mention}** + <@{partner_id}>",
             discord.Color.dark_grey()
         )
+        partner_member = ctx.guild.get_member(partner_id)
+        if partner_member:
+            try:
+                await partner_member.send(embed=discord.Embed(
+                    description=f"💔 **{ctx.author}** {verb.replace('طلقتي', 'طلق').replace('قطعتي الصداقة مع', 'قطع الصداقة معاك')}.",
+                    color=discord.Color.dark_grey()
+                ))
+            except discord.HTTPException:
+                pass
 
 
 async def _relationship_info_cmd(ctx, kind: str, member: Optional[discord.Member]):
@@ -5558,7 +5734,7 @@ async def _relationship_info_cmd(ctx, kind: str, member: Optional[discord.Member
     embed = discord.Embed(
         title=f"{label['emoji']} {label['noun'].capitalize()}",
         description=f"{target.mention} + <@{partner_id}>\n⏳ منذ **{duration}**",
-        color=discord.Color.magenta() if kind == "marriages" else discord.Color.blue()
+        color=label["color"]
     )
     await ctx.send(embed=embed)
 
@@ -5585,21 +5761,21 @@ async def _relationship_leaderboard_cmd(ctx, kind: str):
     embed = discord.Embed(
         title=f"{label['emoji']} أطول {label['noun']}ات فالسيرفر",
         description="\n".join(lines),
-        color=discord.Color.magenta() if kind == "marriages" else discord.Color.blue()
+        color=label["color"]
     )
     embed.set_footer(text=f"{SERVER_NAME} | {label['noun'].capitalize()} Leaderboard")
     await ctx.send(embed=embed)
 
 
-@bot.hybrid_command(name="marry")
+@bot.hybrid_command(name="marry", description="اطلب من عضو يتزوجك 💍 (كيتبعث ليه DM)")
 async def marry_cmd(ctx, user: discord.Member):
-    """اطلب من عضو يتزوجك 💍 (كيحتاج يقبل بزر)"""
+    """اطلب من عضو يتزوجك 💍 — كيتبعث ليه طلب فـ DM وخاصو يقبل بزر"""
     await _propose_relationship(ctx, "marriages", user)
 
 
 @bot.hybrid_command(name="divorce")
 async def divorce_cmd(ctx):
-    """طلق الزوج/الزوجة ديالك 💔"""
+    """طلق الزوج/الزوجة ديالك 💔 (كيحيد الرولات الشخصية ديال الجوج)"""
     await _end_relationship_cmd(ctx, "marriages")
 
 
@@ -5615,15 +5791,15 @@ async def marriages_cmd(ctx):
     await _relationship_leaderboard_cmd(ctx, "marriages")
 
 
-@bot.hybrid_command(name="bestfriend")
+@bot.hybrid_command(name="bestfriend", description="اطلب من عضو يكون Best Friend ديالك 🤝 (كيتبعث ليه DM)")
 async def bestfriend_cmd(ctx, user: discord.Member):
-    """اطلب من عضو يكون Best Friend ديالك 🤝 (كيحتاج يقبل بزر)"""
+    """اطلب من عضو يكون Best Friend ديالك 🤝 — كيتبعث ليه طلب فـ DM وخاصو يقبل بزر"""
     await _propose_relationship(ctx, "bestfriends", user)
 
 
 @bot.hybrid_command(name="unbestfriend")
 async def unbestfriend_cmd(ctx):
-    """قطع الصداقة ديالك مع الـ Best Friend ديالك 💔"""
+    """قطع الصداقة ديالك مع الـ Best Friend ديالك 💔 (كيحيد الرولات الشخصية ديال الجوج)"""
     await _end_relationship_cmd(ctx, "bestfriends")
 
 
