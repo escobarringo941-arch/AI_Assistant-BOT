@@ -952,6 +952,46 @@ def total_xp_earned(data: dict) -> int:
     return total
 
 
+def get_target_level_role(new_level: int):
+    """كترجع (target_level, role_id) ديال أعلى threshold فـ LEVEL_ROLES اللي
+    new_level وصل ليه ولا فاقو، وإلا (None, None) إلا مازال ماوصلش لحتى واحد."""
+    eligible = [lvl for lvl in LEVEL_ROLES if lvl <= new_level]
+    if not eligible:
+        return None, None
+    target_level = max(eligible)
+    return target_level, LEVEL_ROLES[target_level]
+
+
+async def sync_level_roles(member: discord.Member, guild: discord.Guild, new_level: int):
+    """كيخلي عند العضو غير الرول اللي كيمثل أعلى level وصل ليه (من LEVEL_ROLES)،
+    وكيحيد أي رولات ديال levels تحتانية/فوقانية كانت عندو من قبل — يعني رول
+    واحد بوحدو ديال الـ level فأي وقت (سواء صعد ولا هبط المستوى). كترجع
+    (roles_added, roles_removed) — لائحتين ديال mentions."""
+    all_level_role_ids = {rid for rid in LEVEL_ROLES.values()}
+    _, target_role_id = get_target_level_role(new_level)
+
+    roles_added, roles_removed = [], []
+
+    to_remove = [r for r in member.roles if r.id in all_level_role_ids and r.id != target_role_id]
+    if to_remove:
+        try:
+            await member.remove_roles(*to_remove, reason=f"Level Role Sync — دابا Level {new_level}")
+            roles_removed = [r.mention for r in to_remove]
+        except (discord.Forbidden, discord.HTTPException):
+            pass
+
+    if target_role_id:
+        target_role = guild.get_role(target_role_id)
+        if target_role and target_role not in member.roles:
+            try:
+                await member.add_roles(target_role, reason=f"Level Role Sync — دابا Level {new_level}")
+                roles_added.append(target_role.mention)
+            except (discord.Forbidden, discord.HTTPException):
+                pass
+
+    return roles_added, roles_removed
+
+
 async def grant_xp_and_announce(member: discord.Member, guild: discord.Guild, amount: int,
                                  fallback_channel: Optional[discord.abc.Messageable] = None,
                                  source: str = "unknown"):
@@ -985,16 +1025,7 @@ async def grant_xp_and_announce(member: discord.Member, guild: discord.Guild, am
         return
 
     new_level = data["level"]
-    roles_added = []
-    for lvl, role_id in LEVEL_ROLES.items():
-        if int(lvl) <= new_level:
-            role = guild.get_role(role_id)
-            if role and role not in member.roles:
-                try:
-                    await member.add_roles(role, reason=f"وصل لـ Level {new_level}")
-                    roles_added.append(role.mention)
-                except discord.Forbidden:
-                    pass
+    roles_added, _ = await sync_level_roles(member, guild, new_level)
 
     target_channel = bot.get_channel(LEVEL_UP_CHANNEL_ID) if LEVEL_UP_CHANNEL_ID else fallback_channel
     if target_channel:
@@ -8259,6 +8290,96 @@ class XPPanelView(discord.ui.View):
 async def xppanel_cmd(ctx):
     """لوحة تحكم تفاعلية باش تبدل شحال ديال XP كياخدو الأعضاء من الشات، الفويس، اللايفستريم، Trivia، وصعوبة المستويات — Admin"""
     await ctx.send(embed=_xp_panel_embed(), view=XPPanelView())
+
+
+def recompute_level_from_total_xp(total_xp: int):
+    """كتحسب (level, xp_داخل_المستوى) من مجموع XP كلي، حسب صيغة xp_needed_for_level
+    الحالية (بحال xp_settings['level_xp_multiplier'] دابا). كتستعمل باش نعاودو نبنيو
+    المستوى الصحيح بعد ما نزيدو/ننقصو XP يدوياً."""
+    total_xp = max(0, total_xp)
+    level = 0
+    remaining = total_xp
+    while remaining >= xp_needed_for_level(level):
+        remaining -= xp_needed_for_level(level)
+        level += 1
+    return level, remaining
+
+
+async def adjust_user_xp(member: discord.Member, guild: discord.Guild, amount: int) -> dict:
+    """كيزيد/كينقص XP لعضو مباشرة (amount يقدر يكون سالب)، وكيعاود يحسب المستوى
+    بالكامل من مجموع XP الكلي — يعني المستوى كيطلع ولا كيهبط تلقائياً حسب
+    العدد الجديد (بحال طلبتي: نقصان XP يقدر يرجع العضو لمستوى تحتاني).
+    كيعطي الرولات الناقصة إلا صعد لمستوى جديد."""
+    data = get_user_level_data(guild.id, member.id)
+    old_level = data["level"]
+    old_total = total_xp_earned(data)
+
+    new_total = max(0, old_total + amount)
+    new_level, new_xp = recompute_level_from_total_xp(new_total)
+
+    data["level"] = new_level
+    data["xp"] = new_xp
+    save_levels()
+
+    roles_added, roles_removed = [], []
+    if new_level != old_level:   # تبدل المستوى (صعد ولا هبط) → نعاودو نظبطو الرول
+        roles_added, roles_removed = await sync_level_roles(member, guild, new_level)
+
+    return {
+        "old_level": old_level, "new_level": new_level,
+        "old_total": old_total, "new_total": new_total,
+        "roles_added": roles_added,
+        "roles_removed": roles_removed,
+    }
+
+
+@bot.hybrid_command(name="xpadjust")
+@app_commands.default_permissions(administrator=True)
+@app_commands.describe(
+    member="العضو اللي بغيتي تبدل ليه XP",
+    amount="شحال (رقم موجب باش تزيد، سالب باش تنقص — مثلا -500)",
+    reason="السبب (اختياري)"
+)
+async def xpadjust_cmd(ctx, member: discord.Member, amount: int, *, reason: str = "بلا سبب محدد"):
+    """زيد ولا نقص XP لعضو معين مباشرة، والمستوى كيتبدل أوتوماتيكياً حسب المجموع الجديد — Owner بوحدو"""
+    if not (OWNER_ID and ctx.author.id == OWNER_ID):
+        await ctx.send("❌ هاد الأمر خاص غير بـ Owner.", delete_after=8)
+        return
+    if amount == 0:
+        await ctx.send("❌ عطيني رقم غير صفر (موجب باش تزيد، سالب باش تنقص).", delete_after=8)
+        return
+    if not ctx.guild:
+        return
+    if member.bot:
+        await ctx.send("❌ ما تقدرش تبدل XP ديال بوت.", delete_after=8)
+        return
+
+    result = await adjust_user_xp(member, ctx.guild, amount)
+
+    verb = "زدت" if amount > 0 else "نقصت"
+    embed = discord.Embed(
+        title="🛠️ تعديل XP يدوي",
+        description=f"{verb} **{abs(amount)}** XP لـ {member.mention}",
+        color=discord.Color.gold() if amount > 0 else discord.Color.orange()
+    )
+    level_change = "➡️" if result["old_level"] == result["new_level"] else ("⬆️" if result["new_level"] > result["old_level"] else "⬇️")
+    embed.add_field(name="المستوى", value=f"{result['old_level']} {level_change} **{result['new_level']}**", inline=True)
+    embed.add_field(name="XP الكلية", value=f"{result['old_total']} → **{result['new_total']}**", inline=True)
+    if result["roles_added"]:
+        embed.add_field(name="🎁 رول جديد", value=", ".join(result["roles_added"]), inline=False)
+    if result["roles_removed"]:
+        embed.add_field(name="🗑️ رولات تحيدو", value=", ".join(result["roles_removed"]), inline=False)
+    embed.add_field(name="السبب", value=reason, inline=False)
+    embed.set_footer(text=f"من طرف {ctx.author.display_name}")
+    await ctx.send(embed=embed)
+
+    await log_action(
+        ctx.guild, "🛠️ XP Adjustment (Owner)",
+        f"**العضو:** {member.mention}\n**التغيير:** {'+' if amount > 0 else ''}{amount} XP\n"
+        f"**المستوى:** {result['old_level']} → {result['new_level']}\n"
+        f"**السبب:** {reason}\n**من طرف:** {ctx.author.mention}",
+        discord.Color.gold() if amount > 0 else discord.Color.orange()
+    )
 
 
 SOURCE_LABELS_AR = {
