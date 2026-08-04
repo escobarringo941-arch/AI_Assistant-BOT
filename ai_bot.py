@@ -180,6 +180,7 @@ MARRIAGE_ROLE_ID = 1533987822216810706     # ← (اختياري) رول عام 
 BESTFRIEND_ROLE_ID = 1533988290011594824   # ← (اختياري) رول عام 🤝 كيتعطى للجوج ملي يوليو Best Friends (بزيادة على الرول الشخصي) — خليها 0 إلا مابغيتيش
 RELATIONSHIP_PROPOSAL_TIMEOUT_SECONDS = 300   # ← شحال ديال الوقت (بالثواني) عندو الشخص التاني باش يرد على الطلب
 RELATIONSHIP_DM_PROPOSALS = True    # ← الطلب يتبعث فـ DM للشخص المطلوب (True)، ولا فنفس الـ channel ديال السيرفر (False)
+RELATIONSHIP_ANNOUNCE_CHANNEL_ID = 1524957892925456545   # ← الـ channel (# general) فين كيتبعث إعلان عام ملي شي حد يقبل الزواج/الصداقة، ولا يطلق/يقطع الصداقة — خليها 0 إلا مابغيتيش
 RELATIONSHIP_PERSONAL_ROLE_ENABLED = True   # ← كل واحد فالعلاقة ياخد رول شخصي بسمية الشريك ديالو (بحال "💍 Aya")
 MARRIAGE_PERSONAL_ROLE_COLOR = 0xd41b1b     # ← لون الرولات الشخصية ديال الزواج (روز)
 BESTFRIEND_PERSONAL_ROLE_COLOR = 0xf1c40f   # ← لون الرولات الشخصية ديال الصداقة (أزرق فاتح)
@@ -5504,10 +5505,24 @@ async def _delete_personal_partner_roles(guild: discord.Guild, record: dict):
             print(f"[RELATIONSHIPS] ما قدرتش نمسح الرول {role_id}: {e}")
 
 
+async def _send_relationship_announcement(guild: discord.Guild, embed: discord.Embed, content: Optional[str] = None):
+    """كتبعث إعلان عام فـ RELATIONSHIP_ANNOUNCE_CHANNEL_ID (مثلا #general) — مفيدة للاحتفال
+    بزواج/صداقة جديدة، ولا لتبيان بلي علاقة انتهات. كتفشل بصمت إلا الـ channel ماكاينش/ماعندوش صلاحية."""
+    if not RELATIONSHIP_ANNOUNCE_CHANNEL_ID:
+        return
+    channel = guild.get_channel(RELATIONSHIP_ANNOUNCE_CHANNEL_ID)
+    if not channel:
+        return
+    try:
+        await channel.send(content=content, embed=embed)
+    except (discord.Forbidden, discord.HTTPException) as e:
+        print(f"[RELATIONSHIPS] ما قدرتش نبعث الإعلان فـ #general: {e}")
+
+
 async def _finalize_end_relationship(guild: discord.Guild, kind: str, key: str, record: dict,
                                       ended_by_id: int):
     """المنطق المشترك باش نسالو علاقة: كتحيد الرول العام + الرولات الشخصية، كتمسح السجل،
-    وكتبعث تنبيه DM للطرف الآخر. كترجع partner_id."""
+    وكتبعث تنبيه DM للطرف الآخر + إعلان عام. كترجع partner_id."""
     label = RELATIONSHIP_LABELS[kind]
     partner_id = get_partner_id(record, ended_by_id)
 
@@ -5533,6 +5548,22 @@ async def _finalize_end_relationship(guild: discord.Guild, kind: str, key: str, 
         guild, f"💔 {label['noun'].capitalize()} انتهى",
         f"<@{ended_by_id}> + <@{partner_id}>", discord.Color.dark_grey()
     )
+
+    end_verb = "طلقو بعضياتهم 💔" if kind == "marriages" else "ماعادوش أصدقاء مقربين 💔"
+    ender_member_for_announce = guild.get_member(ended_by_id)
+    end_announce = discord.Embed(
+        description=(
+            f"## 💔 {label['noun'].capitalize()} انتهى\n"
+            f"### <@{ended_by_id}>  ⛓️‍💥  <@{partner_id}>\n\n"
+            f"{label['emoji']} {end_verb}"
+        ),
+        color=discord.Color.dark_grey(), timestamp=datetime.now()
+    )
+    if ender_member_for_announce:
+        end_announce.set_thumbnail(url=ender_member_for_announce.display_avatar.url)
+    end_announce.set_footer(text=SERVER_NAME)
+    end_content = f"# 💔 {label['noun'].capitalize()} انتهى"
+    await _send_relationship_announcement(guild, end_announce, content=end_content)
 
     partner_member = guild.get_member(partner_id)
     if partner_member:
@@ -5671,6 +5702,28 @@ class RelationshipProposalView(discord.ui.View):
             self.guild, f"{label['emoji']} {label['noun'].capitalize()} جديد",
             f"**{proposer.mention}** + **{target.mention}**", label["color"]
         )
+
+        # ═══ إعلان عام فـ #general — كبير وعاطي لعين، يبان قدام الناس ═══
+        announce_embed = discord.Embed(
+            description=(
+                f"## {label['emoji']} {label['verb_done'].capitalize()} رسمياً! {label['emoji']}\n"
+                f"### {proposer.mention}  ✨  {target.mention}\n\n"
+                f"{'💍 علاقة زواج جديدة انولدات فـ' if self.kind == 'marriages' else '🤝 صداقة جديدة انولدات فـ'} "
+                f"**{self.guild.name}**! مبروك عليكم 🎉"
+            ),
+            color=label["color"], timestamp=datetime.now()
+        )
+        announce_embed.set_author(name=f"{label['noun'].capitalize()} جديد 🎊",
+                                   icon_url=target.display_avatar.url)
+        announce_embed.set_thumbnail(url=proposer.display_avatar.url)
+        announce_embed.set_image(url=target.display_avatar.url)
+        announce_embed.add_field(name="📅 بدات", value=f"<t:{int(datetime.now().timestamp())}:F>", inline=True)
+        announce_embed.set_footer(
+            text=f"{SERVER_NAME} • مبروك للجوج! 🎊",
+            icon_url=self.guild.icon.url if self.guild.icon else None
+        )
+        announce_content = f"# {label['emoji']} {proposer.display_name} × {target.display_name} {label['emoji']}"
+        await _send_relationship_announcement(self.guild, announce_embed, content=announce_content)
 
     @discord.ui.button(label="❌ رفض", style=discord.ButtonStyle.danger)
     async def decline_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
