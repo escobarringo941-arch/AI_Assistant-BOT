@@ -30,12 +30,12 @@ BANKS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "banks")
 # ⚠️ بدّل هاد الأصفار بالـ IDs الحقيقية من ديسكورد
 # (Server Settings → كليك يمين على الـ channel → Copy Channel ID)
 
-GAMES_PANEL_CHANNEL_ID = 0       # 🎮│games-panel — panel موحّد ديال كاع الألعاب
-COUNTING_CHANNEL_ID = 0          # 🔢│counting — قناة العدّاد
-GAMES_LEADERBOARD_CHANNEL_ID = 0  # 🏆│games-top — لائحة الشرف ديال الألعاب (0 = معطّل)
+GAMES_PANEL_CHANNEL_ID = 1534234669057445998       # 🎮│games-panel — panel موحّد ديال كاع الألعاب
+COUNTING_CHANNEL_ID = 1534234937530650755          # 🔢│counting — قناة العدّاد
+GAMES_LEADERBOARD_CHANNEL_ID = 1534235056564867194  # 🏆│games-top — لائحة الشرف ديال الألعاب (0 = معطّل)
 
 # Category "Mini Games" — كتستعمل غير فـ /setupminigames باش يصاوب الـ channels وحدو
-MINIGAMES_CATEGORY_ID = 0        # 0 = يصاوب category جديدة بوحدو
+MINIGAMES_CATEGORY_ID = 1533697548215128134        # 0 = يصاوب category جديدة بوحدو
 
 
 # ═══════════════════════════════════════════════════════
@@ -44,7 +44,7 @@ MINIGAMES_CATEGORY_ID = 0        # 0 = يصاوب category جديدة بوحدو
 
 CURRENCY_NAME = "درهم"
 CURRENCY_NAME_PLURAL = "دراهم"
-CURRENCY_EMOJI = "🪙"
+CURRENCY_EMOJI = "💲"
 
 # ═══════ الربح ═══════
 COINS_DAILY = 25                  # /daily — مكافأة يومية
