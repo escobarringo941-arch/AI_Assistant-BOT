@@ -5807,16 +5807,17 @@ async def _propose_relationship(ctx, kind: str, target: discord.Member):
 
 
 async def _end_relationship_cmd(ctx, kind: str):
-    """للـ marriages (exclusive) — عندو غير علاقة وحدة، نسالوها مباشرة بلا اختيار."""
+    """للـ marriages (exclusive) — عندو غير علاقة وحدة، نسالوها مباشرة بلا اختيار.
+    الرد هنا ephemeral (خاص بالشخص وحدو) — الإعلان الحقيقي كيتبعث فـ #general (_finalize_end_relationship)."""
     label = RELATIONSHIP_LABELS[kind]
     key, record = find_relationship(kind, ctx.author.id)
     if not key:
-        await ctx.send(f"⚠️ ماعندكش {label['noun']} دابا.", delete_after=8)
+        await ctx.send(f"⚠️ ماعندكش {label['noun']} دابا.", delete_after=8, ephemeral=True)
         return
 
     partner_id = await _finalize_end_relationship(ctx.guild, kind, key, record, ctx.author.id)
     verb = "طلقتي" if kind == "marriages" else "قطعتي الصداقة مع"
-    await ctx.send(f"{label['emoji']} {verb} <@{partner_id}>. 💔")
+    await ctx.send(f"{label['emoji']} {verb} <@{partner_id}>. 💔", ephemeral=True)
 
 
 class BestfriendRemoveSelect(discord.ui.Select):
@@ -5862,11 +5863,12 @@ class BestfriendRemoveView(discord.ui.View):
 
 async def unbestfriend_interactive(ctx):
     """بدل ما نحيدو مباشرة، كنوريو للعضو لائحة (dropdown) بكل الـ Best Friends ديالو دابا
-    باش يختار بالضبط شكون بغى يحيد — مفيدة حيت عضو وحد يقدر يكون عندو بزاف ديالهم فنفس الوقت."""
+    باش يختار بالضبط شكون بغى يحيد — مفيدة حيت عضو وحد يقدر يكون عندو بزاف ديالهم فنفس الوقت.
+    كلشي هنا ephemeral (خاص بالشخص وحدو) — الإعلان الحقيقي كيتبعث فـ #general (_finalize_end_relationship)."""
     label = RELATIONSHIP_LABELS["bestfriends"]
     pairs = find_all_relationships("bestfriends", ctx.author.id)
     if not pairs:
-        await ctx.send(f"⚠️ ماعندكش حتى {label['noun']} دابا.", delete_after=8)
+        await ctx.send(f"⚠️ ماعندكش حتى {label['noun']} دابا.", delete_after=8, ephemeral=True)
         return
 
     lines = []
@@ -5881,7 +5883,7 @@ async def unbestfriend_interactive(ctx):
         color=label["color"]
     )
     view = BestfriendRemoveView(ctx.author.id, ctx.guild, pairs)
-    await ctx.send(embed=embed, view=view)
+    await ctx.send(embed=embed, view=view, ephemeral=True)
 
 
 async def _relationship_info_cmd(ctx, kind: str, member: Optional[discord.Member]):
