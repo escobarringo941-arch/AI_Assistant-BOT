@@ -4921,7 +4921,7 @@ async def setup_trivia_panel(guild: discord.Guild, channel: Optional[discord.abc
         return False
 
 
-@bot.hybrid_command(name="setuptrivia")
+@bot.hybrid_command(name="setuptrivia", description="كيصاوب panel لعبة Trivia فالـ channel الحالي (Admin)")
 @app_commands.default_permissions(administrator=True)
 @commands.has_permissions(administrator=True)
 async def setuptrivia_cmd(ctx):
@@ -7638,7 +7638,7 @@ async def removeword_cmd(ctx, *, word: str = ""):
         pass
 
 
-@bot.hybrid_command(name="addaction")
+@bot.hybrid_command(name="addaction", description="زيد عبارة/سلوك ممنوع (Owner)")
 @app_commands.default_permissions(administrator=True)
 async def addaction_cmd(ctx, *, phrase: str = ""):
     """كتزيد عبارة/سلوك ممنوع (بحال كلمة، غير كتقدر تكون جملة كاملة)،
@@ -7894,7 +7894,7 @@ async def raidstatus_cmd(ctx):
     await ctx.send(embed=embed)
 
 
-@bot.hybrid_command(name="testwelcome")
+@bot.hybrid_command(name="testwelcome", description="بعث Welcome Card تجريبية هنا فالشات (Admin)")
 @app_commands.default_permissions(administrator=True)
 @commands.has_permissions(administrator=True)
 async def testwelcome_cmd(ctx, member: Optional[discord.Member] = None, returning: bool = False):
@@ -8284,7 +8284,7 @@ class XPPanelView(discord.ui.View):
         await interaction.response.edit_message(embed=_xp_panel_embed(), view=self)
 
 
-@bot.hybrid_command(name="xppanel")
+@bot.hybrid_command(name="xppanel", description="لوحة تحكم تفاعلية ديال إعدادات XP (Admin)")
 @app_commands.default_permissions(administrator=True)
 @commands.has_permissions(administrator=True)
 async def xppanel_cmd(ctx):
@@ -9215,7 +9215,8 @@ async def info(ctx):
     await ctx.send(embed=embed)
 
 
-@bot.hybrid_command(name="remind", aliases=["تذكير", "reminder"])
+@bot.hybrid_command(name="remind", aliases=["تذكير", "reminder"],
+                     description="صاوب تذكير ليك: /remind [#شانيل] 10m/21:00 الرسالة")
 async def remind_cmd(ctx, channel: Optional[discord.TextChannel] = None, *, rest: str):
     """
     كل واحد يصاوب تذكير لراسو، فأي وقت وأي شانيل بغى:
@@ -10131,6 +10132,10 @@ async def on_ready():
                 bot.tree.copy_global_to(guild=guild)
                 await bot.tree.sync(guild=guild)
             print(f"✅ Slash Commands (/) تزامنو مع {len(bot.guilds)} سيرفر (فوريين).")
+        except discord.HTTPException as e:
+            print(f"⚠️ خطأ فـ sync ديال Slash Commands: {e}")
+            print(f"[SYNC-DEBUG] status={e.status} code={e.code}")
+            print(f"[SYNC-DEBUG] تفاصيل دقيقة من Discord:\n{e.text}")
         except Exception as e:
             print(f"⚠️ خطأ فـ sync ديال Slash Commands: {e}")
         _slash_synced = True
