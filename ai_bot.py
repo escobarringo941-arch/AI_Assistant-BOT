@@ -175,6 +175,11 @@ BIRTHDAY_ANNOUNCE_CHANNEL_ID = 1533241235630854224   # ← حط هنا ID ديا
 BIRTHDAY_ROLE_ID = 1533241332473008229               # ← (اختياري) رول 🎂 كيتعطى نهار عيد الميلاد وكيتحيد الغد — خليها 0 إلا مابغيتيش
 BIRTHDAY_ANNOUNCE_HOUR = 9         # ← فأي ساعة (UTC، من 0 لـ 23) كيتبعث التهنئة كل نهار
 
+# ═══════ نظام Marry/Bestfriend (أزواج/أصدقاء) ═══════
+MARRIAGE_ROLE_ID = 1533987822216810706     # ← (اختياري) رول 💍 كيتعطى للجوج ملي يتزوجو — خليها 0 إلا مابغيتيش
+BESTFRIEND_ROLE_ID = 1533988290011594824   # ← (اختياري) رول 🤝 كيتعطى للجوج ملي يوليو Best Friends — خليها 0 إلا مابغيتيش
+RELATIONSHIP_PROPOSAL_TIMEOUT_SECONDS = 300   # ← شحال ديال الوقت (بالثواني) عندو الشخص التاني باش يرد على الطلب
+
 # ═══════ رولات الأبراج — كيتعطى أوتوماتيكياً ملي العضو يدير /setbirthday حسب التاريخ ═══════
 # ⚠️ بدل كل 0 برقم الـ Role ID الحقيقي ديالك (Server Settings → Roles → كليك يمين → Copy Role ID)
 # خلي شي واحد 0 إلا مابغيتيش رول لهاد البرج (البوت غايتخطاه بلا مشكل)
@@ -664,6 +669,92 @@ def save_birthdays():
 
 
 load_birthdays()
+
+# ═══════════════════════════════════════════════════════
+# ║   نظام Marry/Bestfriend (أزواج/أصدقاء) — 💌               ║
+# ═══════════════════════════════════════════════════════
+RELATIONSHIPS_FILE = os.path.join(DATA_DIR, "relationships.json")
+# marriages/bestfriends: {"pair_key": {"user_a": id, "user_b": id, "since": "YYYY-MM-DD HH:MM:SS"}}
+# pair_key = "min_id-max_id" باش يبقى فريد لكل زوج
+relationships_db = {"marriages": {}, "bestfriends": {}}
+
+
+def load_relationships():
+    global relationships_db
+    try:
+        with open(RELATIONSHIPS_FILE, "r", encoding="utf-8") as f:
+            relationships_db = json.load(f)
+        relationships_db.setdefault("marriages", {})
+        relationships_db.setdefault("bestfriends", {})
+        print(f"[RELATIONSHIPS] تحمل {len(relationships_db['marriages'])} زواج و {len(relationships_db['bestfriends'])} صداقة")
+    except FileNotFoundError:
+        print("[RELATIONSHIPS] ماكاينش علاقات محفوظة من قبل")
+    except Exception as e:
+        print(f"[RELATIONSHIPS] خطأ فـ التحميل: {e}")
+        relationships_db = {"marriages": {}, "bestfriends": {}}
+
+
+def save_relationships():
+    try:
+        with open(RELATIONSHIPS_FILE, "w", encoding="utf-8") as f:
+            json.dump(relationships_db, f, ensure_ascii=False)
+    except Exception as e:
+        print(f"[RELATIONSHIPS] خطأ فـ الحفظ: {e}")
+
+
+def _pair_key(user_id_1: int, user_id_2: int) -> str:
+    a, b = sorted([user_id_1, user_id_2])
+    return f"{a}-{b}"
+
+
+def find_relationship(kind: str, user_id: int):
+    """كترجع (pair_key, record) ديال العلاقة الحالية ديال العضو (marriages ولا bestfriends)، وإلا (None, None)"""
+    for key, record in relationships_db.get(kind, {}).items():
+        if record.get("user_a") == user_id or record.get("user_b") == user_id:
+            return key, record
+    return None, None
+
+
+def get_partner_id(record: dict, user_id: int) -> int:
+    return record["user_b"] if record["user_a"] == user_id else record["user_a"]
+
+
+def create_relationship(kind: str, user_id_1: int, user_id_2: int) -> str:
+    key = _pair_key(user_id_1, user_id_2)
+    relationships_db.setdefault(kind, {})[key] = {
+        "user_a": user_id_1, "user_b": user_id_2,
+        "since": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    }
+    save_relationships()
+    return key
+
+
+def end_relationship(kind: str, pair_key: str):
+    relationships_db.get(kind, {}).pop(pair_key, None)
+    save_relationships()
+
+
+def format_duration_since(since_str: str) -> str:
+    try:
+        since_dt = datetime.strptime(since_str, "%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return "—"
+    delta = datetime.now() - since_dt
+    days = delta.days
+    if days < 1:
+        hours = delta.seconds // 3600
+        return f"{hours} ساعة" if hours > 0 else "دقايق قلال"
+    if days < 30:
+        return f"{days} يوم"
+    if days < 365:
+        months = days // 30
+        return f"{months} شهر"
+    years = days // 365
+    remaining_months = (days % 365) // 30
+    return f"{years} عام" + (f" و{remaining_months} شهر" if remaining_months else "")
+
+
+load_relationships()
 
 # ═══════ حساب البرج من التاريخ (يوم/شهر) ═══════
 ZODIAC_SIGNS = [
@@ -5236,6 +5327,268 @@ async def birthdays_cmd(ctx):
     await ctx.send(embed=embed)
 
 
+# ═══════════════════════════════════════════════════════
+# ║   نظام Marry/Bestfriend (أزواج/أصدقاء) — 💌 الأوامر        ║
+# ═══════════════════════════════════════════════════════
+
+RELATIONSHIP_LABELS = {
+    "marriages": {"verb_propose": "يتزوج", "noun": "زواج", "emoji": "💍", "role_id": None, "verb_done": "تزوجو"},
+    "bestfriends": {"verb_propose": "يكون Best Friend ديال", "noun": "صداقة", "emoji": "🤝", "role_id": None, "verb_done": "وليو Best Friends"},
+}
+
+
+def _relationship_role_id(kind: str) -> int:
+    return MARRIAGE_ROLE_ID if kind == "marriages" else BESTFRIEND_ROLE_ID
+
+
+class RelationshipProposalView(discord.ui.View):
+    """طلب الزواج/الصداقة — زوج أزرار قبول/رفض، غير الشخص المطلوب يقدر يدوس عليهم."""
+
+    def __init__(self, kind: str, proposer: discord.Member, target: discord.Member):
+        super().__init__(timeout=RELATIONSHIP_PROPOSAL_TIMEOUT_SECONDS)
+        self.kind = kind
+        self.proposer = proposer
+        self.target = target
+        self.responded = False
+        self.message: Optional[discord.Message] = None
+
+    async def on_timeout(self):
+        if self.responded:
+            return
+        for child in self.children:
+            child.disabled = True
+        if self.message:
+            try:
+                await self.message.edit(
+                    content=f"⏱️ الطلب انتهت مدتو، {self.target.mention} ما ردش فالوقت.", view=self
+                )
+            except discord.HTTPException:
+                pass
+
+    @discord.ui.button(label="✅ قبول", style=discord.ButtonStyle.success)
+    async def accept_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.target.id:
+            await interaction.response.send_message("❌ هاد الطلب ماشي ليك.", ephemeral=True)
+            return
+        if self.responded:
+            return
+        self.responded = True
+
+        # نتأكدو مرة أخرى بلي حتى واحد فيهم مادار شي علاقة أخرى (بين ما تصاوب الطلب ودابا)
+        existing_key_1, _ = find_relationship(self.kind, self.proposer.id)
+        existing_key_2, _ = find_relationship(self.kind, self.target.id)
+        if existing_key_1 or existing_key_2:
+            for child in self.children:
+                child.disabled = True
+            await interaction.response.edit_message(
+                content="❌ واحد منكم ولا ديال منكم عندو ديجا علاقة، الطلب لغي.", view=self
+            )
+            return
+
+        create_relationship(self.kind, self.proposer.id, self.target.id)
+
+        role_id = _relationship_role_id(self.kind)
+        role_note = ""
+        if role_id:
+            role = interaction.guild.get_role(role_id) if interaction.guild else None
+            if role:
+                try:
+                    await self.proposer.add_roles(role, reason=f"{self.kind} — قبول")
+                    await self.target.add_roles(role, reason=f"{self.kind} — قبول")
+                    role_note = f"\n{role.mention} تعطى للجوج!"
+                except (discord.Forbidden, discord.HTTPException):
+                    pass
+
+        label = RELATIONSHIP_LABELS[self.kind]
+        for child in self.children:
+            child.disabled = True
+        await interaction.response.edit_message(
+            content=(
+                f"{label['emoji']} مبروك! {self.proposer.mention} و {self.target.mention} "
+                f"{label['verb_done']} دابا! {label['emoji']}{role_note}"
+            ),
+            view=self
+        )
+        if interaction.guild:
+            await log_action(
+                interaction.guild,
+                f"{label['emoji']} {label['noun'].capitalize()} جديد",
+                f"**{self.proposer.mention}** + **{self.target.mention}**",
+                discord.Color.magenta() if self.kind == "marriages" else discord.Color.blue()
+            )
+
+    @discord.ui.button(label="❌ رفض", style=discord.ButtonStyle.danger)
+    async def decline_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.target.id:
+            await interaction.response.send_message("❌ هاد الطلب ماشي ليك.", ephemeral=True)
+            return
+        if self.responded:
+            return
+        self.responded = True
+        for child in self.children:
+            child.disabled = True
+        await interaction.response.edit_message(
+            content=f"💔 {self.target.mention} رفض الطلب ديال {self.proposer.mention}.", view=self
+        )
+
+
+async def _propose_relationship(ctx, kind: str, target: discord.Member):
+    label = RELATIONSHIP_LABELS[kind]
+    proposer = ctx.author
+
+    if target.id == proposer.id:
+        await ctx.send(f"❌ ما تقدرش {label['verb_propose']} نفسك 😅", delete_after=8)
+        return
+    if target.bot:
+        await ctx.send("❌ ما تقدرش تدير هادشي مع بوت 🤖", delete_after=8)
+        return
+
+    existing_key, existing_record = find_relationship(kind, proposer.id)
+    if existing_key:
+        partner_id = get_partner_id(existing_record, proposer.id)
+        await ctx.send(f"❌ عندك ديجا {label['noun']} مع <@{partner_id}>. دير `/divorce` ولا `/unbestfriend` أولاً.", delete_after=10)
+        return
+
+    target_key, _ = find_relationship(kind, target.id)
+    if target_key:
+        await ctx.send(f"❌ {target.mention} عندو ديجا {label['noun']} مع شي حد آخر.", delete_after=8)
+        return
+
+    view = RelationshipProposalView(kind, proposer, target)
+    msg = await ctx.send(
+        f"{label['emoji']} {target.mention}، {proposer.mention} بغا {label['verb_propose']}ك! واش كتقبل؟",
+        view=view
+    )
+    view.message = msg
+
+
+async def _end_relationship_cmd(ctx, kind: str):
+    label = RELATIONSHIP_LABELS[kind]
+    key, record = find_relationship(kind, ctx.author.id)
+    if not key:
+        await ctx.send(f"⚠️ ماعندكش {label['noun']} دابا.", delete_after=8)
+        return
+
+    partner_id = get_partner_id(record, ctx.author.id)
+    end_relationship(kind, key)
+
+    role_id = _relationship_role_id(kind)
+    if role_id and ctx.guild:
+        role = ctx.guild.get_role(role_id)
+        if role:
+            partner = ctx.guild.get_member(partner_id)
+            for m in (ctx.author, partner):
+                if m and role in m.roles:
+                    try:
+                        await m.remove_roles(role, reason=f"{kind} — سالات")
+                    except (discord.Forbidden, discord.HTTPException):
+                        pass
+
+    verb = "طلقتي" if kind == "marriages" else "قطعتي الصداقة مع"
+    await ctx.send(f"{label['emoji']} {verb} <@{partner_id}>. 💔")
+    if ctx.guild:
+        await log_action(
+            ctx.guild, f"💔 {label['noun'].capitalize()} انتهى",
+            f"**{ctx.author.mention}** + <@{partner_id}>",
+            discord.Color.dark_grey()
+        )
+
+
+async def _relationship_info_cmd(ctx, kind: str, member: Optional[discord.Member]):
+    label = RELATIONSHIP_LABELS[kind]
+    target = member or ctx.author
+    key, record = find_relationship(kind, target.id)
+    if not key:
+        who = "عندك" if target == ctx.author else f"عند {target.mention}"
+        await ctx.send(f"💔 ما{who}ش {label['noun']} دابا.", delete_after=8)
+        return
+
+    partner_id = get_partner_id(record, target.id)
+    duration = format_duration_since(record["since"])
+    embed = discord.Embed(
+        title=f"{label['emoji']} {label['noun'].capitalize()}",
+        description=f"{target.mention} + <@{partner_id}>\n⏳ منذ **{duration}**",
+        color=discord.Color.magenta() if kind == "marriages" else discord.Color.blue()
+    )
+    await ctx.send(embed=embed)
+
+
+async def _relationship_leaderboard_cmd(ctx, kind: str):
+    label = RELATIONSHIP_LABELS[kind]
+    records = list(relationships_db.get(kind, {}).values())
+    if not records:
+        await ctx.send(f"📭 ماكاين حتى {label['noun']} مسجلة دابا فالسيرفر.")
+        return
+
+    def _sort_key(r):
+        try:
+            return datetime.strptime(r["since"], "%Y-%m-%d %H:%M:%S")
+        except Exception:
+            return datetime.now()
+
+    records.sort(key=_sort_key)  # الأقدم = الأطول مدة
+    lines = []
+    for i, r in enumerate(records[:10], 1):
+        duration = format_duration_since(r["since"])
+        lines.append(f"**{i}.** <@{r['user_a']}> + <@{r['user_b']}> — **{duration}**")
+
+    embed = discord.Embed(
+        title=f"{label['emoji']} أطول {label['noun']}ات فالسيرفر",
+        description="\n".join(lines),
+        color=discord.Color.magenta() if kind == "marriages" else discord.Color.blue()
+    )
+    embed.set_footer(text=f"{SERVER_NAME} | {label['noun'].capitalize()} Leaderboard")
+    await ctx.send(embed=embed)
+
+
+@bot.hybrid_command(name="marry")
+async def marry_cmd(ctx, user: discord.Member):
+    """اطلب من عضو يتزوجك 💍 (كيحتاج يقبل بزر)"""
+    await _propose_relationship(ctx, "marriages", user)
+
+
+@bot.hybrid_command(name="divorce")
+async def divorce_cmd(ctx):
+    """طلق الزوج/الزوجة ديالك 💔"""
+    await _end_relationship_cmd(ctx, "marriages")
+
+
+@bot.hybrid_command(name="marriage")
+async def marriage_cmd(ctx, user: Optional[discord.Member] = None):
+    """بين معلومات الزواج ديالك ولا ديال عضو آخر"""
+    await _relationship_info_cmd(ctx, "marriages", user)
+
+
+@bot.hybrid_command(name="marriages")
+async def marriages_cmd(ctx):
+    """أطول 10 علاقات زواج فالسيرفر (Leaderboard)"""
+    await _relationship_leaderboard_cmd(ctx, "marriages")
+
+
+@bot.hybrid_command(name="bestfriend")
+async def bestfriend_cmd(ctx, user: discord.Member):
+    """اطلب من عضو يكون Best Friend ديالك 🤝 (كيحتاج يقبل بزر)"""
+    await _propose_relationship(ctx, "bestfriends", user)
+
+
+@bot.hybrid_command(name="unbestfriend")
+async def unbestfriend_cmd(ctx):
+    """قطع الصداقة ديالك مع الـ Best Friend ديالك 💔"""
+    await _end_relationship_cmd(ctx, "bestfriends")
+
+
+@bot.hybrid_command(name="bestfriendinfo")
+async def bestfriendinfo_cmd(ctx, user: Optional[discord.Member] = None):
+    """بين معلومات الـ Best Friend ديالك ولا ديال عضو آخر"""
+    await _relationship_info_cmd(ctx, "bestfriends", user)
+
+
+@bot.hybrid_command(name="bestfriends")
+async def bestfriends_cmd(ctx):
+    """أطول 10 صداقات فالسيرفر (Leaderboard)"""
+    await _relationship_leaderboard_cmd(ctx, "bestfriends")
+
+
 async def check_and_announce_birthdays():
     """كتشيك كل الأعياد المسجلة، كتهني اللي عيد ميلادهم اليوم، وكتحيد الرول
     ديال البارح. كتصاوب فحالها من tasks.loop تحت (birthday_loop)."""
@@ -8803,6 +9156,16 @@ async def help(ctx):
         "`/removebirthday` — حيد عيد ميلادك من السجل (وحيد رول البرج)"
     )
     embed.add_field(name="🎂 Birthdays", value=birthday_cmds, inline=False)
+    relationship_cmds = (
+        "`/marry @عضو` — اطلب زواج 💍 (خاصو يقبل بزر)\n"
+        "`/divorce` — طلق الزوج/الزوجة ديالك\n"
+        "`/marriage [@عضو]` — بين معلومات الزواج\n"
+        "`/marriages` — أطول 10 علاقات فالسيرفر\n"
+        "`/bestfriend @عضو` — اطلب Best Friend 🤝\n"
+        "`/unbestfriend` — قطع الصداقة\n"
+        "`/bestfriendinfo [@عضو]`, `/bestfriends` — معلومات و Leaderboard"
+    )
+    embed.add_field(name="💌 Marry / Bestfriend", value=relationship_cmds, inline=False)
     voice_room_cmds = (
         "`/roommutepanel [روم]` — بانل كامل للتحكم فروم صوتي (Staff/صاحب الروم):\n"
         "🔇 **كتم الكل** — كيكتم كاع اللي فالروم بلا استثناء (حتى Admin/Mod) + أي واحد يدخل من بعد كيتكتم توا\n"
