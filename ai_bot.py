@@ -8334,7 +8334,6 @@ async def adjust_user_xp(member: discord.Member, guild: discord.Guild, amount: i
 
 
 @bot.hybrid_command(name="xpadjust")
-@app_commands.default_permissions(administrator=True)
 @app_commands.describe(
     member="العضو اللي بغيتي تبدل ليه XP",
     amount="شحال (رقم موجب باش تزيد، سالب باش تنقص — مثلا -500)",
