@@ -929,12 +929,14 @@ load_trivia_xp_totals()
 def xp_needed_for_level(level: int) -> int:
     """صيغة كتخلي كل مستوى محتاج XP أكثر من لي قبلو (بحال MEE6 تقريباً).
     من بعد Level 30، كتزاد صعوبة إضافية (نمو أسرع) باش المستويات العالية
-    يبقاو يستاهلو أكثر وقت/جهد."""
+    يبقاو يستاهلو أكثر وقت/جهد. كتضرب فـ level_xp_multiplier (قابلة للتعديل
+    من /xppanel) — 0.5 يهبط الكل بالنص، 2.0 يضاعف، إلخ."""
     base = 5 * (level ** 2) + 50 * level + 100
     if level >= 30:
         extra_levels = level - 30
         base += 15 * (extra_levels ** 2) + 200 * extra_levels
-    return base
+    multiplier = xp_settings.get("level_xp_multiplier", 1.0) if "xp_settings" in globals() else 1.0
+    return max(1, round(base * multiplier))
 
 
 def get_user_level_data(guild_id: int, user_id: int) -> dict:
@@ -1028,7 +1030,24 @@ xp_settings = {
     "afk_channel_per_interval": AFK_CHANNEL_XP_PER_INTERVAL,
     "afk_muted_per_interval": AFK_MUTED_XP_PER_INTERVAL,
     "afk_daily_cap": AFK_XP_DAILY_CAP,
+    "trivia_easy": TRIVIA_XP_BY_DIFFICULTY["easy"],
+    "trivia_medium": TRIVIA_XP_BY_DIFFICULTY["medium"],
+    "trivia_hard": TRIVIA_XP_BY_DIFFICULTY["hard"],
+    "trivia_single": TRIVIA_XP_REWARD,
+    "level_xp_multiplier": 1.0,   # ← 1.0 = عادي، 0.5 = يهبط المستويات بنص الـ XP المطلوب، 2.0 = يضاعفو
 }
+
+
+def get_trivia_xp(difficulty: str) -> int:
+    """شحال XP كياخد جواب صحيح فبانل Trivia حسب الصعوبة — كتقرا من xp_settings
+    (قابلة للتعديل من /xppanel)، مع fallback للقيم الافتراضية."""
+    key = f"trivia_{difficulty}"
+    return int(xp_settings.get(key, TRIVIA_XP_BY_DIFFICULTY.get(difficulty, TRIVIA_XP_BY_DIFFICULTY["easy"])))
+
+
+def get_trivia_single_xp() -> int:
+    """شحال XP كياخد جواب صحيح فسؤال Trivia الفردي (/trivia) — قابلة للتعديل من /xppanel."""
+    return int(xp_settings.get("trivia_single", TRIVIA_XP_REWARD))
 
 
 def load_xp_settings():
@@ -4465,9 +4484,9 @@ async def send_trivia_question(channel: discord.abc.Messageable, category: str =
     )
     embed.add_field(name="📚 المجال", value=q["category"], inline=True)
     embed.add_field(name="🎯 الصعوبة", value=TRIVIA_DIFFICULTY_LABELS.get(q["difficulty"], q["difficulty"]), inline=True)
-    embed.set_footer(text=f"عندك {TRIVIA_ANSWER_SECONDS} ثانية — أول واحد يجاوب صحيح ياخد +{TRIVIA_XP_REWARD} XP")
+    embed.set_footer(text=f"عندك {TRIVIA_ANSWER_SECONDS} ثانية — أول واحد يجاوب صحيح ياخد +{get_trivia_single_xp()} XP")
 
-    view = TriviaView(q["correct"], q["options"], TRIVIA_XP_REWARD, TRIVIA_ANSWER_SECONDS)
+    view = TriviaView(q["correct"], q["options"], get_trivia_single_xp(), TRIVIA_ANSWER_SECONDS)
     msg = await channel.send(embed=embed, view=view)
     view.message = msg
     return msg
@@ -4495,7 +4514,7 @@ def get_trivia_difficulty(round_num: int) -> str:
 def build_trivia_session_embed(question_text: str, options: list, category_label: str, difficulty: str,
                                round_num: int, streak: int, expires_at: datetime,
                                prefix: str = "") -> discord.Embed:
-    reward = TRIVIA_XP_BY_DIFFICULTY.get(difficulty, TRIVIA_XP_BY_DIFFICULTY["easy"])
+    reward = get_trivia_xp(difficulty)
     letters = ["🇦", "🇧", "🇨", "🇩"]
     options_text = "\n".join(f"{letters[i]} {opt}" for i, opt in enumerate(options))
     embed = discord.Embed(
@@ -4590,7 +4609,7 @@ class TriviaSessionView(discord.ui.View):
         for diff in ("easy", "medium", "hard"):
             n = self.correct_by_difficulty.get(diff, 0)
             if n:
-                gained = n * TRIVIA_XP_BY_DIFFICULTY[diff]
+                gained = n * get_trivia_xp(diff)
                 breakdown.append(f"{TRIVIA_DIFFICULTY_LABELS[diff]} × {n} = **{gained}** XP")
 
         embed.add_field(
@@ -4691,7 +4710,7 @@ class TriviaSessionView(discord.ui.View):
                 return
 
             # ═══ جواب صحيح ═══
-            reward = TRIVIA_XP_BY_DIFFICULTY.get(self.difficulty, TRIVIA_XP_BY_DIFFICULTY["easy"])
+            reward = get_trivia_xp(self.difficulty)
             self.session_xp += reward
             self.correct_by_difficulty[self.difficulty] = self.correct_by_difficulty.get(self.difficulty, 0) + 1
             if interaction.guild:
@@ -4855,9 +4874,9 @@ async def setup_trivia_panel(guild: discord.Guild, channel: Optional[discord.abc
     embed.add_field(
         name="💰 شحال XP كتربح",
         value=(
-            f"🟢 سهل: **{TRIVIA_XP_BY_DIFFICULTY['easy']}** XP\n"
-            f"🟡 متوسط: **{TRIVIA_XP_BY_DIFFICULTY['medium']}** XP\n"
-            f"🔴 صعيب: **{TRIVIA_XP_BY_DIFFICULTY['hard']}** XP\n"
+            f"🟢 سهل: **{get_trivia_xp('easy')}** XP\n"
+            f"🟡 متوسط: **{get_trivia_xp('medium')}** XP\n"
+            f"🔴 صعيب: **{get_trivia_xp('hard')}** XP\n"
             "(غلطة وحدة كتوقف السلسلة وخاصك تبدا من جديد)"
         ),
         inline=False
@@ -7912,6 +7931,26 @@ def _xp_panel_embed() -> discord.Embed:
         ),
         inline=True
     )
+    embed.add_field(
+        name="🧠 Trivia",
+        value=(
+            f"🟢 سهل: **{xp_settings['trivia_easy']}** | 🟡 متوسط: **{xp_settings['trivia_medium']}** | "
+            f"🔴 صعيب: **{xp_settings['trivia_hard']}**\n"
+            f"سؤال فردي: **{xp_settings['trivia_single']}** XP"
+        ),
+        inline=True
+    )
+    mult = xp_settings.get("level_xp_multiplier", 1.0)
+    sample_lvl5 = xp_needed_for_level(5)
+    sample_lvl20 = xp_needed_for_level(20)
+    embed.add_field(
+        name="📈 صعوبة المستويات",
+        value=(
+            f"مضاعف: **×{mult}**\n"
+            f"مثال: Level 5 كيحتاج **{sample_lvl5}** XP | Level 20 كيحتاج **{sample_lvl20}** XP"
+        ),
+        inline=True
+    )
     per_hour = 60 / xp_settings["voice_interval_minutes"]
     ratio_voice = (xp_settings["stream_per_interval"] / xp_settings["voice_per_interval"]) if xp_settings["voice_per_interval"] else 0
     embed.add_field(
@@ -8084,6 +8123,75 @@ class AfkXPModal(discord.ui.Modal, title="💤 إعدادات XP ديال الـ
         await interaction.response.edit_message(embed=_xp_panel_embed(), view=XPPanelView())
 
 
+class TriviaXPModal(discord.ui.Modal, title="🧠 إعدادات XP ديال Trivia"):
+    def __init__(self):
+        super().__init__()
+        self.easy = discord.ui.TextInput(
+            label="🟢 سهل (بانل Trivia)", default=str(xp_settings["trivia_easy"]), max_length=5
+        )
+        self.medium = discord.ui.TextInput(
+            label="🟡 متوسط (بانل Trivia)", default=str(xp_settings["trivia_medium"]), max_length=5
+        )
+        self.hard = discord.ui.TextInput(
+            label="🔴 صعيب (بانل Trivia)", default=str(xp_settings["trivia_hard"]), max_length=5
+        )
+        self.single = discord.ui.TextInput(
+            label="سؤال فردي (/trivia)", default=str(xp_settings["trivia_single"]), max_length=5
+        )
+        self.add_item(self.easy)
+        self.add_item(self.medium)
+        self.add_item(self.hard)
+        self.add_item(self.single)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            new_easy = int(self.easy.value)
+            new_medium = int(self.medium.value)
+            new_hard = int(self.hard.value)
+            new_single = int(self.single.value)
+        except ValueError:
+            await interaction.response.send_message("❌ خاص كاع القيم يكونو أرقام صحيحة.", ephemeral=True)
+            return
+        if min(new_easy, new_medium, new_hard, new_single) < 0:
+            await interaction.response.send_message("❌ ماكاينش رقم سالب.", ephemeral=True)
+            return
+
+        xp_settings["trivia_easy"] = new_easy
+        xp_settings["trivia_medium"] = new_medium
+        xp_settings["trivia_hard"] = new_hard
+        xp_settings["trivia_single"] = new_single
+        save_xp_settings()
+
+        await interaction.response.edit_message(embed=_xp_panel_embed(), view=XPPanelView())
+
+
+class LevelXPModal(discord.ui.Modal, title="📈 صعوبة المستويات (Levels)"):
+    def __init__(self):
+        super().__init__()
+        self.multiplier = discord.ui.TextInput(
+            label="مضاعف XP المطلوب للمستويات",
+            default=str(xp_settings.get("level_xp_multiplier", 1.0)),
+            placeholder="1.0 = عادي | 0.5 = نص (أسهل) | 2.0 = ضعف (أصعب)",
+            max_length=6
+        )
+        self.add_item(self.multiplier)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            new_mult = float(self.multiplier.value)
+        except ValueError:
+            await interaction.response.send_message("❌ خاصها تكون رقم (مثلا 1.0 ولا 0.5).", ephemeral=True)
+            return
+        if new_mult <= 0:
+            await interaction.response.send_message("❌ خاصها تكون أكبر من 0.", ephemeral=True)
+            return
+
+        xp_settings["level_xp_multiplier"] = round(new_mult, 3)
+        save_xp_settings()
+
+        await interaction.response.edit_message(embed=_xp_panel_embed(), view=XPPanelView())
+
+
 class XPPanelView(discord.ui.View):
     """أزرار لوحة تحكم XP — كل واحد كيحل Modal باش تبدل القيم ديال طريقة معينة.
     خاص Administrator باش يستعملها، حتى ملي تكون الرسالة بانة لكل واحد."""
@@ -8113,6 +8221,14 @@ class XPPanelView(discord.ui.View):
     async def edit_afk(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(AfkXPModal())
 
+    @discord.ui.button(label="عدل Trivia", emoji="🧠", style=discord.ButtonStyle.primary)
+    async def edit_trivia(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(TriviaXPModal())
+
+    @discord.ui.button(label="صعوبة المستويات", emoji="📈", style=discord.ButtonStyle.primary, row=1)
+    async def edit_level_difficulty(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(LevelXPModal())
+
     @discord.ui.button(label="رجّع الافتراضي", emoji="↩️", style=discord.ButtonStyle.danger, row=1)
     async def reset_defaults(self, interaction: discord.Interaction, button: discord.ui.Button):
         interval_changed = xp_settings["voice_interval_minutes"] != VOICE_XP_INTERVAL_MINUTES
@@ -8126,6 +8242,11 @@ class XPPanelView(discord.ui.View):
         xp_settings["afk_channel_per_interval"] = AFK_CHANNEL_XP_PER_INTERVAL
         xp_settings["afk_muted_per_interval"] = AFK_MUTED_XP_PER_INTERVAL
         xp_settings["afk_daily_cap"] = AFK_XP_DAILY_CAP
+        xp_settings["trivia_easy"] = TRIVIA_XP_BY_DIFFICULTY["easy"]
+        xp_settings["trivia_medium"] = TRIVIA_XP_BY_DIFFICULTY["medium"]
+        xp_settings["trivia_hard"] = TRIVIA_XP_BY_DIFFICULTY["hard"]
+        xp_settings["trivia_single"] = TRIVIA_XP_REWARD
+        xp_settings["level_xp_multiplier"] = 1.0
         save_xp_settings()
         if interval_changed and voice_xp_loop.is_running():
             voice_xp_loop.change_interval(minutes=VOICE_XP_INTERVAL_MINUTES)
@@ -8136,7 +8257,7 @@ class XPPanelView(discord.ui.View):
 @app_commands.default_permissions(administrator=True)
 @commands.has_permissions(administrator=True)
 async def xppanel_cmd(ctx):
-    """لوحة تحكم تفاعلية باش تبدل شحال ديال XP كياخدو الأعضاء من الشات، الفويس، واللايفستريم — Admin"""
+    """لوحة تحكم تفاعلية باش تبدل شحال ديال XP كياخدو الأعضاء من الشات، الفويس، اللايفستريم، Trivia، وصعوبة المستويات — Admin"""
     await ctx.send(embed=_xp_panel_embed(), view=XPPanelView())
 
 
