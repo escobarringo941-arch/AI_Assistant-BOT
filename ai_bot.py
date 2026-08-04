@@ -181,7 +181,7 @@ BESTFRIEND_ROLE_ID = 1533988290011594824   # ← (اختياري) رول عام 
 RELATIONSHIP_PROPOSAL_TIMEOUT_SECONDS = 300   # ← شحال ديال الوقت (بالثواني) عندو الشخص التاني باش يرد على الطلب
 RELATIONSHIP_DM_PROPOSALS = True    # ← الطلب يتبعث فـ DM للشخص المطلوب (True)، ولا فنفس الـ channel ديال السيرفر (False)
 RELATIONSHIP_PERSONAL_ROLE_ENABLED = True   # ← كل واحد فالعلاقة ياخد رول شخصي بسمية الشريك ديالو (بحال "💍 Aya")
-MARRIAGE_PERSONAL_ROLE_COLOR = 0xf83b3b     # ← لون الرولات الشخصية ديال الزواج (روز)
+MARRIAGE_PERSONAL_ROLE_COLOR = 0xd41b1b     # ← لون الرولات الشخصية ديال الزواج (روز)
 BESTFRIEND_PERSONAL_ROLE_COLOR = 0xf1c40f   # ← لون الرولات الشخصية ديال الصداقة (أزرق فاتح)
 
 # ═══════ رولات الأبراج — كيتعطى أوتوماتيكياً ملي العضو يدير /setbirthday حسب التاريخ ═══════
@@ -5705,15 +5705,15 @@ async def _propose_relationship(ctx, kind: str, target: discord.Member):
     proposer = ctx.author
 
     if target.id == proposer.id:
-        await ctx.send(f"❌ ما تقدرش {label['verb_propose']} نفسك 😅", delete_after=8)
+        await ctx.send(f"❌ ما تقدرش {label['verb_propose']} نفسك 😅", delete_after=8, ephemeral=True)
         return
     if target.bot:
-        await ctx.send("❌ ما تقدرش تدير هادشي مع بوت 🤖", delete_after=8)
+        await ctx.send("❌ ما تقدرش تدير هادشي مع بوت 🤖", delete_after=8, ephemeral=True)
         return
 
     conflict = _relationship_conflict_message(kind, proposer.id, target.id, target.mention)
     if conflict:
-        await ctx.send(conflict, delete_after=10)
+        await ctx.send(conflict, delete_after=10, ephemeral=True)
         return
 
     view = RelationshipProposalView(kind, ctx.guild, proposer, target)
@@ -5738,12 +5738,15 @@ async def _propose_relationship(ctx, kind: str, target: discord.Member):
             sent_in_dm = False
 
     if sent_in_dm:
+        # كتبان غير للشخص لي دار الأمر (ephemeral) — حتى واحد آخر فالشات ما غايشوفها.
+        # الطلب الحقيقي راه تبعث فـ DM ديال target، هو لي غايشوف الـ embed والأزرار.
         await ctx.send(
             f"📨 بعثت الطلب ديال {label['noun']} لـ {target.mention} فـ DM ديالو، فـ انتظار الرد.",
-            delete_after=15
+            delete_after=15, ephemeral=True
         )
     else:
-        # الـ DMs ديالو سادين — نبعثو الطلب هنا فنفس الـ channel كـ fallback
+        # الـ DMs ديالو سادين — ماكاين حل آخر غير نبعثو الطلب هنا فنفس الـ channel كـ fallback
+        # (خاص يكون view/embed مبان له باش يقدر يدوس على الأزرار، فهاد الحالة بوحدها كيبان فالشات)
         note = "" if not RELATIONSHIP_DM_PROPOSALS else "\n*(ما قدرتش نبعثلو DM — الطلب هنا)*"
         proposal_embed.description += note
         msg = await ctx.send(content=target.mention, embed=proposal_embed, view=view)
@@ -6397,6 +6400,10 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
                 move_members=True, mute_members=True, deafen_members=True
             ),
         }
+        # ═══ رول Unverified ما يشوفش الروومات المؤقتة حتى يوافق على الشروط ═══
+        unverified_role = guild.get_role(UNVERIFIED_ROLE_ID) if UNVERIFIED_ROLE_ID else None
+        if unverified_role:
+            overwrites[unverified_role] = discord.PermissionOverwrite(view_channel=False, connect=False)
         try:
             new_channel = await guild.create_voice_channel(
                 name=TEMP_VC_NAME_TEMPLATE.format(name=member.display_name)[:100],
