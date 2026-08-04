@@ -321,6 +321,50 @@ LEVEL_ROLES = {
     100: 1532878888986738869,
 }
 
+# ═══════ صلاحيات Discord حقيقية كتنحط مباشرة فرولات LEVEL_ROLES فوق (تراكمية:
+# كل مستوى كيرث الصلاحيات ديال اللي قبلو + كيزيد شي حاجة جديدة). كتطبق أوتوماتيكياً
+# على الرول ديال أعلى مستوى وصل ليه العضو (نفس الرول اللي كيعطيه sync_level_roles). ═══════
+LEVEL_PERK_ADDITIONS = {
+    5:   discord.Permissions(use_external_emojis=True, use_external_stickers=True),
+    10:  discord.Permissions(priority_speaker=True, use_soundboard=True),
+    15:  discord.Permissions(use_external_sounds=True, send_voice_messages=True),
+    20:  discord.Permissions(create_public_threads=True, create_private_threads=True,
+                              send_messages_in_threads=True),
+    25:  discord.Permissions(embed_links=True, attach_files=True, use_embedded_activities=True),
+    30:  discord.Permissions(request_to_speak=True),
+    40:  discord.Permissions(manage_events=True),
+    50:  discord.Permissions(stream=True),
+    60:  discord.Permissions(view_audit_log=True),
+    70:  discord.Permissions(manage_threads=True),
+    100: discord.Permissions(manage_emojis_and_stickers=True),
+}
+
+
+def get_cumulative_level_permissions(level: int) -> discord.Permissions:
+    """كترجع الصلاحيات التراكمية (كاع اللي تزادو من المستوى 5 حتى هاد المستوى)
+    — كل رول ديال LEVEL_ROLES خاصو يكون فيه المجموع الكامل، حيت العضو عندو غير
+    رول واحد فأي وقت (أعلى مستوى وصل ليه، بفضل sync_level_roles)."""
+    value = 0
+    for lvl, perms in sorted(LEVEL_PERK_ADDITIONS.items()):
+        if lvl <= level:
+            value |= perms.value
+    return discord.Permissions(value)
+
+
+async def sync_level_role_permissions(guild: discord.Guild):
+    """كتأكد بلي كل رول فـ LEVEL_ROLES عندو بالضبط الصلاحيات التراكمية المطلوبة —
+    self-healing، كتخدم فـ on_ready بلا ما يحتاج حد يتدخل يدوياً."""
+    for level, role_id in LEVEL_ROLES.items():
+        role = guild.get_role(role_id)
+        if not role:
+            continue
+        desired = get_cumulative_level_permissions(level)
+        if role.permissions.value != desired.value:
+            try:
+                await role.edit(permissions=desired, reason=f"Level {level} Perks Sync")
+            except (discord.Forbidden, discord.HTTPException) as e:
+                print(f"[LEVEL PERKS] ما قدرتش نبدل صلاحيات رول Level {level}: {e}")
+
 # ═══════ نظام مكافآت الـ Milestones (10 → 100) — أوتوماتيكي بالكامل ═══════
 # كل رول هنا كيتصاوب أوتوماتيكياً من طرف البوت أول مرة يوصل ليها شي عضو (ماخصكش
 # تصاوب حتى رول يدوياً) — وكيبقى مكتسب للأبد (تراكمي، ماشي بديل بحال LEVEL_ROLES).
@@ -1093,7 +1137,8 @@ def save_milestone_roles():
 async def get_or_create_tier_role(guild: discord.Guild, level: int) -> Optional[discord.Role]:
     """كترجع الرول المشترك ديال هاد الـ tier (level 10, 15, 20...) — كتصاوبو أوتوماتيكياً
     أول مرة، وكتحطو مباشرة فوق الرول الأساسي ديال LEVEL_ROLES بنفس المستوى (إلا كاين) باش
-    يبقاو مجموعين بجانب بعضياتهم فترتيب الرولات."""
+    يبقاو مجموعين بجانب بعضياتهم فترتيب الرولات. (بادج/cosmetic بوحدها — الصلاحيات الحقيقية
+    دابا كلها فرولات LEVEL_ROLES نفسها، شوف LEVEL_PERK_ADDITIONS)."""
     info = LEVEL_MILESTONES.get(level)
     if not info:
         return None
@@ -7793,7 +7838,7 @@ async def on_message(message):
     await message.reply(response[:MAX_REPLY_LENGTH], mention_author=False)
 
 
-@bot.hybrid_command()
+@bot.hybrid_command(description="اطرد عضو من السيرفر")
 @app_commands.default_permissions(kick_members=True)
 @commands.has_permissions(kick_members=True)
 async def kick(ctx, member: discord.Member, *, reason: str = "ما ذكرش سبب"):
@@ -7825,7 +7870,7 @@ async def kick(ctx, member: discord.Member, *, reason: str = "ما ذكرش سب
         await ctx.send(f"❌ خطأ: {str(e)}")
 
 
-@bot.hybrid_command()
+@bot.hybrid_command(description="احظر عضو من السيرفر")
 @app_commands.default_permissions(ban_members=True)
 @commands.has_permissions(ban_members=True)
 async def ban(ctx, member: discord.Member, *, reason: str = "ما ذكرش سبب"):
@@ -7857,7 +7902,7 @@ async def ban(ctx, member: discord.Member, *, reason: str = "ما ذكرش سب�
         await ctx.send(f"❌ خطأ: {str(e)}")
 
 
-@bot.hybrid_command()
+@bot.hybrid_command(description="فك الحظر على عضو (بالـ User ID)")
 @app_commands.default_permissions(ban_members=True)
 @commands.has_permissions(ban_members=True)
 async def unban(ctx, user_id: int):
@@ -7882,7 +7927,7 @@ async def unban(ctx, user_id: int):
         await ctx.send("❌ ما عنديش الصلاحية!")
 
 
-@bot.hybrid_command()
+@bot.hybrid_command(description="امسح عدد من الرسائل فالشانيل")
 @app_commands.default_permissions(manage_messages=True)
 @commands.has_permissions(manage_messages=True)
 async def clear(ctx, amount: int = 10):
@@ -7906,7 +7951,7 @@ async def clear(ctx, amount: int = 10):
         await ctx.send("❌ ما عنديش الصلاحية!")
 
 
-@bot.hybrid_command()
+@bot.hybrid_command(description="كتم عضو (Timeout) لمدة معينة")
 @app_commands.default_permissions(moderate_members=True)
 @commands.has_permissions(moderate_members=True)
 async def mute(ctx, member: discord.Member, duration: int = 5, *, reason: str = "ما ذكرش سبب"):
@@ -7947,7 +7992,7 @@ async def mute(ctx, member: discord.Member, duration: int = 5, *, reason: str = 
         await ctx.send("❌ ما عنديش الصلاحية!")
 
 
-@bot.hybrid_command()
+@bot.hybrid_command(description="فك الكتم على عضو")
 @app_commands.default_permissions(moderate_members=True)
 @commands.has_permissions(moderate_members=True)
 async def unmute(ctx, member: discord.Member):
@@ -8030,7 +8075,7 @@ async def report_error(ctx, error):
         pass
 
 
-@bot.hybrid_command()
+@bot.hybrid_command(description="أعطي تحذير لعضو")
 @app_commands.default_permissions(kick_members=True)
 @commands.has_permissions(kick_members=True)
 async def warn(ctx, member: discord.Member, *, reason: str):
@@ -8066,7 +8111,7 @@ async def warn(ctx, member: discord.Member, *, reason: str):
         await ctx.send("❌ ما قدرتش نطبق العقوبة (تأكد من صلاحيات وترتيب الأدوار ديال البوت)!")
 
 
-@bot.hybrid_command()
+@bot.hybrid_command(description="بين التحذيرات ديال عضو")
 @app_commands.default_permissions(kick_members=True)
 @commands.has_permissions(kick_members=True)
 async def warns(ctx, member: Optional[discord.Member] = None):
@@ -8094,7 +8139,7 @@ async def warns(ctx, member: Optional[discord.Member] = None):
     await ctx.send(embed=embed)
 
 
-@bot.hybrid_command()
+@bot.hybrid_command(description="حيد آخر تحذير من عضو")
 @app_commands.default_permissions(kick_members=True)
 @commands.has_permissions(kick_members=True)
 async def unwarn(ctx, member: discord.Member):
@@ -8202,7 +8247,7 @@ async def history_cmd(ctx, member: Optional[discord.Member] = None):
 # كتمسح مباشرة، والجواب كيوصل بـ DM للـ Owner فقط — باش حتى حد آخر فالسيرفر
 # ما يشوف واش تزادت/تحيدت شي كلمة، وواش شكون دارها.
 
-@bot.hybrid_command(name="addword")
+@bot.hybrid_command(name="addword", description="زيد كلمة للائحة الكلمات الممنوعة")
 @app_commands.default_permissions(administrator=True)
 async def addword_cmd(ctx, *, word: str = ""):
     await _delete_trigger_silently(ctx)
@@ -8222,7 +8267,7 @@ async def addword_cmd(ctx, *, word: str = ""):
         pass
 
 
-@bot.hybrid_command(name="removeword")
+@bot.hybrid_command(name="removeword", description="حيد كلمة من لائحة الكلمات الممنوعة")
 @app_commands.default_permissions(administrator=True)
 async def removeword_cmd(ctx, *, word: str = ""):
     await _delete_trigger_silently(ctx)
@@ -8261,7 +8306,7 @@ async def addaction_cmd(ctx, *, phrase: str = ""):
         pass
 
 
-@bot.hybrid_command(name="removeaction")
+@bot.hybrid_command(name="removeaction", description="حيد جملة من لائحة الجمل الممنوعة")
 @app_commands.default_permissions(administrator=True)
 async def removeaction_cmd(ctx, *, phrase: str = ""):
     await _delete_trigger_silently(ctx)
@@ -8305,7 +8350,7 @@ async def listbanned_cmd(ctx):
 # يقدروش يستعملوها. الـ Admins والـ Moderators كيبقاو خدامين بالأوامر
 # العادية فوق حسب الصلاحيات ديال الـ role ديالهم بحال ماكانو.
 
-@bot.hybrid_command(name="ownerkick")
+@bot.hybrid_command(name="ownerkick", description="اطرد عضو (Owner بوحدو)")
 @app_commands.default_permissions(administrator=True)
 async def ownerkick_cmd(ctx, member: discord.Member, *, reason="ما ذكرش سبب"):
     if not is_owner(ctx):
@@ -8326,7 +8371,7 @@ async def ownerkick_cmd(ctx, member: discord.Member, *, reason="ما ذكرش س
         await ctx.send(f"❌ خطأ: {str(e)}", delete_after=5)
 
 
-@bot.hybrid_command(name="ownerban")
+@bot.hybrid_command(name="ownerban", description="احظر عضو (Owner بوحدو)")
 @app_commands.default_permissions(administrator=True)
 async def ownerban_cmd(ctx, member: discord.Member, *, reason="ما ذكرش سبب"):
     if not is_owner(ctx):
@@ -8347,7 +8392,7 @@ async def ownerban_cmd(ctx, member: discord.Member, *, reason="ما ذكرش س�
         await ctx.send(f"❌ خطأ: {str(e)}", delete_after=5)
 
 
-@bot.hybrid_command(name="ownermute")
+@bot.hybrid_command(name="ownermute", description="كتم عضو (Owner بوحدو)")
 @app_commands.default_permissions(administrator=True)
 async def ownermute_cmd(ctx, member: discord.Member, duration: int = 5, *, reason="ما ذكرش سبب"):
     if not is_owner(ctx):
@@ -9719,7 +9764,7 @@ async def clearoldverify(ctx):
     await ctx.send(f"✅ تمسحو {deleted} رسالة/رسائل قديمة." if deleted else "ماكاينش شي رسالة قديمة باش تتمسح.", delete_after=8)
 
 
-@bot.hybrid_command()
+@bot.hybrid_command(description="صاوب رسالة التفعيل/القوانين (Admin)")
 @app_commands.default_permissions(administrator=True)
 @commands.has_permissions(administrator=True)
 async def setupverify(ctx):
@@ -9811,7 +9856,7 @@ async def listroles(ctx):
     await ctx.send(embed=embed)
 
 
-@bot.hybrid_command()
+@bot.hybrid_command(description="فعّل عضو يدوياً (Admin)")
 @app_commands.default_permissions(administrator=True)
 @commands.has_permissions(administrator=True)
 async def verify(ctx, member: discord.Member):
@@ -9874,7 +9919,7 @@ async def checkroles(ctx):
     await ctx.send(embed=embed)
 
 
-@bot.hybrid_command()
+@bot.hybrid_command(description="رجع عضو Unverified (Admin)")
 @app_commands.default_permissions(administrator=True)
 @commands.has_permissions(administrator=True)
 async def unverify(ctx, member: discord.Member):
@@ -9902,7 +9947,7 @@ async def unverify(ctx, member: discord.Member):
     )
 
 
-@bot.hybrid_command()
+@bot.hybrid_command(description="بين سرعة استجابة البوت")
 async def ping(ctx):
     latency = round(bot.latency * 1000)
     embed = discord.Embed(
@@ -9915,7 +9960,7 @@ async def ping(ctx):
     await ctx.send(embed=embed)
 
 
-@bot.hybrid_command()
+@bot.hybrid_command(description="بين معلومات عامة على البوت")
 async def info(ctx):
     embed = discord.Embed(
         title="🤖 معلومات GGMW9",
@@ -10060,7 +10105,7 @@ async def delreminder_cmd(ctx, reminder_id: int):
     await ctx.send(f"✅ تحذاف التذكير #{reminder_id}.", delete_after=10)
 
 
-@bot.hybrid_command()
+@bot.hybrid_command(description="بين لائحة كاع الأوامر")
 async def help(ctx):
     embed = discord.Embed(
         title="📋 قائمة أوامر GGMW9",
@@ -10210,14 +10255,14 @@ async def help(ctx):
     await ctx.send(embed=embed)
 
 
-@bot.hybrid_command()
+@bot.hybrid_command(description="هضر مع البوت (AI)")
 async def chat(ctx, *, message: str):
     user_id = str(ctx.author.id)
     response = await ask_ai(user_id, ctx.author.name, ctx.author.display_name, message)
     await ctx.send(response[:MAX_REPLY_LENGTH])
 
 
-@bot.hybrid_command()
+@bot.hybrid_command(description="امسح الذاكرة ديال المحادثة (Owner)")
 @app_commands.default_permissions(administrator=True)
 @owner_only()
 async def نسيني(ctx):
@@ -10229,7 +10274,7 @@ async def نسيني(ctx):
         await ctx.send("ما عندي والو ننساه!")
 
 
-@bot.hybrid_command()
+@bot.hybrid_command(description="بين الذاكرة ديال المحادثة (Owner)")
 @app_commands.default_permissions(administrator=True)
 @owner_only()
 async def ذاكرة(ctx):
@@ -10238,7 +10283,7 @@ async def ذاكرة(ctx):
     await ctx.send(f"🧠 عندي {count} رسالة فـ الذاكرة ديالك.")
 
 
-@bot.hybrid_command()
+@bot.hybrid_command(description="علم البوت شي معلومة جديدة (Owner)")
 @app_commands.default_permissions(administrator=True)
 @owner_only()
 async def انعلمك(ctx, *, knowledge: str):
@@ -10250,7 +10295,7 @@ async def انعلمك(ctx, *, knowledge: str):
         await ctx.send(f"✅ **واخا أسيدي!** تعلمت: {knowledge[:100]}... نتذكرها دايمن! 🧠")
 
 
-@bot.hybrid_command()
+@bot.hybrid_command(description="علم البوت شي معلومة جديدة (Owner)")
 @app_commands.default_permissions(administrator=True)
 @owner_only()
 async def انعلمك_شي_حاجة_جديدة(ctx, *, knowledge: str):
@@ -10822,6 +10867,21 @@ async def on_ready():
     bot.add_view(TriviaGamePanelView())    # باش زر "🎮 ابدأ اللعب" ديال Trivia يبقى خدام حتى بعد ريستارت البوت
 
     for guild in bot.guilds:
+        # ═══ Self-healing: صلاحيات رولات LEVEL_ROLES نفسها (5→100) مزبوطة تراكمياً ═══
+        try:
+            await sync_level_role_permissions(guild)
+        except Exception as e:
+            print(f"[LEVEL PERKS] خطأ فـ sync صلاحيات LEVEL_ROLES: {e}")
+
+        # ═══ Self-healing: نتأكدو بلي صلاحيات رولات الـ Milestones (10/15/25...) مزبوطة ═══
+        # حتى للرولات اللي تصاوبو من قبل (قبل ما نزيدو الصلاحيات الجداد) — بلا ما نحتاجو
+        # حد يعاود يطلع لهاد المستوى باش يتصلح.
+        for _lvl in LEVEL_MILESTONES:
+            try:
+                await get_or_create_tier_role(guild, _lvl)
+            except Exception as e:
+                print(f"[MILESTONES] خطأ فـ sync صلاحيات Level {_lvl}: {e}")
+
         # ملاحظة: ماعادش كنبعثو رسالة "تفعيل العضوية" القديمة (بالريأكشن ✅)
         # باش ما تبقاش مكررة مع رسالة القوانين الجديدة بالأزرار (setup_rules_message)
         await setup_rules_message(guild)
