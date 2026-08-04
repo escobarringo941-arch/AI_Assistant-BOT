@@ -181,8 +181,8 @@ BESTFRIEND_ROLE_ID = 1533988290011594824   # ← (اختياري) رول عام 
 RELATIONSHIP_PROPOSAL_TIMEOUT_SECONDS = 300   # ← شحال ديال الوقت (بالثواني) عندو الشخص التاني باش يرد على الطلب
 RELATIONSHIP_DM_PROPOSALS = True    # ← الطلب يتبعث فـ DM للشخص المطلوب (True)، ولا فنفس الـ channel ديال السيرفر (False)
 RELATIONSHIP_PERSONAL_ROLE_ENABLED = True   # ← كل واحد فالعلاقة ياخد رول شخصي بسمية الشريك ديالو (بحال "💍 Aya")
-MARRIAGE_PERSONAL_ROLE_COLOR = 0xFF5DA2     # ← لون الرولات الشخصية ديال الزواج (روز)
-BESTFRIEND_PERSONAL_ROLE_COLOR = 0x55C1FF   # ← لون الرولات الشخصية ديال الصداقة (أزرق فاتح)
+MARRIAGE_PERSONAL_ROLE_COLOR = 0xf83b3b     # ← لون الرولات الشخصية ديال الزواج (روز)
+BESTFRIEND_PERSONAL_ROLE_COLOR = 0xf1c40f   # ← لون الرولات الشخصية ديال الصداقة (أزرق فاتح)
 
 # ═══════ رولات الأبراج — كيتعطى أوتوماتيكياً ملي العضو يدير /setbirthday حسب التاريخ ═══════
 # ⚠️ بدل كل 0 برقم الـ Role ID الحقيقي ديالك (Server Settings → Roles → كليك يمين → Copy Role ID)
@@ -712,11 +712,27 @@ def _pair_key(user_id_1: int, user_id_2: int) -> str:
 
 
 def find_relationship(kind: str, user_id: int):
-    """كترجع (pair_key, record) ديال العلاقة الحالية ديال العضو (marriages ولا bestfriends)، وإلا (None, None)"""
+    """كترجع (pair_key, record) ديال أول علاقة كتلقاها للعضو (marriages ولا bestfriends)، وإلا (None, None).
+    للـ marriages (علاقة وحدة بالضرورة) هادي كافية. للـ bestfriends خاصك find_all_relationships حيت ممكن يكون بزاف."""
     for key, record in relationships_db.get(kind, {}).items():
         if record.get("user_a") == user_id or record.get("user_b") == user_id:
             return key, record
     return None, None
+
+
+def find_all_relationships(kind: str, user_id: int):
+    """كترجع لائحة [(pair_key, record), ...] ديال كل العلاقات ديال العضو من نوع معين.
+    مفيدة للـ bestfriends حيت عضو وحد يقدر يكون عندو بزاف ديال الأصدقاء المقربين فنفس الوقت."""
+    result = []
+    for key, record in relationships_db.get(kind, {}).items():
+        if record.get("user_a") == user_id or record.get("user_b") == user_id:
+            result.append((key, record))
+    return result
+
+
+def has_relationship_with(kind: str, user_id_1: int, user_id_2: int) -> bool:
+    """واش كاينة ديجا علاقة (من هاد النوع) بالضبط بين هاد الجوج ديال الناس."""
+    return _pair_key(user_id_1, user_id_2) in relationships_db.get(kind, {})
 
 
 def get_partner_id(record: dict, user_id: int) -> int:
@@ -5403,11 +5419,13 @@ RELATIONSHIP_LABELS = {
         "verb_propose": "يتزوج", "noun": "زواج", "emoji": "💍", "verb_done": "تزوجو",
         "role_prefix": "💍", "color": discord.Color.from_rgb(255, 93, 162),
         "title_propose": "💍 طلب زواج جديد", "title_accept": "💍 مبروك! زواج جديد",
+        "exclusive": True,   # ← عضو وحد ما يقدرش يكون عندو كتر من زواج واحد فنفس الوقت
     },
     "bestfriends": {
         "verb_propose": "يكون Best Friend ديال", "noun": "صداقة", "emoji": "🤝", "verb_done": "وليو Best Friends",
         "role_prefix": "🤝", "color": discord.Color.from_rgb(85, 193, 255),
         "title_propose": "🤝 طلب صداقة (Best Friend) جديد", "title_accept": "🤝 مبروك! صداقة جديدة",
+        "exclusive": False,  # ← عضو وحد يقدر يكون عندو بزاف ديال الـ Best Friends فنفس الوقت
     },
 }
 
@@ -5426,10 +5444,29 @@ def _safe_role_name(prefix: str, display_name: str) -> str:
     return name[:100]
 
 
+def _relationship_conflict_message(kind: str, proposer_id: int, target_id: int, target_mention: str) -> Optional[str]:
+    """كتشوف واش كاين شي مانع باش هاد الجوج يديرو العلاقة، وكترجع رسالة الخطأ (وإلا None إلا ماكاين والو).
+    - marriages: exclusive → حتى واحد فيهم مايكونش عندو زواج آخر.
+    - bestfriends: ماشي exclusive → غير كنمنعو نفس الجوج بالضبط يكررو الصداقة مرتين."""
+    label = RELATIONSHIP_LABELS[kind]
+    if label["exclusive"]:
+        existing_key, existing_record = find_relationship(kind, proposer_id)
+        if existing_key:
+            partner_id = get_partner_id(existing_record, proposer_id)
+            return f"❌ عندك ديجا {label['noun']} مع <@{partner_id}>. دير `/divorce` أولاً."
+        target_key, _ = find_relationship(kind, target_id)
+        if target_key:
+            return f"❌ {target_mention} عندو ديجا {label['noun']} مع شي حد آخر."
+    else:
+        if has_relationship_with(kind, proposer_id, target_id):
+            return f"❌ عندك ديجا {label['noun']} مع {target_mention}."
+    return None
+
+
 async def _create_personal_partner_roles(guild: discord.Guild, kind: str,
                                           proposer: discord.Member, target: discord.Member):
     """كتصاوب جوج رولات شخصية: وحدة للـ proposer بسمية الـ target، ووحدة للـ target بسمية الـ proposer.
-    كترجع dict {user_id: role} — وإلا فشلات (صلاحيات ناقصة مثلا)، كترجع {}."""
+    كترجع dict {user_id: role_id} — وإلا فشلات (صلاحيات ناقصة مثلا)، كترجع {}."""
     if not RELATIONSHIP_PERSONAL_ROLE_ENABLED:
         return {}
     label = RELATIONSHIP_LABELS[kind]
@@ -5465,6 +5502,51 @@ async def _delete_personal_partner_roles(guild: discord.Guild, record: dict):
             await role.delete(reason="العلاقة انتهات")
         except (discord.Forbidden, discord.HTTPException) as e:
             print(f"[RELATIONSHIPS] ما قدرتش نمسح الرول {role_id}: {e}")
+
+
+async def _finalize_end_relationship(guild: discord.Guild, kind: str, key: str, record: dict,
+                                      ended_by_id: int):
+    """المنطق المشترك باش نسالو علاقة: كتحيد الرول العام + الرولات الشخصية، كتمسح السجل،
+    وكتبعث تنبيه DM للطرف الآخر. كترجع partner_id."""
+    label = RELATIONSHIP_LABELS[kind]
+    partner_id = get_partner_id(record, ended_by_id)
+
+    role_id = _relationship_role_id(kind)
+    if role_id:
+        role = guild.get_role(role_id)
+        if role:
+            partner_member = guild.get_member(partner_id)
+            ender_member = guild.get_member(ended_by_id)
+            for m in (ender_member, partner_member):
+                if m and role in m.roles:
+                    # نتأكدو بلي ماعندوش علاقة أخرى بنفس النوع قبل ما نحيدو الرول العام (حالة bestfriends المتعددة)
+                    if label["exclusive"] or not find_all_relationships(kind, m.id):
+                        try:
+                            await m.remove_roles(role, reason=f"{kind} — سالات")
+                        except (discord.Forbidden, discord.HTTPException):
+                            pass
+
+    await _delete_personal_partner_roles(guild, record)
+    end_relationship(kind, key)
+
+    await log_action(
+        guild, f"💔 {label['noun'].capitalize()} انتهى",
+        f"<@{ended_by_id}> + <@{partner_id}>", discord.Color.dark_grey()
+    )
+
+    partner_member = guild.get_member(partner_id)
+    if partner_member:
+        try:
+            ender = guild.get_member(ended_by_id)
+            ender_name = str(ender) if ender else "شي عضو"
+            await partner_member.send(embed=discord.Embed(
+                description=f"💔 **{ender_name}** نهى معاك {label['noun']} ديالكم.",
+                color=discord.Color.dark_grey()
+            ))
+        except discord.HTTPException:
+            pass
+
+    return partner_id
 
 
 class RelationshipProposalView(discord.ui.View):
@@ -5531,15 +5613,13 @@ class RelationshipProposalView(discord.ui.View):
             ), view=self)
             return
 
-        # نتأكدو مرة أخرى بلي حتى واحد فيهم مادار شي علاقة أخرى (بين ما تصاوب الطلب ودابا)
-        existing_key_1, _ = find_relationship(self.kind, proposer.id)
-        existing_key_2, _ = find_relationship(self.kind, target.id)
-        if existing_key_1 or existing_key_2:
+        # نتأكدو مرة أخرى بلي مازال ماكاين حتى مانع (بين ما تصاوب الطلب ودابا)
+        conflict = _relationship_conflict_message(self.kind, proposer.id, target.id, target.mention)
+        if conflict:
             for child in self.children:
                 child.disabled = True
             await interaction.response.edit_message(embed=discord.Embed(
-                description="❌ واحد منكم عندو ديجا هاد النوع ديال العلاقة، الطلب لغي.",
-                color=discord.Color.red()
+                description=f"❌ {conflict.lstrip('❌ ')}\nالطلب لغي.", color=discord.Color.red()
             ), view=self)
             return
 
@@ -5631,15 +5711,9 @@ async def _propose_relationship(ctx, kind: str, target: discord.Member):
         await ctx.send("❌ ما تقدرش تدير هادشي مع بوت 🤖", delete_after=8)
         return
 
-    existing_key, existing_record = find_relationship(kind, proposer.id)
-    if existing_key:
-        partner_id = get_partner_id(existing_record, proposer.id)
-        await ctx.send(f"❌ عندك ديجا {label['noun']} مع <@{partner_id}>. دير `/divorce` ولا `/unbestfriend` أولاً.", delete_after=10)
-        return
-
-    target_key, _ = find_relationship(kind, target.id)
-    if target_key:
-        await ctx.send(f"❌ {target.mention} عندو ديجا {label['noun']} مع شي حد آخر.", delete_after=8)
+    conflict = _relationship_conflict_message(kind, proposer.id, target.id, target.mention)
+    if conflict:
+        await ctx.send(conflict, delete_after=10)
         return
 
     view = RelationshipProposalView(kind, ctx.guild, proposer, target)
@@ -5677,52 +5751,107 @@ async def _propose_relationship(ctx, kind: str, target: discord.Member):
 
 
 async def _end_relationship_cmd(ctx, kind: str):
+    """للـ marriages (exclusive) — عندو غير علاقة وحدة، نسالوها مباشرة بلا اختيار."""
     label = RELATIONSHIP_LABELS[kind]
     key, record = find_relationship(kind, ctx.author.id)
     if not key:
         await ctx.send(f"⚠️ ماعندكش {label['noun']} دابا.", delete_after=8)
         return
 
-    partner_id = get_partner_id(record, ctx.author.id)
-
-    role_id = _relationship_role_id(kind)
-    if role_id and ctx.guild:
-        role = ctx.guild.get_role(role_id)
-        if role:
-            partner = ctx.guild.get_member(partner_id)
-            for m in (ctx.author, partner):
-                if m and role in m.roles:
-                    try:
-                        await m.remove_roles(role, reason=f"{kind} — سالات")
-                    except (discord.Forbidden, discord.HTTPException):
-                        pass
-    if ctx.guild:
-        await _delete_personal_partner_roles(ctx.guild, record)
-
-    end_relationship(kind, key)
-
+    partner_id = await _finalize_end_relationship(ctx.guild, kind, key, record, ctx.author.id)
     verb = "طلقتي" if kind == "marriages" else "قطعتي الصداقة مع"
     await ctx.send(f"{label['emoji']} {verb} <@{partner_id}>. 💔")
-    if ctx.guild:
-        await log_action(
-            ctx.guild, f"💔 {label['noun'].capitalize()} انتهى",
-            f"**{ctx.author.mention}** + <@{partner_id}>",
-            discord.Color.dark_grey()
+
+
+class BestfriendRemoveSelect(discord.ui.Select):
+    def __init__(self, owner_id: int, guild: discord.Guild, pairs: list):
+        # pairs: [(pair_key, record), ...] — كل وحدة كتولي خيار فـ dropdown
+        options = []
+        for key, record in pairs[:25]:
+            partner_id = get_partner_id(record, owner_id)
+            member = guild.get_member(partner_id)
+            label_text = member.display_name if member else f"عضو ({partner_id})"
+            duration = format_duration_since(record["since"])
+            options.append(discord.SelectOption(label=label_text[:100], description=f"صديق مقرب منذ {duration}"[:100], value=key))
+        super().__init__(placeholder="اختار شكون بغيتي تحيد من لائحة Best Friends ديالك...",
+                          min_values=1, max_values=1, options=options)
+        self.owner_id = owner_id
+        self.guild = guild
+
+    async def callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("❌ هادي مقاديرش تستعملها.", ephemeral=True)
+            return
+        key = self.values[0]
+        record = relationships_db.get("bestfriends", {}).get(key)
+        if not record:
+            await interaction.response.edit_message(content="⚠️ هاد العلاقة ماعادش موجودة (يمكن تحيدات من قبل).", embed=None, view=None)
+            return
+
+        partner_id = await _finalize_end_relationship(self.guild, "bestfriends", key, record, self.owner_id)
+        for child in self.view.children:
+            child.disabled = True
+        await interaction.response.edit_message(
+            content=None,
+            embed=discord.Embed(description=f"🤝💔 قطعتي الصداقة مع <@{partner_id}>.", color=discord.Color.dark_grey()),
+            view=self.view
         )
-        partner_member = ctx.guild.get_member(partner_id)
-        if partner_member:
-            try:
-                await partner_member.send(embed=discord.Embed(
-                    description=f"💔 **{ctx.author}** {verb.replace('طلقتي', 'طلق').replace('قطعتي الصداقة مع', 'قطع الصداقة معاك')}.",
-                    color=discord.Color.dark_grey()
-                ))
-            except discord.HTTPException:
-                pass
+
+
+class BestfriendRemoveView(discord.ui.View):
+    def __init__(self, owner_id: int, guild: discord.Guild, pairs: list):
+        super().__init__(timeout=60)
+        self.add_item(BestfriendRemoveSelect(owner_id, guild, pairs))
+
+
+async def unbestfriend_interactive(ctx):
+    """بدل ما نحيدو مباشرة، كنوريو للعضو لائحة (dropdown) بكل الـ Best Friends ديالو دابا
+    باش يختار بالضبط شكون بغى يحيد — مفيدة حيت عضو وحد يقدر يكون عندو بزاف ديالهم فنفس الوقت."""
+    label = RELATIONSHIP_LABELS["bestfriends"]
+    pairs = find_all_relationships("bestfriends", ctx.author.id)
+    if not pairs:
+        await ctx.send(f"⚠️ ماعندكش حتى {label['noun']} دابا.", delete_after=8)
+        return
+
+    lines = []
+    for key, record in pairs:
+        partner_id = get_partner_id(record, ctx.author.id)
+        duration = format_duration_since(record["since"])
+        lines.append(f"• <@{partner_id}> — منذ **{duration}**")
+
+    embed = discord.Embed(
+        title="🤝 شكون بغيتي تحيد؟",
+        description="\n".join(lines) + "\n\nختار من اللائحة تحت 👇",
+        color=label["color"]
+    )
+    view = BestfriendRemoveView(ctx.author.id, ctx.guild, pairs)
+    await ctx.send(embed=embed, view=view)
 
 
 async def _relationship_info_cmd(ctx, kind: str, member: Optional[discord.Member]):
     label = RELATIONSHIP_LABELS[kind]
     target = member or ctx.author
+
+    if not label["exclusive"]:
+        # bestfriends: نوريو الكل (ممكن يكون عندو بزاف)
+        pairs = find_all_relationships(kind, target.id)
+        if not pairs:
+            who = "عندك" if target == ctx.author else f"عند {target.mention}"
+            await ctx.send(f"💔 ما{who}ش {label['noun']} دابا.", delete_after=8)
+            return
+        lines = []
+        for key, record in pairs:
+            partner_id = get_partner_id(record, target.id)
+            duration = format_duration_since(record["since"])
+            lines.append(f"• <@{partner_id}> — منذ **{duration}**")
+        embed = discord.Embed(
+            title=f"{label['emoji']} {label['noun'].capitalize()} ديال {target.display_name}",
+            description="\n".join(lines),
+            color=label["color"]
+        )
+        await ctx.send(embed=embed)
+        return
+
     key, record = find_relationship(kind, target.id)
     if not key:
         who = "عندك" if target == ctx.author else f"عند {target.mention}"
@@ -5793,19 +5922,20 @@ async def marriages_cmd(ctx):
 
 @bot.hybrid_command(name="bestfriend", description="اطلب من عضو يكون Best Friend ديالك 🤝 (كيتبعث ليه DM)")
 async def bestfriend_cmd(ctx, user: discord.Member):
-    """اطلب من عضو يكون Best Friend ديالك 🤝 — كيتبعث ليه طلب فـ DM وخاصو يقبل بزر"""
+    """اطلب من عضو يكون Best Friend ديالك 🤝 — كيتبعث ليه طلب فـ DM وخاصو يقبل بزر
+    (تقدر يكون عندك بزاف ديال الـ Best Friends فنفس الوقت)"""
     await _propose_relationship(ctx, "bestfriends", user)
 
 
-@bot.hybrid_command(name="unbestfriend")
+@bot.hybrid_command(name="unbestfriend", description="حيد شي صديق مقرب — كتوري ليك لائحة تختار منها")
 async def unbestfriend_cmd(ctx):
-    """قطع الصداقة ديالك مع الـ Best Friend ديالك 💔 (كيحيد الرولات الشخصية ديال الجوج)"""
-    await _end_relationship_cmd(ctx, "bestfriends")
+    """قطع الصداقة مع واحد من الـ Best Friends ديالك — كتوري ليك لائحة (dropdown) تختار منها بالضبط شكون"""
+    await unbestfriend_interactive(ctx)
 
 
 @bot.hybrid_command(name="bestfriendinfo")
 async def bestfriendinfo_cmd(ctx, user: Optional[discord.Member] = None):
-    """بين معلومات الـ Best Friend ديالك ولا ديال عضو آخر"""
+    """بين لائحة الـ Best Friends ديالك ولا ديال عضو آخر"""
     await _relationship_info_cmd(ctx, "bestfriends", user)
 
 
