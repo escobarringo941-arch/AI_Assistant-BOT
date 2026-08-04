@@ -183,7 +183,7 @@ RELATIONSHIP_DM_PROPOSALS = True    # ← الطلب يتبعث فـ DM للشخ
 RELATIONSHIP_ANNOUNCE_CHANNEL_ID = 1524957892925456545   # ← الـ channel (# general) فين كيتبعث إعلان عام ملي شي حد يقبل الزواج/الصداقة، ولا يطلق/يقطع الصداقة — خليها 0 إلا مابغيتيش
 RELATIONSHIP_PERSONAL_ROLE_ENABLED = True   # ← كل واحد فالعلاقة ياخد رول شخصي بسمية الشريك ديالو (بحال "💍 Aya")
 MARRIAGE_PERSONAL_ROLE_COLOR = 0xd41b1b     # ← لون الرولات الشخصية ديال الزواج (روز)
-BESTFRIEND_PERSONAL_ROLE_COLOR = 0xf1c40f   # ← لون الرولات الشخصية ديال الصداقة (أزرق فاتح)
+BESTFRIEND_PERSONAL_ROLE_COLOR = 0xffd119   # ← لون الرولات الشخصية ديال الصداقة (أزرق فاتح)
 
 # ═══════ رولات الأبراج — كيتعطى أوتوماتيكياً ملي العضو يدير /setbirthday حسب التاريخ ═══════
 # ⚠️ بدل كل 0 برقم الـ Role ID الحقيقي ديالك (Server Settings → Roles → كليك يمين → Copy Role ID)
@@ -320,6 +320,40 @@ LEVEL_ROLES = {
     90: 1532878803075076106,
     100: 1532878888986738869,
 }
+
+# ═══════ نظام مكافآت الـ Milestones (10 → 100) — أوتوماتيكي بالكامل ═══════
+# كل رول هنا كيتصاوب أوتوماتيكياً من طرف البوت أول مرة يوصل ليها شي عضو (ماخصكش
+# تصاوب حتى رول يدوياً) — وكيبقى مكتسب للأبد (تراكمي، ماشي بديل بحال LEVEL_ROLES).
+# 'perk' كتحدد شنو زيادة كيستافد بيه العضو، بزيادة على البادج نفسها.
+LEVEL_MILESTONES = {
+    10: {"name": "🌱 عضو نشيط", "color": 0x77DD77, "hoist": False, "perk": None,
+         "desc": "بادج + بداية الطريق 🌱"},
+    15: {"name": "🔥 نشيط بزاف", "color": 0xFF8C42, "hoist": False, "perk": None,
+         "desc": "بادج 🔥"},
+    20: {"name": "⭐ معروف", "color": 0xFFD700, "hoist": False, "perk": "bio",
+         "desc": "بادج + `/setbio` (بيو شخصي كيبان فـ `/rank`)"},
+    25: {"name": "💎 VIP صغير", "color": 0x00CFFF, "hoist": False, "perk": None,
+         "desc": "بادج 💎"},
+    30: {"name": "🎖️ متمرس", "color": 0xB388FF, "hoist": False, "perk": "xp_boost",
+         "desc": "بادج + بونيص XP مؤقت"},
+    40: {"name": "🏆 محترف", "color": 0xFF6F91, "hoist": False, "perk": "xp_boost",
+         "desc": "بادج + بونيص XP مؤقت"},
+    50: {"name": "👑 نص الطريق", "color": 0xFFC300, "hoist": True, "perk": "xp_boost+announce",
+         "desc": "بادج + إعلان خاص فـ #general + بونيص XP"},
+    60: {"name": "🛡️ Veteran", "color": 0x4CD9C0, "hoist": True, "perk": "poll+xp_boost",
+         "desc": "بادج + `/createpoll` + بونيص XP"},
+    70: {"name": "🌟 نخبة", "color": 0xFF3F8E, "hoist": True, "perk": "xp_boost",
+         "desc": "بادج + بادج 🌟 كتبان فـ `/leaderboard` + بونيص XP"},
+    80: {"name": "💫 أسطورة صاعدة", "color": 0x845EC2, "hoist": True, "perk": "xp_boost",
+         "desc": "بادج + بونيص XP"},
+    90: {"name": "🔱 قريب من القمة", "color": 0xD65DB1, "hoist": True, "perk": "xp_boost",
+         "desc": "بادج + بونيص XP"},
+    100: {"name": "👑 أسطورة السيرفر", "color": 0xFFD700, "hoist": True, "perk": "legend+announce",
+          "desc": "رول شخصي فريد قابل للتسمية (`/legendtitle`) + إعلان كبير فـ #general"},
+}
+LEVEL_MILESTONE_XP_BOOST_PERCENT = 15     # ← نسبة البونيص المؤقت ديال XP (15 = +15%)
+LEVEL_MILESTONE_XP_BOOST_DAYS = 7         # ← شحال ديال الأيام كيدوم البونيص كل مرة كيتكسب
+LEVEL_MILESTONE_ANNOUNCE_CHANNEL_ID = RELATIONSHIP_ANNOUNCE_CHANNEL_ID   # ← نفس الـ #general لي كتستعمل الزواج/الصداقة
 
 # ═══════ الترجمة التلقائية بالـ Reaction (علم الدولة 🇬🇧🇫🇷 على أي رسالة) ═══════
 AUTO_TRANSLATE_ENABLED = True
@@ -1026,6 +1060,190 @@ async def sync_level_roles(member: discord.Member, guild: discord.Guild, new_lev
     return roles_added, roles_removed
 
 
+# ═══════════════════════════════════════════════════════
+# ║   طبقة تخزين وإدارة رولات الـ Milestones (أوتوماتيكية) ║
+# ═══════════════════════════════════════════════════════
+MILESTONE_ROLES_FILE = os.path.join(DATA_DIR, "milestone_roles.json")
+# {"tier_roles": {"10": role_id, ...}, "legend_roles": {"user_id": role_id}}
+milestone_roles_db = {"tier_roles": {}, "legend_roles": {}}
+
+
+def load_milestone_roles():
+    global milestone_roles_db
+    try:
+        with open(MILESTONE_ROLES_FILE, "r", encoding="utf-8") as f:
+            milestone_roles_db = json.load(f)
+    except FileNotFoundError:
+        milestone_roles_db = {"tier_roles": {}, "legend_roles": {}}
+    except Exception as e:
+        print(f"[MILESTONES] خطأ فـ تحميل milestone_roles.json: {e}")
+        milestone_roles_db = {"tier_roles": {}, "legend_roles": {}}
+    milestone_roles_db.setdefault("tier_roles", {})
+    milestone_roles_db.setdefault("legend_roles", {})
+
+
+def save_milestone_roles():
+    try:
+        with open(MILESTONE_ROLES_FILE, "w", encoding="utf-8") as f:
+            json.dump(milestone_roles_db, f, ensure_ascii=False)
+    except Exception as e:
+        print(f"[MILESTONES] خطأ فـ حفظ milestone_roles.json: {e}")
+
+
+async def get_or_create_tier_role(guild: discord.Guild, level: int) -> Optional[discord.Role]:
+    """كترجع الرول المشترك ديال هاد الـ tier (level 10, 15, 20...) — كتصاوبو أوتوماتيكياً
+    أول مرة، وكتحطو مباشرة فوق الرول الأساسي ديال LEVEL_ROLES بنفس المستوى (إلا كاين) باش
+    يبقاو مجموعين بجانب بعضياتهم فترتيب الرولات."""
+    info = LEVEL_MILESTONES.get(level)
+    if not info:
+        return None
+    stored_id = milestone_roles_db["tier_roles"].get(str(level))
+    if stored_id:
+        role = guild.get_role(stored_id)
+        if role:
+            return role
+
+    try:
+        role = await guild.create_role(
+            name=info["name"][:100], color=discord.Color(info["color"]),
+            hoist=info["hoist"], mentionable=False,
+            reason=f"Milestone Level {level} — تصاوبات أوتوماتيكياً"
+        )
+        milestone_roles_db["tier_roles"][str(level)] = role.id
+        save_milestone_roles()
+        # نحاولو نحطوها جنب الرول الأساسي ديال نفس الـ level (تنظيم بصري، ماشي إجباري)
+        base_role_id = LEVEL_ROLES.get(level)
+        if base_role_id:
+            base_role = guild.get_role(base_role_id)
+            if base_role:
+                try:
+                    await role.edit(position=base_role.position)
+                except (discord.Forbidden, discord.HTTPException):
+                    pass
+        return role
+    except (discord.Forbidden, discord.HTTPException) as e:
+        print(f"[MILESTONES] ما قدرتش نصاوب رول Level {level}: {e}")
+        return None
+
+
+async def get_or_create_legend_role(guild: discord.Guild, member: discord.Member) -> Optional[discord.Role]:
+    """رول شخصي فريد (ماشي مشترك) لكل عضو يوصل لـ Level 100 — كل واحد رول ديالو بوحدو
+    باش يقدر يسميه كيفما بغى بـ /legendtitle بلا ما يأثر على حتى واحد آخر."""
+    stored_id = milestone_roles_db["legend_roles"].get(str(member.id))
+    if stored_id:
+        role = guild.get_role(stored_id)
+        if role:
+            return role
+
+    info = LEVEL_MILESTONES[100]
+    try:
+        role = await guild.create_role(
+            name=f"{info['name']} — {member.display_name}"[:100],
+            color=discord.Color(info["color"]), hoist=True, mentionable=False,
+            reason=f"Milestone Level 100 (شخصي) — {member}"
+        )
+        milestone_roles_db["legend_roles"][str(member.id)] = role.id
+        save_milestone_roles()
+        return role
+    except (discord.Forbidden, discord.HTTPException) as e:
+        print(f"[MILESTONES] ما قدرتش نصاوب رول Legend لـ {member}: {e}")
+        return None
+
+
+def apply_xp_boost(data: dict):
+    """كتعطي/كتجدد بونيص XP مؤقت (LEVEL_MILESTONE_XP_BOOST_PERCENT% لمدة
+    LEVEL_MILESTONE_XP_BOOST_DAYS أيام) — كتبدا من اللحظة اللي كيتكسب فيها، وإلا
+    كان عندو بونيص قدام مازال ماساليش، كتمدد الوقت بلا ما تراكم النسبة."""
+    data["xp_boost_multiplier"] = 1.0 + (LEVEL_MILESTONE_XP_BOOST_PERCENT / 100)
+    data["xp_boost_expires"] = (datetime.now() + timedelta(days=LEVEL_MILESTONE_XP_BOOST_DAYS)).isoformat()
+
+
+def get_active_xp_multiplier(data: dict) -> float:
+    """كترجع 1.0 (عادي) ولا 1.XX إلا كان عندو بونيص XP مازال ماساليش."""
+    expires = data.get("xp_boost_expires")
+    if not expires:
+        return 1.0
+    try:
+        if datetime.now() < datetime.fromisoformat(expires):
+            return data.get("xp_boost_multiplier", 1.0)
+    except Exception:
+        pass
+    return 1.0
+
+
+async def apply_level_milestones(member: discord.Member, guild: discord.Guild,
+                                  crossed_levels: list, data: dict) -> list:
+    """كتخدم أوتوماتيكياً ملي عضو يعدي شي milestone (وحدة ولا بزاف فمرة وحدة إلا قفز
+    بزاف ديال المستويات). كتصاوب/كتعطي الرول، كتفعل البونيصات، كتبعث الإعلانات.
+    كترجع لائحة سطور (وصف مختصر) باش تتزاد فرسالة "مبروك" ديال level up."""
+    perk_lines = []
+    for level in sorted(crossed_levels):
+        info = LEVEL_MILESTONES.get(level)
+        if not info:
+            continue
+        perk = info.get("perk") or ""
+
+        if level == 100:
+            role = await get_or_create_legend_role(guild, member)
+        else:
+            role = await get_or_create_tier_role(guild, level)
+        if role:
+            try:
+                await member.add_roles(role, reason=f"Milestone Level {level}")
+            except (discord.Forbidden, discord.HTTPException):
+                pass
+
+        line = f"{info['name']} (Level {level})"
+
+        if "xp_boost" in perk:
+            apply_xp_boost(data)
+            line += f" — 🚀 بونيص +{LEVEL_MILESTONE_XP_BOOST_PERCENT}% XP لمدة {LEVEL_MILESTONE_XP_BOOST_DAYS} أيام"
+
+        if "poll" in perk:
+            line += " — 🗳️ `/createpoll` متاح ليك دابا"
+
+        if "bio" in perk:
+            line += " — 📝 `/setbio` متاح ليك دابا"
+
+        if "legend" in perk:
+            line += " — 👑 رول شخصي فريد! سميه بـ `/legendtitle`"
+
+        perk_lines.append(line)
+
+        if "announce" in perk:
+            await _send_milestone_announcement(guild, member, level, info)
+
+    save_levels()
+    return perk_lines
+
+
+async def _send_milestone_announcement(guild: discord.Guild, member: discord.Member, level: int, info: dict):
+    """إعلان كبير فـ #general — غير للـ milestones الكبار (50 و100) باش يبقى معنى للاحتفال."""
+    channel_id = LEVEL_MILESTONE_ANNOUNCE_CHANNEL_ID
+    if not channel_id:
+        return
+    channel = guild.get_channel(channel_id)
+    if not channel:
+        return
+    embed = discord.Embed(
+        description=(
+            f"## {info['name'].split(' ')[0]} {member.mention} وصل لـ **Level {level}**! {info['name'].split(' ')[0]}\n"
+            f"### {info['name']}\n\nمبروك! 🎉"
+        ),
+        color=discord.Color(info["color"]), timestamp=datetime.now()
+    )
+    embed.set_image(url=member.display_avatar.url)
+    embed.set_footer(text=SERVER_NAME)
+    content = f"# {info['name'].split(' ')[0]} {member.display_name} — Level {level}! {info['name'].split(' ')[0]}"
+    try:
+        await channel.send(content=content, embed=embed)
+    except (discord.Forbidden, discord.HTTPException) as e:
+        print(f"[MILESTONES] ما قدرتش نبعث الإعلان: {e}")
+
+
+load_milestone_roles()
+
+
 async def grant_xp_and_announce(member: discord.Member, guild: discord.Guild, amount: int,
                                  fallback_channel: Optional[discord.abc.Messageable] = None,
                                  source: str = "unknown"):
@@ -1037,6 +1255,13 @@ async def grant_xp_and_announce(member: discord.Member, guild: discord.Guild, am
         return
 
     data = get_user_level_data(guild.id, member.id)
+
+    # ═══ بونيص XP مؤقت (إلا كان عندو واحد فعال دابا من شي milestone سابق) ═══
+    multiplier = get_active_xp_multiplier(data)
+    if multiplier > 1.0:
+        amount = round(amount * multiplier)
+
+    prev_level = data["level"]
     data["xp"] += amount
 
     leveled_up = False
@@ -1061,11 +1286,22 @@ async def grant_xp_and_announce(member: discord.Member, guild: discord.Guild, am
     new_level = data["level"]
     roles_added, _ = await sync_level_roles(member, guild, new_level)
 
+    # ═══ Milestones (10 → 100) — أوتوماتيكي بالكامل ═══
+    crossed_levels = [lvl for lvl in LEVEL_MILESTONES if prev_level < lvl <= new_level]
+    milestone_lines = []
+    if crossed_levels:
+        try:
+            milestone_lines = await apply_level_milestones(member, guild, crossed_levels, data)
+        except Exception as e:
+            print(f"[MILESTONES] خطأ فـ apply_level_milestones: {e}")
+
     target_channel = bot.get_channel(LEVEL_UP_CHANNEL_ID) if LEVEL_UP_CHANNEL_ID else fallback_channel
     if target_channel:
         desc = f"🎉 {member.mention} وصل/ات لـ **Level {new_level}**!"
         if roles_added:
             desc += f"\n🎁 حصل/ات على: {', '.join(roles_added)}"
+        if milestone_lines:
+            desc += "\n\n**🏅 مكافآت جديدة:**\n" + "\n".join(f"• {ln}" for ln in milestone_lines)
         embed = discord.Embed(description=desc, color=discord.Color.gold(), timestamp=datetime.now())
         embed.set_thumbnail(url=member.display_avatar.url)
         try:
@@ -9221,8 +9457,14 @@ async def rank_cmd(ctx, member: Optional[discord.Member] = None):
     )
     rank_position = next((i + 1 for i, (uid, _) in enumerate(ranking) if uid == str(member.id)), None)
 
+    badge = ""
+    if data["level"] >= 100:
+        badge = "👑 "
+    elif data["level"] >= 70:
+        badge = "🌟 "
+
     embed = discord.Embed(
-        title=f"📊 المستوى ديال {member.display_name}",
+        title=f"📊 المستوى ديال {badge}{member.display_name}",
         color=discord.Color.gold(),
         timestamp=datetime.now()
     )
@@ -9231,7 +9473,123 @@ async def rank_cmd(ctx, member: Optional[discord.Member] = None):
     embed.add_field(name="🥇 الترتيب", value=f"#{rank_position}" if rank_position else "—", inline=True)
     embed.add_field(name="✨ XP", value=f"{data['xp']} / {needed}", inline=True)
     embed.add_field(name="التقدم", value=_progress_bar(data["xp"], needed), inline=False)
+    if get_active_xp_multiplier(data) > 1.0:
+        try:
+            expires_dt = datetime.fromisoformat(data["xp_boost_expires"])
+            embed.add_field(name="🚀 بونيص XP نشط",
+                             value=f"+{LEVEL_MILESTONE_XP_BOOST_PERCENT}% حتى <t:{int(expires_dt.timestamp())}:R>",
+                             inline=False)
+        except Exception:
+            pass
+    if data.get("bio"):
+        embed.add_field(name="📝 بيو", value=data["bio"][:200], inline=False)
     embed.set_footer(text=f"{SERVER_NAME} | Leveling System")
+    await ctx.send(embed=embed)
+
+
+@bot.hybrid_command(name="setbio", description="بدل البيو الشخصي ديالك اللي كيبان فـ /rank (Level 20+)")
+@app_commands.describe(text="النص ديال البيو (حد أقصى 200 حرف) — سيبو فارغ باش تمسحو")
+async def setbio_cmd(ctx, *, text: str = ""):
+    """بدل البيو الشخصي ديالك اللي كيبان فـ /rank — متاحة من Level 20 (Milestone perk)"""
+    data = get_user_level_data(ctx.guild.id, ctx.author.id)
+    if data["level"] < 20:
+        await ctx.send("🔒 هاد الميزة كتفتح فـ **Level 20**. كمل شوية باقي ليك!", ephemeral=True, delete_after=8)
+        return
+    data["bio"] = text.strip()[:200]
+    save_levels()
+    if data["bio"]:
+        await ctx.send(f"✅ تبدل البيو ديالك لـ: \"{data['bio']}\"", ephemeral=True)
+    else:
+        await ctx.send("✅ تمسح البيو ديالك.", ephemeral=True)
+
+
+class SimplePollView(discord.ui.View):
+    def __init__(self, options: list):
+        super().__init__(timeout=None)
+        self.votes = {opt: set() for opt in options}
+        for i, opt in enumerate(options):
+            self.add_item(self._make_button(opt, i))
+
+    def _make_button(self, option_text: str, index: int):
+        emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
+        btn = discord.ui.Button(label=option_text[:80], emoji=emojis[index] if index < len(emojis) else None,
+                                 style=discord.ButtonStyle.primary, custom_id=f"poll_opt_{index}")
+
+        async def callback(interaction: discord.Interaction):
+            for voters in self.votes.values():
+                voters.discard(interaction.user.id)
+            self.votes[option_text].add(interaction.user.id)
+            lines = [f"**{opt}** — {len(voters)} صوت" for opt, voters in self.votes.items()]
+            await interaction.response.edit_message(
+                embed=discord.Embed(
+                    title=interaction.message.embeds[0].title,
+                    description="\n".join(lines),
+                    color=discord.Color.blurple()
+                ),
+                view=self
+            )
+
+        btn.callback = callback
+        return btn
+
+
+@bot.hybrid_command(name="createpoll", description="صاوب استفتاء بأزرار (Level 60+)")
+@app_commands.describe(question="السؤال ديال الاستفتاء",
+                        options="الخيارات، مفصولين بـ | (مثال: بيتزا | تاكوس | سوشي) — حد أقصى 5")
+async def createpoll_cmd(ctx, question: str, *, options: str):
+    """صاوب استفتاء بأزرار تفاعلية (بلا حاجة لـ Admin) — متاحة من Level 60 (Milestone perk)"""
+    data = get_user_level_data(ctx.guild.id, ctx.author.id)
+    if data["level"] < 60:
+        await ctx.send("🔒 هاد الميزة كتفتح فـ **Level 60**. كمل شوية باقي ليك!", ephemeral=True, delete_after=8)
+        return
+
+    opts = [o.strip() for o in options.split("|") if o.strip()][:5]
+    if len(opts) < 2:
+        await ctx.send("❌ خاصك على الأقل خياريين مفصولين بـ `|` (مثال: `بيتزا | تاكوس`).", ephemeral=True)
+        return
+
+    embed = discord.Embed(
+        title=f"🗳️ {question}",
+        description="\n".join(f"**{o}** — 0 صوت" for o in opts),
+        color=discord.Color.blurple(), timestamp=datetime.now()
+    )
+    embed.set_footer(text=f"صاوبها {ctx.author.display_name} | {SERVER_NAME}")
+    await ctx.send(embed=embed, view=SimplePollView(opts))
+
+
+@bot.hybrid_command(name="legendtitle", description="سمي الرول الشخصي ديالك ديال Level 100 (Legend)")
+@app_commands.describe(title="السمية الجديدة (بلا الإيموجي 👑 — كيتزاد أوتوماتيك)")
+async def legendtitle_cmd(ctx, *, title: str):
+    """بدل سمية الرول الشخصي الفريد ديالك — متاحة غير لمن وصل Level 100"""
+    data = get_user_level_data(ctx.guild.id, ctx.author.id)
+    if data["level"] < 100:
+        await ctx.send("🔒 هاد الميزة كتفتح فـ **Level 100**، الحد الأقصى. باقي بزاف الطريق!", ephemeral=True, delete_after=8)
+        return
+    role = await get_or_create_legend_role(ctx.guild, ctx.author)
+    if not role:
+        await ctx.send("❌ ما قدرتش نلقى/نصاوب الرول ديالك (يمكن صلاحيات ناقصة عند البوت).", ephemeral=True)
+        return
+    new_name = f"👑 {title.strip()}"[:100]
+    try:
+        await role.edit(name=new_name, reason=f"/legendtitle — {ctx.author}")
+        await ctx.send(f"✅ الرول ديالك دابا سميتو: **{new_name}**", ephemeral=True)
+    except (discord.Forbidden, discord.HTTPException) as e:
+        await ctx.send(f"❌ ما قدرتش نبدل السمية: {e}", ephemeral=True)
+
+
+@bot.hybrid_command(name="levelroadmap", aliases=["milestones"], description="بين كل مكافآت الـ Levels من 10 لـ 100")
+async def levelroadmap_cmd(ctx):
+    """كيبين لائحة كاملة بكل الـ Milestones والمكافآت ديالهم من Level 10 حتى 100"""
+    lines = []
+    for lvl in sorted(LEVEL_MILESTONES.keys()):
+        info = LEVEL_MILESTONES[lvl]
+        lines.append(f"**Lv.{lvl}** — {info['name']}\n> {info['desc']}")
+    embed = discord.Embed(
+        title="🪜 خارطة طريق المستويات (Level 10 → 100)",
+        description="\n\n".join(lines),
+        color=discord.Color.gold()
+    )
+    embed.set_footer(text=f"{SERVER_NAME} | كل رول تراكمي — كتبقى بيه للأبد")
     await ctx.send(embed=embed)
 
 
@@ -9253,7 +9611,8 @@ def build_leaderboard_embed(guild: discord.Guild) -> Optional[discord.Embed]:
         prefix = medals[i] if i < len(medals) else f"#{i + 1}"
         member = guild.get_member(int(user_id))
         name = member.mention if member else f"<@{user_id}> (خرج من السيرفر)"
-        lines.append(f"{prefix} {name} — Level {data['level']} ({total_xp_earned(data)} XP)")
+        badge = "👑 " if data["level"] >= 100 else ("🌟 " if data["level"] >= 70 else "")
+        lines.append(f"{prefix} {badge}{name} — Level {data['level']} ({total_xp_earned(data)} XP)")
 
     embed = discord.Embed(
         title="🏆 لائحة الشرف (Leaderboard)",
