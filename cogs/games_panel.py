@@ -44,7 +44,7 @@ class GamesPanelView(discord.ui.View):
             ephemeral=True
         )
 
-    @discord.ui.button(label="🪙 الرصيد ديالي", style=discord.ButtonStyle.secondary,
+    @discord.ui.button(label="💰 الرصيد ديالي", style=discord.ButtonStyle.secondary,
                        custom_id="ggmw9:games_panel:balance")
     async def balance_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         eco = self.bot.get_cog("Economy")
