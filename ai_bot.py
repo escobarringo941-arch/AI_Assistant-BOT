@@ -9658,6 +9658,8 @@ GAMES_COGS = [
     "cogs.game_wordle",
     "cogs.game_reaction",
     "cogs.trivia",           # ← 🧠 لعبة Trivia (الربح بالدراهم 💲)
+    "cogs.game_dice",        # ← 🎲 النرد (رهان)
+    "cogs.gambling_panel",   # ← 🎰 panel القمار — خاصو يجي بعد game_dice
 ]
 
 
