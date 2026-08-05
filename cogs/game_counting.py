@@ -173,8 +173,18 @@ class Counting(commands.Cog):
             embed.add_field(name="🥇 أكثر اللي عدّو", value="\n".join(lines), inline=False)
 
         if cfg.COUNTING_CHANNEL_ID:
-            embed.set_footer(text=f"العب فـ <#{cfg.COUNTING_CHANNEL_ID}>")
+            # ملاحظة: mentions ديال القنوات (<#id>) ماكيتـرندراوش فالـ footer،
+            # علاش كنحطوها فالـ description باش تبان كرابط قابل للكليك
+            embed.description = f"العب فـ <#{cfg.COUNTING_CHANNEL_ID}> — كتب الرقم الجاي وصافي!"
         return embed
+
+    @commands.hybrid_command(name="counting",
+                             description="🔢 شوف حالة العدّاد: الرقم الحالي، الريكورد، وأحسن اللي عدّو")
+    async def counting_cmd(self, ctx: commands.Context):
+        """كيوري فين وصل العدّاد وشكون أكثر واحد عدّ — وفين كتلعب اللعبة."""
+        if not ctx.guild:
+            return
+        await ctx.send(embed=self.build_status_embed(ctx.guild))
 
     def admin_reset(self, guild: discord.Guild) -> str:
         """كيتسمى من /gamesadmin resetcounting"""
