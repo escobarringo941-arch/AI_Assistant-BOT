@@ -1,335 +1,279 @@
 # -*- coding: utf-8 -*-
 """
 ═══════════════════════════════════════════════════════
-║   cogs/gambling_panel.py — 🎰 Panel ديال الرهانات      ║
+║   games_config.py — CONFIG ديال Mini Games + العملة   ║
 ═══════════════════════════════════════════════════════
 
-بحال games_panel.py، ولكن مخصص **غير** للألعاب اللي فيها رهان
-(دابا Dice، وأي لعبة رهان جديدة كتزاد فـ GAMBLING_GAMES تحت).
+هاد الملف فيه غير أرقام و IDs — ماكاين فيه حتى منطق.
+كل ما بغيتي تبدّل شي حاجة (ثمن، ربح، channel) بدّلها هنا بوحدها.
 
-- Panel دائم (persistent) كيتبعث أوتوماتيك فـ cfg.GAMBLING_CHANNEL_ID
-  ملي البوت يشعل (on_ready)، بحال شكل games_panel.py بالضبط.
-- الرهان كيتدار بمودال (اللاعب كيكتب المبلغ) → مباشرة RiskView
-  ديال Dice، بلا ما يخرج من الـ panel ولا يكتب `/dice`.
-- كل لعبة رهان (Dice دابا) عندها `_check_gambling_channel()` ديالها
-  اللي كتأكد بلي `/dice` نفسها ماخدامش برا هاد القناة.
-
-⚠️ نفس القاعدة التقنية ديال Persistent Views:
-   timeout=None + custom_id ثابت + bot.add_view() فـ cog_load().
+⚠️ ماتزيد هنا حتى `import discord` — خاصو يبقى نظيف باش أي ملف يقدر
+   يستوردو بلا مشاكل (circular imports).
 """
 
-import discord
-from discord.ext import commands
-from datetime import datetime
+import os
 
-import games_config as cfg
+# ═══════════════════════════════════════════════════════
+# ║                  المجلدات والملفات                    ║
+# ═══════════════════════════════════════════════════════
 
-# ═══════ زيد هنا أي لعبة رهان جديدة (Slots, Coinflip...) ═══════
-GAMBLING_GAMES = [
-    {"id": "dice", "emoji": "🎲", "label": "النرد",
-     "desc": "راهن، اختار المخاطرة (سهل/متوسط/صعب)، ارمي النرد"},
-    {"id": "coinflip", "emoji": "🪙", "label": "Coinflip",
-     "desc": "راهن، اختار وجه ولا ظهر، قلب العملة"},
+# نفس المجلد ديال ai_bot.py — Railway Volume
+DATA_DIR = os.getenv("DATA_DIR", "/app/data")
+
+# مجلد banks الكلمات (كيمشي مع الكود، ماشي مع الـ Volume)
+BANKS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "banks")
+
+
+# ═══════════════════════════════════════════════════════
+# ║              CHANNELS ديال Mini Games                ║
+# ═══════════════════════════════════════════════════════
+# ⚠️ بدّل هاد الأصفار بالـ IDs الحقيقية من ديسكورد
+# (Server Settings → كليك يمين على الـ channel → Copy Channel ID)
+
+GAMES_PANEL_CHANNEL_ID = 1534234669057445998       # 🎮│games-panel — panel موحّد ديال كاع الألعاب
+COUNTING_CHANNEL_ID = 1534234937530650755          # 🔢│counting — قناة العدّاد
+GAMES_LEADERBOARD_CHANNEL_ID = 1534235056564867194  # 🏆│games-top — لائحة الشرف ديال الألعاب (0 = معطّل)
+GAMBLING_CHANNEL_ID = 1534672591422226502          # 🎰│قمار — قناة خاصة بالألعاب اللي فيها رهان (Dice, Slots, Coinflip...) — 0 = بلا تقييد (تخدم فكاع القنوات)
+
+# Category "Mini Games" — كتستعمل غير فـ /setupminigames باش يصاوب الـ channels وحدو
+MINIGAMES_CATEGORY_ID = 1533697548215128134        # 0 = يصاوب category جديدة بوحدو
+
+
+# ═══════════════════════════════════════════════════════
+# ║              💰 العملة — الدراهم 🪙                    ║
+# ═══════════════════════════════════════════════════════
+
+CURRENCY_NAME = "درهم"
+CURRENCY_NAME_PLURAL = "دراهم"
+CURRENCY_EMOJI = "💲"
+
+# ═══════ الربح ═══════
+COINS_DAILY = 25                  # /daily — مكافأة يومية
+COINS_DAILY_STREAK_BONUS = 5      # +5 على كل نهار متتالي (بحد أقصى تحت)
+COINS_DAILY_STREAK_MAX = 50       # أقصى بونوس من الـ streak
+
+COINS_PVP_WIN = 20                # فوز فـ X/O
+COINS_PVP_DRAW = 5                # تعادل
+COINS_WORDLE_WIN = 50             # فوز فـ Wordle اليومي
+COINS_WORDLE_STREAK_BONUS = 25    # بونوس على streak ديال Wordle
+COINS_HANGMAN_WIN = 15            # فوز فـ المشنوق
+COINS_REACTION_WIN = 10           # فوز فـ أسرع ضغطة
+COINS_COUNTING_MILESTONE = 20     # كل 100 رقم فالعدّاد
+
+# ═══════ السقف اليومي (anti-farming) ═══════
+# نفس منطق afk_xp_allowed() اللي عندك فالـ XP — باش حد ما يـfarmi 5 سوايع
+COINS_DAILY_CAP = 400             # أقصى دراهم يقدر يربح العضو فنهار واحد
+# ملاحظة: /daily ماكيدخلش فالسقف (هي مكافأة ماشي ربح من لعبة)
+
+# ═══════ Cooldowns (بالثواني) ═══════
+COOLDOWN_TICTACTOE = 30
+COOLDOWN_HANGMAN = 20
+COOLDOWN_REACTION = 15
+COOLDOWN_DAILY_HOURS = 20         # 20 ساعة ماشي 24، باش ما يتأخرش النهار شوية بشوية
+
+
+# ═══════════════════════════════════════════════════════
+# ║                   🛒 SHOP                             ║
+# ═══════════════════════════════════════════════════════
+# type: "xp_boost" | "role_color" | "temp_role" | "custom_role" | "bio_unlock"
+# ⚠️ الـ IDs ديال الرولات خاصك تعمّرها بوحدك (ولا خليها 0 وحيّد العنصر)
+
+SHOP_ITEMS = [
+    {
+        "id": "xpboost",
+        "emoji": "⚡",
+        "name": "XP Boost 2x",
+        "description": "كتربح ضعف الـ XP لمدة ساعة كاملة (شات + فويس)",
+        "price": 300,
+        "type": "xp_boost",
+        "multiplier": 2.0,
+        "duration_hours": 1,
+    },
+    {
+        "id": "color",
+        "emoji": "🎨",
+        "name": "لون شخصي (7 أيام)",
+        "description": "رول بلون كتختارو نتا، كيبان فـ السمية ديالك",
+        "price": 500,
+        "type": "role_color",
+        "duration_days": 7,
+    },
+    {
+        "id": "customrole",
+        "emoji": "🏷️",
+        "name": "رول مخصص (30 يوم)",
+        "description": "رول بسمية ولون كتختارهم نتا",
+        "price": 2000,
+        "type": "custom_role",
+        "duration_days": 30,
+    },
+    {
+        "id": "vip",
+        "emoji": "💎",
+        "name": "رول VIP (14 يوم)",
+        "description": "رول VIP مؤقت",
+        "price": 1200,
+        "type": "temp_role",
+        "role_id": 0,          # ← ⚠️ حط هنا ID ديال رول VIP، ولا حيّد هاد العنصر
+        "duration_days": 14,
+    },
 ]
 
+# ═══════ الرولات ديال الألوان ═══════
+# الرولات الشخصية ديال اللون كيتصاوبو أوتوماتيك تحت هاد الرول
+# (باش يبانو فوق رولات الأعضاء العاديين) — 0 = فوق نيت
+SHOP_COLOR_ROLE_ANCHOR_ID = 0
 
-# ═══════════════════════════════════════════════════════
-# ║              Panel دائم (Persistent View)             ║
-# ═══════════════════════════════════════════════════════
-
-class GamblingPanelView(discord.ui.View):
-    def __init__(self, bot: commands.Bot):
-        super().__init__(timeout=None)          # ← ضروري للـ persistence
-        self.bot = bot
-
-    @discord.ui.button(label="🎰 راهن دابا", style=discord.ButtonStyle.success,
-                       custom_id="ggmw9:gambling_panel:open")   # ← custom_id ثابت
-    async def open_menu(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message(
-            "🎰 شنو بغيتي تلعب؟",
-            view=GamblingMenuView(self.bot, interaction.user),
-            ephemeral=True
-        )
-
-    @discord.ui.button(label="💰 الرصيد ديالي", style=discord.ButtonStyle.secondary,
-                       custom_id="ggmw9:gambling_panel:balance")
-    async def balance_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        eco = self.bot.get_cog("Economy")
-        if not eco:
-            await interaction.response.send_message("❌ نظام الدراهم ماشي محمّل.", ephemeral=True)
-            return
-        balance = eco.get_balance(interaction.guild.id, interaction.user.id)
-        remaining = eco.daily_remaining(interaction.guild.id, interaction.user.id)
-        await interaction.response.send_message(
-            f"{cfg.CURRENCY_EMOJI} عندك **{balance:,}** {cfg.CURRENCY_NAME_PLURAL}\n"
-            f"📊 باقي ليك **{remaining}** من السقف اليومي",
-            ephemeral=True
-        )
-
-    @discord.ui.button(label="📊 الإحصائيات ديالي", style=discord.ButtonStyle.secondary,
-                       custom_id="ggmw9:gambling_panel:stats")
-    async def stats_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        embeds = []
-        dice_cog = self.bot.get_cog("Dice")
-        if dice_cog:
-            embeds.append(dice_cog.build_stats_embed(interaction.guild, interaction.user))
-        cf_cog = self.bot.get_cog("Coinflip")
-        if cf_cog:
-            embeds.append(cf_cog.build_stats_embed(interaction.guild, interaction.user))
-
-        if not embeds:
-            await interaction.response.send_message("❌ ماكاين حتى لعبة رهان محمّلة دابا.",
-                                                    ephemeral=True)
-            return
-        await interaction.response.send_message(embeds=embeds, ephemeral=True)
+SHOP_COLORS = {
+    "🔴 حمر": 0xE74C3C,
+    "🔵 زرق": 0x3498DB,
+    "🟢 خضر": 0x2ECC71,
+    "🟡 صفر": 0xF1C40F,
+    "🟣 موف": 0x9B59B6,
+    "🩷 روز": 0xE91E63,
+    "🟠 برتقالي": 0xE67E22,
+    "⚪ بيض": 0xECF0F1,
+}
 
 
 # ═══════════════════════════════════════════════════════
-# ║          قائمة الرهانات (ephemeral، ماشي دائمة)        ║
+# ║              🔢 لعبة العدّاد (Counting)                ║
 # ═══════════════════════════════════════════════════════
 
-class GamblingMenuView(discord.ui.View):
-    def __init__(self, bot: commands.Bot, user: discord.abc.User):
-        super().__init__(timeout=120)
-        self.bot = bot
-        self.user = user
-
-        options = [
-            discord.SelectOption(label=g["label"], value=g["id"],
-                                 emoji=g["emoji"], description=g["desc"][:100])
-            for g in GAMBLING_GAMES
-        ]
-        select = discord.ui.Select(placeholder="🎰 اختار لعبة رهان...", options=options)
-        select.callback = self.on_pick
-        self.add_item(select)
-        self.select = select
-
-    async def on_pick(self, interaction: discord.Interaction):
-        if interaction.user.id != self.user.id:
-            await interaction.response.send_message("❌ ماشي ديالك.", ephemeral=True)
-            return
-
-        choice = self.select.values[0]
-
-        # ═══ النرد ═══
-        if choice == "dice":
-            cog = self.bot.get_cog("Dice")
-            eco = self.bot.get_cog("Economy")
-            if not cog or not eco:
-                await interaction.response.send_message("❌ النرد ماشي متوفر دابا.", ephemeral=True)
-                return
-            key = (interaction.guild.id, self.user.id)
-            if key in cog.active:
-                await interaction.response.send_message("❌ عندك رهان خدّام ديجا — سالّيه أولاً.",
-                                                        ephemeral=True)
-                return
-            await interaction.response.send_modal(DiceBetModal(self.bot))
-            return
-
-        # ═══ Coinflip ═══
-        if choice == "coinflip":
-            cog = self.bot.get_cog("Coinflip")
-            eco = self.bot.get_cog("Economy")
-            if not cog or not eco:
-                await interaction.response.send_message("❌ Coinflip ماشي متوفر دابا.", ephemeral=True)
-                return
-            key = (interaction.guild.id, self.user.id)
-            if key in cog.active:
-                await interaction.response.send_message("❌ عندك رهان خدّام ديجا — سالّيه أولاً.",
-                                                        ephemeral=True)
-                return
-            await interaction.response.send_modal(CoinflipBetModal(self.bot))
-            return
-
-        # ═══ ألعاب رهان جايين (Slots...) ═══
-        await interaction.response.send_message("🚧 هاد اللعبة جاية قريب.", ephemeral=True)
+COUNTING_ENABLED = True
+COUNTING_SAME_USER_TWICE = False   # False = ممنوع نفس العضو يعدّ مرتين متتاليتين
+COUNTING_DELETE_WRONG = True       # كيمسح الرقم الغالط
+COUNTING_MILESTONE_EVERY = 100     # كل شحال ديال الأرقام كيعطي دراهم
 
 
 # ═══════════════════════════════════════════════════════
-# ║              المودال ديال مبلغ الرهان (Dice)          ║
+# ║              ⭕ X/O — Tic Tac Toe                     ║
 # ═══════════════════════════════════════════════════════
 
-class DiceBetModal(discord.ui.Modal, title="🎲 شحال بغيتي تراهن؟"):
-    amount = discord.ui.TextInput(
-        label="المبلغ", placeholder="مثلا 50", max_length=6, required=True)
-
-    def __init__(self, bot: commands.Bot):
-        super().__init__()
-        self.bot = bot
-
-    async def on_submit(self, interaction: discord.Interaction):
-        raw = str(self.amount.value).strip()
-        if not raw.isdigit():
-            await interaction.response.send_message("❌ خاصك تكتب رقم صحيح.", ephemeral=True)
-            return
-        bet = int(raw)
-
-        cog = self.bot.get_cog("Dice")
-        eco = self.bot.get_cog("Economy")
-        if not cog or not eco:
-            await interaction.response.send_message("❌ النرد ماشي متوفر دابا.", ephemeral=True)
-            return
-
-        if bet < cfg.DICE_MIN_BET or bet > cfg.DICE_MAX_BET:
-            await interaction.response.send_message(
-                f"❌ الرهان خاصو يكون بين **{cfg.DICE_MIN_BET}** و **{cfg.DICE_MAX_BET}** "
-                f"{cfg.CURRENCY_EMOJI}.", ephemeral=True)
-            return
-
-        key = (interaction.guild.id, interaction.user.id)
-        if key in cog.active:
-            await interaction.response.send_message("❌ عندك رهان خدّام ديجا.", ephemeral=True)
-            return
-
-        balance = eco.get_balance(interaction.guild.id, interaction.user.id)
-        if balance < bet:
-            await interaction.response.send_message(
-                f"❌ ماعندكش الفلوس الكافية — خاصك **{bet - balance:,}** {cfg.CURRENCY_EMOJI} زيادة.",
-                ephemeral=True)
-            return
-
-        from cogs.game_dice import RiskView   # ← بدّل المسار إلا ملف Dice ماشي فـ cogs/
-
-        embed = discord.Embed(
-            title="🎲 النرد — اختار المخاطرة",
-            description=(f"💰 الرهان: **{bet:,}** {cfg.CURRENCY_EMOJI}\n\n"
-                         "كل ما زادت المخاطرة، قلّت الفرصة وزاد المضاعف."),
-            color=discord.Color.blurple(),
-        )
-        for _, lvl in cfg.DICE_RISK_LEVELS.items():
-            chance = round((21 - lvl["threshold"]) / 20 * 100)
-            embed.add_field(
-                name=lvl["label"],
-                value=f"فرصة: **{chance}%**\nمضاعف: **×{lvl['multiplier']}**",
-                inline=True,
-            )
-        await interaction.response.send_message(
-            embed=embed, view=RiskView(cog, interaction.user, bet), ephemeral=True)
+TICTACTOE_TURN_SECONDS = 60        # شحال عندو العضو باش يلعب دورو
+TICTACTOE_CHALLENGE_SECONDS = 90   # شحال كيبقى التحدي مفتوح قبل ما يـexpiri
 
 
 # ═══════════════════════════════════════════════════════
-# ║           المودال ديال مبلغ الرهان (Coinflip)         ║
+# ║              🔤 Wordle بالدارجة                        ║
 # ═══════════════════════════════════════════════════════
 
-class CoinflipBetModal(discord.ui.Modal, title="🪙 شحال بغيتي تراهن؟"):
-    amount = discord.ui.TextInput(
-        label="المبلغ", placeholder="مثلا 50", max_length=6, required=True)
-
-    def __init__(self, bot: commands.Bot):
-        super().__init__()
-        self.bot = bot
-
-    async def on_submit(self, interaction: discord.Interaction):
-        raw = str(self.amount.value).strip()
-        if not raw.isdigit():
-            await interaction.response.send_message("❌ خاصك تكتب رقم صحيح.", ephemeral=True)
-            return
-        bet = int(raw)
-
-        cog = self.bot.get_cog("Coinflip")
-        eco = self.bot.get_cog("Economy")
-        if not cog or not eco:
-            await interaction.response.send_message("❌ Coinflip ماشي متوفر دابا.", ephemeral=True)
-            return
-
-        if bet < cfg.COINFLIP_MIN_BET or bet > cfg.COINFLIP_MAX_BET:
-            await interaction.response.send_message(
-                f"❌ الرهان خاصو يكون بين **{cfg.COINFLIP_MIN_BET}** و **{cfg.COINFLIP_MAX_BET}** "
-                f"{cfg.CURRENCY_EMOJI}.", ephemeral=True)
-            return
-
-        key = (interaction.guild.id, interaction.user.id)
-        if key in cog.active:
-            await interaction.response.send_message("❌ عندك رهان خدّام ديجا.", ephemeral=True)
-            return
-
-        balance = eco.get_balance(interaction.guild.id, interaction.user.id)
-        if balance < bet:
-            await interaction.response.send_message(
-                f"❌ ماعندكش الفلوس الكافية — خاصك **{bet - balance:,}** {cfg.CURRENCY_EMOJI} زيادة.",
-                ephemeral=True)
-            return
-
-        from cogs.game_coinflip import SideView   # ← بدّل المسار إلا ملف Coinflip ماشي فـ cogs/
-
-        embed = discord.Embed(
-            title="🪙 Coinflip — اختار وجهك",
-            description=(f"💰 الرهان: **{bet:,}** {cfg.CURRENCY_EMOJI}\n"
-                         f"🎯 فرصة: **50%** — مضاعف: **×{cfg.COINFLIP_PAYOUT_MULTIPLIER}**"),
-            color=discord.Color.blurple(),
-        )
-        await interaction.response.send_message(
-            embed=embed, view=SideView(cog, interaction.user, bet), ephemeral=True)
+WORDLE_MAX_ATTEMPTS = 6
+WORDLE_WORD_LENGTH = 5
+WORDLE_RESET_HOUR_UTC = 0          # فأي ساعة (UTC) كتبدّل الكلمة اليومية
 
 
 # ═══════════════════════════════════════════════════════
-# ║                       الـ Cog                          ║
+# ║              🪢 المشنوق (Hangman)                      ║
 # ═══════════════════════════════════════════════════════
 
-class GamblingPanel(commands.Cog):
-    def __init__(self, bot: commands.Bot):
-        self.bot = bot
-
-    async def cog_load(self):
-        """كيتسمى أوتوماتيك ملي كيتحمّل الـ cog — هنا كنسجّلو الـ persistent view."""
-        self.bot.add_view(GamblingPanelView(self.bot))
-        print("✅ [GAMBLING] Persistent panel view مسجّل.")
-
-    @commands.Cog.listener()
-    async def on_ready(self):
-        """كيصاوب الـ panel أوتوماتيك إلا كان GAMBLING_CHANNEL_ID معمّر."""
-        if not cfg.GAMBLING_CHANNEL_ID:
-            return
-        channel = self.bot.get_channel(cfg.GAMBLING_CHANNEL_ID)
-        if not channel:
-            return
-        # ماتعاودش تبعثها إلا كانت ديجا
-        try:
-            async for msg in channel.history(limit=20):
-                if (msg.author == self.bot.user and msg.embeds
-                        and msg.embeds[0].title
-                        and "قمار" in msg.embeds[0].title):
-                    return
-        except discord.Forbidden:
-            return
-        await self._send_panel(channel)
-
-    async def _send_panel(self, channel):
-        embed = discord.Embed(
-            title="🎰 قناة القمار",
-            description=("هادي القناة ديال الألعاب اللي فيها رهان بالدراهم. "
-                         "راهن بحكمة — ماكاين حتى ضمان، غير الحظ 🍀"),
-            color=discord.Color.gold(),
-            timestamp=datetime.now()
-        )
-        embed.add_field(
-            name="🎲 الألعاب المتوفرة",
-            value="\n".join(f"{g['emoji']} **{g['label']}** — {g['desc']}"
-                            for g in GAMBLING_GAMES),
-            inline=False
-        )
-        embed.add_field(
-            name="⚠️ ملاحظة",
-            value=(f"🎲 النرد: رهان بين **{cfg.DICE_MIN_BET}**-**{cfg.DICE_MAX_BET}**\n"
-                  f"🪙 Coinflip: رهان بين **{cfg.COINFLIP_MIN_BET}**-**{cfg.COINFLIP_MAX_BET}**\n"
-                  f"السقف اليومي ديال الربح: **{cfg.COINS_DAILY_CAP}** "
-                  f"{cfg.CURRENCY_NAME_PLURAL} كيفما باقي الألعاب."),
-            inline=False
-        )
-        embed.set_footer(text="هاد الألعاب كتخدم غير فهاد القناة")
-        await channel.send(embed=embed, view=GamblingPanelView(self.bot))
-
-    # ═══════════════════════════════════════════════════
-    # ║   /gamblingpanel — بعث/عاود بعث الـ panel (Admin)   ║
-    # ═══════════════════════════════════════════════════
-
-    @commands.hybrid_command(name="gamblingpanel",
-                             description="⚙️ بعث panel القمار فهاد الـ channel (Admin)")
-    @commands.has_permissions(administrator=True)
-    async def gamblingpanel_cmd(self, ctx: commands.Context):
-        await self._send_panel(ctx.channel)
-        await ctx.send("✅ Panel القمار تبعث.", ephemeral=True)
+HANGMAN_MAX_MISTAKES = 6
+HANGMAN_SESSION_SECONDS = 300      # 5 دقايق قبل ما تسالي الجلسة
 
 
-async def setup(bot: commands.Bot):
-    await bot.add_cog(GamblingPanel(bot))
+# ═══════════════════════════════════════════════════════
+# ║              🎲 النرد (Dice)                           ║
+# ═══════════════════════════════════════════════════════
+
+COOLDOWN_DICE = 5          # ثواني cooldown بين رهان ورهان
+DICE_MIN_BET = 10          # أقل رهان مسموح
+DICE_MAX_BET = 500         # أقصى رهان مسموح
+
+# النرد كيرمي d20 (1-20). كيربح اللاعب إلا الرقم طلع >= threshold.
+# بدّل threshold/multiplier هنا — الـ house edge كيزيد شوية مع المخاطرة
+# (سهل ≈ 2.5% / متوسط ≈ 8% / صعب ≈ 17.5%) باش يبقى متوازن.
+DICE_RISK_LEVELS = {
+    "easy":   {"label": "🟢 سهل",   "threshold": 8,  "multiplier": 1.5},
+    "medium": {"label": "🟡 متوسط", "threshold": 13, "multiplier": 2.3},
+    "hard":   {"label": "🔴 صعب",   "threshold": 18, "multiplier": 5.5},
+}
+
+
+# ═══════════════════════════════════════════════════════
+# ║              🪙 Coinflip (وجه ولا ظهر)                ║
+# ═══════════════════════════════════════════════════════
+
+COOLDOWN_COINFLIP = 5              # ثواني cooldown بين رمية ورمية
+COINFLIP_MIN_BET = 10
+COINFLIP_MAX_BET = 500
+# 50/50 حقيقية، ولكن الربح مضاعف أقل من 2x باش يبقى house edge بسيط (~5%)
+COINFLIP_PAYOUT_MULTIPLIER = 1.9
+
+
+# ═══════════════════════════════════════════════════════
+# ║              🎰 Slots                                 ║
+# ═══════════════════════════════════════════════════════
+
+COOLDOWN_SLOTS = 5
+SLOTS_MIN_BET = 10
+SLOTS_MAX_BET = 500
+
+# وزن كل رمز (كل ما زاد الوزن، زادت فرصة يطلع) + المضاعف عند 3 متطابقين.
+# المجموع ديال الأوزان = 100 باش تكون النسب واضحة (وزن/100 = فرصة الرمز فـ reel وحدة).
+SLOTS_SYMBOLS = {
+    "🍒": {"weight": 35, "multiplier": 2},
+    "🍋": {"weight": 28, "multiplier": 3},
+    "🍇": {"weight": 20, "multiplier": 5},
+    "🔔": {"weight": 10, "multiplier": 10},
+    "💎": {"weight": 5,  "multiplier": 25},
+    "7️⃣": {"weight": 2,  "multiplier": 50},
+}
+# إلا طلعو رمزين متشابهين بس (Pair) — مكافأة صغيرة بلا ما تكون خسارة كاملة
+SLOTS_PAIR_MULTIPLIER = 1.2
+
+
+# ═══════════════════════════════════════════════════════
+# ║              ⚡ أسرع ضغطة (Reaction Speed)             ║
+# ═══════════════════════════════════════════════════════
+
+REACTION_MIN_DELAY = 3             # أقل وقت (بالثواني) قبل ما يبان الزر
+REACTION_MAX_DELAY = 15            # أقصى وقت
+REACTION_WINDOW_SECONDS = 10       # شحال كيبقى الزر ظاهر
+
+# ═══════════════════════════════════════════════════════
+# ║              🧠 لعبة Trivia (نسخة الدراهم 💲)            ║
+# ═══════════════════════════════════════════════════════
+# 📋 كوبي هاد السيكسيون كامل ولصقو فآخر games_config.py
+# ✅ القيم هنا هي نفسها لي كانو عندك فـ ai_bot.py (منقولين كيف ما هوما)
+
+TRIVIA_ENABLED = True
+TRIVIA_ANSWER_SECONDS = 30     # ← شحال ديال الوقت (بالثواني) معطى للجواب قبل ما يتسالا السؤال
+
+# ═══════ Trivia أوتوماتيكي (اختياري) ═══════
+TRIVIA_AUTO_CHANNEL_IDS = []           # ← خاوية = معطل. عامرة بـ IDs = كيبعث سؤال أوتوماتيك فهاد الـ channels
+TRIVIA_AUTO_INTERVAL_MINUTES = 60      # ← كل شحال ديال الدقايق كيبعث سؤال جديد أوتوماتيك
+
+# ═══════ Trivia Channel — panel دائم فـ channel خاص ═══════
+TRIVIA_CHANNEL_ID = 1533700465576116236
+# 💡 خليها 0 وسير دير `/setuptrivia` مباشرة فالـ channel اللي بغيتي
+
+TRIVIA_ROUNDS_PER_DIFFICULTY = 6   # ← كل ما جاوب صحيح هاد العدد ديال الأسئلة متتالية، الصعوبة تطلع درجة
+
+# ═══════ 💲 الربح بالدراهم (هادو بلاصة TRIVIA_XP_BY_DIFFICULTY و TRIVIA_XP_REWARD القدام) ═══════
+# نفس الأرقام لي كانو فالـ XP — بدلهم كيفما بغيتي.
+# السقف اليومي COINS_DAILY_CAP (الفوق) كيطبق عليهم أوتوماتيك من داخل الـ cog.
+TRIVIA_COINS = {
+    "easy": 4,       # 🟢 سؤال ساهل
+    "medium": 7,     # 🟡 سؤال متوسط
+    "hard": 12,      # 🔴 سؤال صعيب
+}
+TRIVIA_SINGLE_COINS = 8   # السؤال العام فـ channel (/trivia والأوتوماتيكي) — أول واحد يجاوب صحيح
+
+# ═══════ المجالات ═══════
+# الأرقام = IDs ديال الفئات فـ OpenTDB (للاحتياط ملي كيسالا البنك المحلي)
+TRIVIA_OPENTDB_IDS = {
+    "general": 9, "science": 17, "sports": 21, "history": 23,
+    "geography": 22, "movies": 11, "music": 12, "games": 15, "anime": 31,
+}
+TRIVIA_CATEGORY_LABELS = {
+    "general": "🌍 ثقافة عامة",
+    "science": "🔬 علوم",
+    "sports": "⚽ رياضة",
+    "history": "📜 تاريخ",
+    "geography": "🗺️ جغرافيا",
+    "movies": "🎬 أفلام",
+    "music": "🎵 موسيقى",
+    "games": "🎮 ألعاب فيديو",
+    "anime": "📺 أنمي ومانغا",
+}
+TRIVIA_CATEGORIES = list(TRIVIA_CATEGORY_LABELS)
