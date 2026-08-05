@@ -28,8 +28,8 @@ import games_config as cfg
 GAMBLING_GAMES = [
     {"id": "dice", "emoji": "🎲", "label": "النرد",
      "desc": "راهن، اختار المخاطرة (سهل/متوسط/صعب)، ارمي النرد"},
-    # {"id": "slots", "emoji": "🎰", "label": "Slots", "desc": "..."},
-    # {"id": "coinflip", "emoji": "🪙", "label": "Coinflip", "desc": "..."},
+    {"id": "coinflip", "emoji": "🪙", "label": "Coinflip",
+     "desc": "راهن، اختار وجه ولا ظهر، قلب العملة"},
 ]
 
 
@@ -69,13 +69,19 @@ class GamblingPanelView(discord.ui.View):
     @discord.ui.button(label="📊 الإحصائيات ديالي", style=discord.ButtonStyle.secondary,
                        custom_id="ggmw9:gambling_panel:stats")
     async def stats_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        cog = self.bot.get_cog("Dice")
-        if not cog:
+        embeds = []
+        dice_cog = self.bot.get_cog("Dice")
+        if dice_cog:
+            embeds.append(dice_cog.build_stats_embed(interaction.guild, interaction.user))
+        cf_cog = self.bot.get_cog("Coinflip")
+        if cf_cog:
+            embeds.append(cf_cog.build_stats_embed(interaction.guild, interaction.user))
+
+        if not embeds:
             await interaction.response.send_message("❌ ماكاين حتى لعبة رهان محمّلة دابا.",
                                                     ephemeral=True)
             return
-        await interaction.response.send_message(
-            embed=cog.build_stats_embed(interaction.guild, interaction.user), ephemeral=True)
+        await interaction.response.send_message(embeds=embeds, ephemeral=True)
 
 
 # ═══════════════════════════════════════════════════════
@@ -120,7 +126,22 @@ class GamblingMenuView(discord.ui.View):
             await interaction.response.send_modal(DiceBetModal(self.bot))
             return
 
-        # ═══ ألعاب رهان جايين (Slots, Coinflip...) ═══
+        # ═══ Coinflip ═══
+        if choice == "coinflip":
+            cog = self.bot.get_cog("Coinflip")
+            eco = self.bot.get_cog("Economy")
+            if not cog or not eco:
+                await interaction.response.send_message("❌ Coinflip ماشي متوفر دابا.", ephemeral=True)
+                return
+            key = (interaction.guild.id, self.user.id)
+            if key in cog.active:
+                await interaction.response.send_message("❌ عندك رهان خدّام ديجا — سالّيه أولاً.",
+                                                        ephemeral=True)
+                return
+            await interaction.response.send_modal(CoinflipBetModal(self.bot))
+            return
+
+        # ═══ ألعاب رهان جايين (Slots...) ═══
         await interaction.response.send_message("🚧 هاد اللعبة جاية قريب.", ephemeral=True)
 
 
@@ -187,6 +208,61 @@ class DiceBetModal(discord.ui.Modal, title="🎲 شحال بغيتي تراهن�
 
 
 # ═══════════════════════════════════════════════════════
+# ║           المودال ديال مبلغ الرهان (Coinflip)         ║
+# ═══════════════════════════════════════════════════════
+
+class CoinflipBetModal(discord.ui.Modal, title="🪙 شحال بغيتي تراهن؟"):
+    amount = discord.ui.TextInput(
+        label="المبلغ", placeholder="مثلا 50", max_length=6, required=True)
+
+    def __init__(self, bot: commands.Bot):
+        super().__init__()
+        self.bot = bot
+
+    async def on_submit(self, interaction: discord.Interaction):
+        raw = str(self.amount.value).strip()
+        if not raw.isdigit():
+            await interaction.response.send_message("❌ خاصك تكتب رقم صحيح.", ephemeral=True)
+            return
+        bet = int(raw)
+
+        cog = self.bot.get_cog("Coinflip")
+        eco = self.bot.get_cog("Economy")
+        if not cog or not eco:
+            await interaction.response.send_message("❌ Coinflip ماشي متوفر دابا.", ephemeral=True)
+            return
+
+        if bet < cfg.COINFLIP_MIN_BET or bet > cfg.COINFLIP_MAX_BET:
+            await interaction.response.send_message(
+                f"❌ الرهان خاصو يكون بين **{cfg.COINFLIP_MIN_BET}** و **{cfg.COINFLIP_MAX_BET}** "
+                f"{cfg.CURRENCY_EMOJI}.", ephemeral=True)
+            return
+
+        key = (interaction.guild.id, interaction.user.id)
+        if key in cog.active:
+            await interaction.response.send_message("❌ عندك رهان خدّام ديجا.", ephemeral=True)
+            return
+
+        balance = eco.get_balance(interaction.guild.id, interaction.user.id)
+        if balance < bet:
+            await interaction.response.send_message(
+                f"❌ ماعندكش الفلوس الكافية — خاصك **{bet - balance:,}** {cfg.CURRENCY_EMOJI} زيادة.",
+                ephemeral=True)
+            return
+
+        from cogs.game_coinflip import SideView   # ← بدّل المسار إلا ملف Coinflip ماشي فـ cogs/
+
+        embed = discord.Embed(
+            title="🪙 Coinflip — اختار وجهك",
+            description=(f"💰 الرهان: **{bet:,}** {cfg.CURRENCY_EMOJI}\n"
+                         f"🎯 فرصة: **50%** — مضاعف: **×{cfg.COINFLIP_PAYOUT_MULTIPLIER}**"),
+            color=discord.Color.blurple(),
+        )
+        await interaction.response.send_message(
+            embed=embed, view=SideView(cog, interaction.user, bet), ephemeral=True)
+
+
+# ═══════════════════════════════════════════════════════
 # ║                       الـ Cog                          ║
 # ═══════════════════════════════════════════════════════
 
@@ -234,8 +310,8 @@ class GamblingPanel(commands.Cog):
         )
         embed.add_field(
             name="⚠️ ملاحظة",
-            value=(f"الرهان بين **{cfg.DICE_MIN_BET}** و **{cfg.DICE_MAX_BET}** "
-                  f"{cfg.CURRENCY_NAME_PLURAL}.\n"
+            value=(f"🎲 النرد: رهان بين **{cfg.DICE_MIN_BET}**-**{cfg.DICE_MAX_BET}**\n"
+                  f"🪙 Coinflip: رهان بين **{cfg.COINFLIP_MIN_BET}**-**{cfg.COINFLIP_MAX_BET}**\n"
                   f"السقف اليومي ديال الربح: **{cfg.COINS_DAILY_CAP}** "
                   f"{cfg.CURRENCY_NAME_PLURAL} كيفما باقي الألعاب."),
             inline=False
