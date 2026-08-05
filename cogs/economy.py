@@ -36,6 +36,27 @@ def _today_key() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
+def currency_word(amount: int) -> str:
+    """كترجع الصيغة الصحيحة ديال '{cfg.CURRENCY_NAME}' حسب قاعدة العدد بالدارجة:
+      1                 → مفرد   (1 درهم)
+      2 حتى 10          → جمع    (2 دراهم، 3 دراهم... 10 دراهم)
+      11 وما فوق         → مفرد   (11 درهم، 12 درهم... 100 درهم، 250 درهم...)
+    كنعتمدو على آخر رقمين ديال العدد (amount % 100) باش تخدم صحيحة حتى
+    فالأعداد الكبيرة (101 → درهم، 102 → دراهم، 110 → دراهم، 111 → درهم...).
+    """
+    last_two = abs(int(amount)) % 100
+    if last_two == 1:
+        return cfg.CURRENCY_NAME
+    if 2 <= last_two <= 10:
+        return cfg.CURRENCY_NAME_PLURAL
+    return cfg.CURRENCY_NAME
+
+
+def fmt_coins(amount: int) -> str:
+    """جاهزة للطباعة مباشرة: fmt_coins(6) → '6 دراهم', fmt_coins(100) → '100 درهم'."""
+    return f"{amount:,} {currency_word(amount)}"
+
+
 class Economy(commands.Cog):
     """نظام العملة — كاع الـ cogs الأخرى كتعيّط عليه بـ bot.get_cog("Economy")"""
 
@@ -60,6 +81,14 @@ class Economy(commands.Cog):
 
     def get_balance(self, guild_id: int, user_id: int) -> int:
         return self._acc(guild_id, user_id).get("coins", 0)
+
+    def currency_word(self, amount: int) -> str:
+        """اختصار — باقي الـ cogs يقدرو يستعملوها: eco.currency_word(n)."""
+        return currency_word(amount)
+
+    def fmt_coins(self, amount: int) -> str:
+        """اختصار — باقي الـ cogs يقدرو يستعملوها: eco.fmt_coins(n)."""
+        return fmt_coins(amount)
 
     def add_coins(self, guild_id: int, user_id: int, amount: int,
                   source: str = "game", respect_cap: bool = True) -> int:
@@ -130,7 +159,7 @@ class Economy(commands.Cog):
             timestamp=datetime.now()
         )
         embed.add_field(name="💰 الرصيد الحالي",
-                        value=f"**{acc['coins']:,}** {cfg.CURRENCY_NAME_PLURAL}", inline=True)
+                        value=f"**{acc['coins']:,}** {currency_word(acc['coins'])}", inline=True)
         embed.add_field(name="📈 المجموع من البداية",
                         value=f"**{acc.get('total_earned', 0):,}**", inline=True)
         embed.add_field(name="🔥 Streak ديال /daily",
@@ -182,7 +211,7 @@ class Economy(commands.Cog):
 
         embed = discord.Embed(
             title="🎁 المكافأة اليومية",
-            description=f"خديتي **{total}** {cfg.CURRENCY_NAME_PLURAL} {cfg.CURRENCY_EMOJI}",
+            description=f"خديتي **{total}** {currency_word(total)} {cfg.CURRENCY_EMOJI}",
             color=discord.Color.green()
         )
         if bonus > 0:
@@ -226,7 +255,7 @@ class Economy(commands.Cog):
         """كيتسمى من /gamesadmin givecoins"""
         self.add_coins(guild.id, member.id, amount, source="admin", respect_cap=False)
         verb = "تزادو لـ" if amount >= 0 else "تحيدو من"
-        return (f"✅ {abs(amount)} {cfg.CURRENCY_NAME_PLURAL} {verb} {member.mention}\n"
+        return (f"✅ {abs(amount)} {currency_word(amount)} {verb} {member.mention}\n"
                 f"الرصيد الجديد: **{self.get_balance(guild.id, member.id):,}** "
                 f"{cfg.CURRENCY_EMOJI}")
 
