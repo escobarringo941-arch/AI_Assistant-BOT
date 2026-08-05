@@ -177,3 +177,51 @@ HANGMAN_SESSION_SECONDS = 300      # 5 دقايق قبل ما تسالي الج�
 REACTION_MIN_DELAY = 3             # أقل وقت (بالثواني) قبل ما يبان الزر
 REACTION_MAX_DELAY = 15            # أقصى وقت
 REACTION_WINDOW_SECONDS = 10       # شحال كيبقى الزر ظاهر
+
+# ═══════════════════════════════════════════════════════
+# ║              🧠 لعبة Trivia (نسخة الدراهم 💲)            ║
+# ═══════════════════════════════════════════════════════
+# 📋 كوبي هاد السيكسيون كامل ولصقو فآخر games_config.py
+# ✅ القيم هنا هي نفسها لي كانو عندك فـ ai_bot.py (منقولين كيف ما هوما)
+
+TRIVIA_ENABLED = True
+TRIVIA_ANSWER_SECONDS = 30     # ← شحال ديال الوقت (بالثواني) معطى للجواب قبل ما يتسالا السؤال
+
+# ═══════ Trivia أوتوماتيكي (اختياري) ═══════
+TRIVIA_AUTO_CHANNEL_IDS = []           # ← خاوية = معطل. عامرة بـ IDs = كيبعث سؤال أوتوماتيك فهاد الـ channels
+TRIVIA_AUTO_INTERVAL_MINUTES = 60      # ← كل شحال ديال الدقايق كيبعث سؤال جديد أوتوماتيك
+
+# ═══════ Trivia Channel — panel دائم فـ channel خاص ═══════
+TRIVIA_CHANNEL_ID = 1533700465576116236
+# 💡 خليها 0 وسير دير `/setuptrivia` مباشرة فالـ channel اللي بغيتي
+
+TRIVIA_ROUNDS_PER_DIFFICULTY = 6   # ← كل ما جاوب صحيح هاد العدد ديال الأسئلة متتالية، الصعوبة تطلع درجة
+
+# ═══════ 💲 الربح بالدراهم (هادو بلاصة TRIVIA_XP_BY_DIFFICULTY و TRIVIA_XP_REWARD القدام) ═══════
+# نفس الأرقام لي كانو فالـ XP — بدلهم كيفما بغيتي.
+# السقف اليومي COINS_DAILY_CAP (الفوق) كيطبق عليهم أوتوماتيك من داخل الـ cog.
+TRIVIA_COINS = {
+    "easy": 4,       # 🟢 سؤال ساهل
+    "medium": 7,     # 🟡 سؤال متوسط
+    "hard": 12,      # 🔴 سؤال صعيب
+}
+TRIVIA_SINGLE_COINS = 8   # السؤال العام فـ channel (/trivia والأوتوماتيكي) — أول واحد يجاوب صحيح
+
+# ═══════ المجالات ═══════
+# الأرقام = IDs ديال الفئات فـ OpenTDB (للاحتياط ملي كيسالا البنك المحلي)
+TRIVIA_OPENTDB_IDS = {
+    "general": 9, "science": 17, "sports": 21, "history": 23,
+    "geography": 22, "movies": 11, "music": 12, "games": 15, "anime": 31,
+}
+TRIVIA_CATEGORY_LABELS = {
+    "general": "🌍 ثقافة عامة",
+    "science": "🔬 علوم",
+    "sports": "⚽ رياضة",
+    "history": "📜 تاريخ",
+    "geography": "🗺️ جغرافيا",
+    "movies": "🎬 أفلام",
+    "music": "🎵 موسيقى",
+    "games": "🎮 ألعاب فيديو",
+    "anime": "📺 أنمي ومانغا",
+}
+TRIVIA_CATEGORIES = list(TRIVIA_CATEGORY_LABELS)
