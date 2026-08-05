@@ -172,7 +172,7 @@ class Counting(commands.Cog):
             lines = [f"`#{i+1}` <@{uid}> — **{c}** رقم" for i, (uid, c) in enumerate(top)]
             embed.add_field(name="🥇 أكثر اللي عدّو", value="\n".join(lines), inline=False)
 
-        if cfg.COUNTING_CHANNEL_ID:
+        if cfg.COUNTING_CHANNEL_ID:1534234937530650755
             # ملاحظة: mentions ديال القنوات (<#id>) ماكيتـرندراوش فالـ footer،
             # علاش كنحطوها فالـ description باش تبان كرابط قابل للكليك
             embed.description = f"العب فـ <#{cfg.COUNTING_CHANNEL_ID}> — كتب الرقم الجاي وصافي!"
