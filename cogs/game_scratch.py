@@ -88,9 +88,13 @@ class Scratch(commands.Cog):
 
     # ═══════════════════════════════════════════════════
 
-    @commands.hybrid_command(name="scratch", aliases=["كشط"],
-                             description="راهن وكشط الكرت 🎫")
-    @app_commands.describe(bet="شحال بغيتي تراهن")
+    # ⚠️ عمدا commands.command ماشي hybrid_command: البوت قريب من الحد الأقصى
+    # ديال ديسكورد (100 slash command globally) — واللعب الحقيقي كيمر من
+    # البانل (زر → مودال → _play_out)، فـ /scratch كـ slash ماشي ضروري.
+    # إلا حريتي بلاصة فالعدّاد ديال الـ slash commands وبغيتي ترجعها hybrid،
+    # بدّل commands.command لـ commands.hybrid_command وزيد وسط:
+    #   @app_commands.describe(bet="شحال بغيتي تراهن")
+    @commands.command(name="scratch", aliases=["كشط"])
     @commands.cooldown(1, cfg.COOLDOWN_SCRATCH, commands.BucketType.user)
     async def scratch_cmd(self, ctx: commands.Context, bet: int):
         eco = self.economy()
