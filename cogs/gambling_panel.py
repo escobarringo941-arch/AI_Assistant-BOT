@@ -65,7 +65,7 @@ class GamblingPanelView(discord.ui.View):
         balance = eco.get_balance(interaction.guild.id, interaction.user.id)
         remaining = eco.daily_remaining(interaction.guild.id, interaction.user.id)
         await interaction.response.send_message(
-            f"{cfg.CURRENCY_EMOJI} عندك **{balance:,}** {cfg.CURRENCY_NAME_PLURAL}\n"
+            f"{cfg.CURRENCY_EMOJI} عندك **{balance:,}** {eco.currency_word(balance)}\n"
             f"📊 باقي ليك **{remaining}** من السقف اليومي",
             ephemeral=True
         )
@@ -432,6 +432,8 @@ class GamblingPanel(commands.Cog):
         await self._send_panel(channel)
 
     async def _send_panel(self, channel):
+        eco = self.bot.get_cog("Economy")
+        cap_word = eco.currency_word(cfg.COINS_DAILY_CAP) if eco else cfg.CURRENCY_NAME_PLURAL
         embed = discord.Embed(
             title="🎰 قناة القمار",
             description=("هادي القناة ديال الألعاب اللي فيها رهان بالدراهم. "
@@ -452,7 +454,7 @@ class GamblingPanel(commands.Cog):
                   f"🎰 Slots: **{cfg.SLOTS_MIN_BET}**-**{cfg.SLOTS_MAX_BET}**\n"
                   f"🎫 Scratch Card: **{cfg.SCRATCH_MIN_BET}**-**{cfg.SCRATCH_MAX_BET}**\n"
                   f"السقف اليومي ديال الربح: **{cfg.COINS_DAILY_CAP}** "
-                  f"{cfg.CURRENCY_NAME_PLURAL} كيفما باقي الألعاب."),
+                  f"{cap_word} كيفما باقي الألعاب."),
             inline=False
         )
         embed.set_footer(text="هاد الألعاب كتخدم غير فهاد القناة")
