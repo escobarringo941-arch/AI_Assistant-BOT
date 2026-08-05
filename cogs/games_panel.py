@@ -54,7 +54,7 @@ class GamesPanelView(discord.ui.View):
         balance = eco.get_balance(interaction.guild.id, interaction.user.id)
         remaining = eco.daily_remaining(interaction.guild.id, interaction.user.id)
         await interaction.response.send_message(
-            f"{cfg.CURRENCY_EMOJI} عندك **{balance:,}** {cfg.CURRENCY_NAME_PLURAL}\n"
+            f"{cfg.CURRENCY_EMOJI} عندك **{balance:,}** {eco.currency_word(balance)}\n"
             f"📊 باقي ليك **{remaining}** من السقف اليومي\n"
             f"🛒 دير `/shop` باش تشري",
             ephemeral=True
@@ -227,6 +227,8 @@ class GamesPanel(commands.Cog):
         await self._send_panel(channel)
 
     async def _send_panel(self, channel):
+        eco = self.bot.get_cog("Economy")
+        cap_word = eco.currency_word(cfg.COINS_DAILY_CAP) if eco else cfg.CURRENCY_NAME_PLURAL
         embed = discord.Embed(
             title="🎮 Mini Games",
             description="مرحبا بيك فـ قسم الألعاب! العب، ربح "
@@ -255,7 +257,7 @@ class GamesPanel(commands.Cog):
         embed.add_field(
             name="⚠️ ملاحظة",
             value=f"السقف اليومي: **{cfg.COINS_DAILY_CAP}** "
-                  f"{cfg.CURRENCY_NAME_PLURAL} — باش الكل يبقى عندو الشانص.",
+                  f"{cap_word} — باش الكل يبقى عندو الشانص.",
             inline=False
         )
         embed.set_footer(text="الألعاب ماكتعطيش XP — الـ XP كيبقى غير من الشات والفويس")
