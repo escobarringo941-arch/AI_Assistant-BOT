@@ -34,6 +34,8 @@ GAMBLING_GAMES = [
      "desc": "راهن ودور العجلة — 3 متطابقين = جاكبوت"},
     {"id": "scratch", "emoji": "🎫", "label": "Scratch Card",
      "desc": "راهن وكشط الكرت — 3 رموز متطابقين فـ 9 خانات = ربح"},
+    {"id": "lottery", "emoji": "🎟️", "label": "Lottery",
+     "desc": "راهن، خود تيكي بأرقام عشوائية — كل ما طابقو مع السحب كبر الربح"},
 ]
 
 
@@ -86,6 +88,9 @@ class GamblingPanelView(discord.ui.View):
         scratch_cog = self.bot.get_cog("Scratch")
         if scratch_cog:
             embeds.append(scratch_cog.build_stats_embed(interaction.guild, interaction.user))
+        lottery_cog = self.bot.get_cog("Lottery")
+        if lottery_cog:
+            embeds.append(lottery_cog.build_stats_embed(interaction.guild, interaction.user))
 
         if not embeds:
             await interaction.response.send_message("❌ ماكاين حتى لعبة رهان محمّلة دابا.",
@@ -180,6 +185,21 @@ class GamblingMenuView(discord.ui.View):
                                                         ephemeral=True)
                 return
             await interaction.response.send_modal(ScratchBetModal(self.bot))
+            return
+
+        # ═══ Lottery ═══
+        if choice == "lottery":
+            cog = self.bot.get_cog("Lottery")
+            eco = self.bot.get_cog("Economy")
+            if not cog or not eco:
+                await interaction.response.send_message("❌ Lottery ماشي متوفرة دابا.", ephemeral=True)
+                return
+            key = (interaction.guild.id, self.user.id)
+            if key in cog.active:
+                await interaction.response.send_message("❌ عندك رهان خدّام ديجا — سالّيه أولاً.",
+                                                        ephemeral=True)
+                return
+            await interaction.response.send_modal(LotteryBetModal(self.bot))
             return
 
         # ═══ ألعاب رهان جايين ═══
@@ -400,6 +420,55 @@ class ScratchBetModal(discord.ui.Modal, title="🎫 شحال بغيتي تراه
 
 
 # ═══════════════════════════════════════════════════════
+# ║          المودال ديال مبلغ الرهان (Lottery)           ║
+# ═══════════════════════════════════════════════════════
+
+class LotteryBetModal(discord.ui.Modal, title="🎟️ شحال بغيتي تراهن؟"):
+    amount = discord.ui.TextInput(
+        label="المبلغ", placeholder="مثلا 50", max_length=6, required=True)
+
+    def __init__(self, bot: commands.Bot):
+        super().__init__()
+        self.bot = bot
+
+    async def on_submit(self, interaction: discord.Interaction):
+        raw = str(self.amount.value).strip()
+        if not raw.isdigit():
+            await interaction.response.send_message("❌ خاصك تكتب رقم صحيح.", ephemeral=True)
+            return
+        bet = int(raw)
+
+        cog = self.bot.get_cog("Lottery")
+        eco = self.bot.get_cog("Economy")
+        if not cog or not eco:
+            await interaction.response.send_message("❌ Lottery ماشي متوفرة دابا.", ephemeral=True)
+            return
+
+        if bet < cfg.LOTTERY_MIN_BET or bet > cfg.LOTTERY_MAX_BET:
+            await interaction.response.send_message(
+                f"❌ الرهان خاصو يكون بين **{cfg.LOTTERY_MIN_BET}** و **{cfg.LOTTERY_MAX_BET}** "
+                f"{cfg.CURRENCY_EMOJI}.", ephemeral=True)
+            return
+
+        key = (interaction.guild.id, interaction.user.id)
+        if key in cog.active:
+            await interaction.response.send_message("❌ عندك رهان خدّام ديجا.", ephemeral=True)
+            return
+
+        if not eco.spend(interaction.guild.id, interaction.user.id, bet):
+            await interaction.response.send_message("❌ ماعندكش الفلوس الكافية.", ephemeral=True)
+            return
+
+        from cogs.game_lottery import _resolve, _ticket_embed, _play_out   # ← بدّل المسار إلا ماشي فـ cogs/
+
+        cog.active.add(key)
+        result = _resolve(bet)
+        await interaction.response.send_message(embed=_ticket_embed(bet, result["ticket"]), ephemeral=True)
+        msg = await interaction.original_response()
+        await _play_out(cog, msg, interaction.guild.id, interaction.user, bet, result)
+
+
+# ═══════════════════════════════════════════════════════
 # ║                       الـ Cog                          ║
 # ═══════════════════════════════════════════════════════
 
@@ -453,6 +522,7 @@ class GamblingPanel(commands.Cog):
                   f"🪙 Coinflip: **{cfg.COINFLIP_MIN_BET}**-**{cfg.COINFLIP_MAX_BET}**\n"
                   f"🎰 Slots: **{cfg.SLOTS_MIN_BET}**-**{cfg.SLOTS_MAX_BET}**\n"
                   f"🎫 Scratch Card: **{cfg.SCRATCH_MIN_BET}**-**{cfg.SCRATCH_MAX_BET}**\n"
+                  f"🎟️ Lottery: **{cfg.LOTTERY_MIN_BET}**-**{cfg.LOTTERY_MAX_BET}**\n"
                   f"السقف اليومي ديال الربح: **{cfg.COINS_DAILY_CAP}** "
                   f"{cap_word} كيفما باقي الألعاب."),
             inline=False
