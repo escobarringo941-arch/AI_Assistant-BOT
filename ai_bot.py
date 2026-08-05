@@ -9661,6 +9661,7 @@ GAMES_COGS = [
     "cogs.game_dice",        # ← 🎲 النرد (رهان)
     "cogs.game_coinflip",    # ← 🪙 Coinflip (رهان)
     "cogs.game_slots",       # ← 🎰 Slots (رهان)
+    "cogs.game_scratch",     # ← 🎫 Scratch Card (رهان)
     "cogs.gambling_panel",   # ← 🎰 panel القمار — خاصو يجي بعد الألعاب ديال الرهان
 ]
 
