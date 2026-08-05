@@ -282,7 +282,14 @@ def build_trivia_session_embed(question_text: str, options: list, category_label
     embed.add_field(name="📚 المجال", value=category_label, inline=True)
     embed.add_field(name="🎯 الصعوبة", value=TRIVIA_DIFFICULTY_LABELS.get(difficulty, difficulty), inline=True)
     embed.add_field(name="🔥 السلسلة", value=f"{streak} صحيح متتالي", inline=True)
-    embed.add_field(name="⏱️ الوقت", value=f"<t:{int(expires_at.timestamp())}:R>", inline=True)
+    # ⏱️ عدّاد حقيقي كيتحدّث من البوت (Discord ماكيحدّثش <t:R> كل ثانية،
+    # علاش كان كيبان مجمد فـ "29") — شوف TriviaSessionView._watchdog
+    remaining = max(0, int(round((expires_at - datetime.now()).total_seconds())))
+    total = max(TRIVIA_ANSWER_SECONDS, 1)
+    filled = max(0, min(6, -(-remaining * 6 // total)))   # ceil(remaining/total * 6)
+    bar = "🟩" * filled + "⬛" * (6 - filled)
+    warn = " ⚠️" if remaining <= 10 else ""
+    embed.add_field(name="⏱️ الوقت", value=f"{bar}\nباقي **{remaining}** ثانية{warn}", inline=True)
     embed.set_footer(text=f"جاوب صحيح تربح +{reward} {CURRENCY_NAME}")
     return embed
 
@@ -334,6 +341,7 @@ class TriviaSessionView(discord.ui.View):
         self.interaction = interaction          # ← آخر interaction، بيه كنعدلو الرسالة ephemeral
         self.used_keys = used_keys if used_keys is not None else set()
         self.ended = False
+        self.prefix = ""   # السطر الفوقاني (✅ صحيح! +X...) — كيتحفظ باش يبقى بايـن مع تحديثات العدّاد
 
         # ═══ تتبع الربح ديال هاد الجولة (باش نوريوه ملي يخسر) ═══
         self.session_coins = session_coins
@@ -352,10 +360,12 @@ class TriviaSessionView(discord.ui.View):
         self._build_components()
         self._watchdog_task = asyncio.create_task(self._watchdog())
 
-    def build_embed(self, prefix: str = "") -> discord.Embed:
+    def build_embed(self, prefix: str = None) -> discord.Embed:
+        if prefix is not None:
+            self.prefix = prefix
         return build_trivia_session_embed(
             self.question_text, self.options, self.category_label, self.difficulty,
-            self.round_num, self.streak, self.expires_at, prefix=prefix
+            self.round_num, self.streak, self.expires_at, prefix=self.prefix
         )
 
     def build_summary(self, title: str, top_text: str, color: discord.Color,
@@ -409,14 +419,30 @@ class TriviaSessionView(discord.ui.View):
         return embed
 
     async def _watchdog(self):
-        """كيستنى بالضبط حتى الوقت ديال expires_at، وإلا حتى واحد ما جاوب، كيسالي اللعبة."""
+        """جوج مهام فنفس الوقت:
+          1) كيسالي اللعبة بالضبط ملي يخلص الوقت (المنطق الأصلي)
+          2) كيحدّث العدّاد فالرسالة كل 5 ثواني — حيت Discord ماكيحدّثش
+             الـ timestamps النسبية (<t:R>) كل ثانية، فكان العد كيبان مجمد.
+        التحديث كل 5 ثواني (ماشي كل ثانية) باش ما نضربوش rate limit ديال
+        Discord ملي كيلعبو بزاف ديال الأعضاء فنفس الوقت."""
         try:
-            remaining = (self.expires_at - datetime.now()).total_seconds()
-            if remaining > 0:
-                await asyncio.sleep(remaining)
-            if self.ended:
-                return
-            await self._end_session_timeout()
+            while not self.ended:
+                remaining = (self.expires_at - datetime.now()).total_seconds()
+                if remaining <= 0:
+                    break
+                await asyncio.sleep(min(5, remaining))
+                if self.ended:
+                    return
+                # إلا بقات أقل من ثانية، دوز نيشان لشاشة النهاية بلا تحديث زايد
+                if (self.expires_at - datetime.now()).total_seconds() < 1:
+                    break
+                try:
+                    # embed فقط — الأزرار كيبقاو كيف ما هوما
+                    await self.interaction.edit_original_response(embed=self.build_embed())
+                except (discord.HTTPException, discord.NotFound):
+                    pass   # تحديث فيزوال فقط — إلا فشل، اللعبة كتكمل عادي
+            if not self.ended:
+                await self._end_session_timeout()
         except asyncio.CancelledError:
             pass
         except Exception as e:
