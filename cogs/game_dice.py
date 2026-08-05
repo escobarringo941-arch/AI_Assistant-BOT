@@ -44,6 +44,13 @@ class Dice(commands.Cog):
     def economy(self):
         return self.bot.get_cog("Economy")
 
+    def _check_gambling_channel(self, ctx: commands.Context) -> bool:
+        """كتأكد بلي الأمر تندار فقناة القمار (إلا كانت محددة). قابلة لإعادة الاستعمال
+        فأي لعبة رهان أخرى (Slots, Coinflip...)."""
+        if not cfg.GAMBLING_CHANNEL_ID:
+            return True
+        return ctx.channel.id == cfg.GAMBLING_CHANNEL_ID
+
     # ═══════════════════════════════════════════════════
 
     @commands.hybrid_command(name="dice", aliases=["نرد"],
@@ -54,6 +61,12 @@ class Dice(commands.Cog):
         eco = self.economy()
         if not eco:
             await ctx.send("❌ نظام الدراهم ماشي محمّل دابا.", ephemeral=True)
+            return
+
+        if not self._check_gambling_channel(ctx):
+            channel = ctx.guild.get_channel(cfg.GAMBLING_CHANNEL_ID)
+            hint = channel.mention if channel else "قناة القمار"
+            await ctx.send(f"❌ هاد اللعبة كتخدم غير فـ {hint}.", ephemeral=True)
             return
 
         key = (ctx.guild.id, ctx.author.id)
