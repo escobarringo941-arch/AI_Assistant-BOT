@@ -653,6 +653,33 @@ def _record_purchase(
     )
     cog.db.save()
 
+    # ════════════════════════════════════════════════
+    # أوامر خاصة بالـ Owner فقط (فلوس)               ║
+    # ════════════════════════════════════════════════
+
+    @commands.hybrid_command(
+        name="givecoins",
+        description="(Owner فقط) عطي/حيّد دراهم لعضو",
+    )
+    @app_commands.describe(
+        member="العضو اللي بغيتي تعطيه الفلوس",
+        amount="العدد (موجب = تزاد، سالب = يتحيد)",
+    )
+    async def givecoins_cmd(
+        self, ctx: commands.Context, member: discord.Member, amount: int
+    ):
+        # نستعمل OWNER_ID و is_owner من ai_bot (مخزنين فـ bot.gg)
+        bridge = getattr(self.bot, "gg", None)
+        owner_id = getattr(
+            __import__("ai_bot-63-3"), "OWNER_ID", None
+        ) if bridge is None else bridge.get("OWNER_ID")
+
+        if not owner_id or ctx.author.id != owner_id:
+            await ctx.send("❌ هاد الأمر خاص غير بـ Owner الحقيقي للسيرفر.", delete_after=6)
+            return
+
+        msg = self.admin_give(ctx.guild, member, amount)
+        await ctx.send(msg)
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Economy(bot))
