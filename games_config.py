@@ -24,6 +24,7 @@ GAMES_LEADERBOARD_CHANNEL_ID = 1534235056564867194
 GAMBLING_CHANNEL_ID = 1534672591422226502
 
 SHOP_PANEL_CHANNEL_ID = 1534969085862088744  # ← حط هنا ID ديال #shop إلا بغيتي بانل المتجر
+SHOP_SHOUTOUT_CHANNEL_ID = 0  # ← حط هنا ID ديال الشانيل اللي غادي يبان فيها الشوتاوت (بحال #general)
 
 MINIGAMES_CATEGORY_ID = 1533697548215128134
 
@@ -154,6 +155,95 @@ SHOP_ITEMS = [
         "price": 3000,
         "type": "legend_tag",
         "duration_days": 7,
+    },
+
+    # ─── بوستات الفلوس (كيضاعفو الأرباح ديال الألعاب/daily لمدة معينة) ───
+    {
+        "id": "coinsboost_small",
+        "emoji": "💵",
+        "name": "بوست فلوس 1.5x (45 دقيقة)",
+        "description": "كل درهم كتربحو من الألعاب ولا /daily كيتضاعف 1.5x لمدة 45 دقيقة.",
+        "price": 200,
+        "type": "coins_boost",
+        "multiplier": 1.5,
+        "duration_hours": 0.75,
+    },
+    {
+        "id": "coinsboost_big",
+        "emoji": "💸",
+        "name": "بوست فلوس 2x (1 ساعة ونص)",
+        "description": "كل درهم كتربحو من الألعاب ولا /daily كيتضاعف 2x لمدة ساعة ونص — وقت مزيان باش تلعب بزاف.",
+        "price": 450,
+        "type": "coins_boost",
+        "multiplier": 2.0,
+        "duration_hours": 1.5,
+    },
+
+    # ─── حماية (كيحيد آخر تحذير) ───
+    {
+        "id": "warn_shield",
+        "emoji": "🛡️",
+        "name": "حيّد آخر تحذير",
+        "description": "كيمسح آخر تحذير (Warn) وصلك — إلا كنتي نظيف ما تقدرش تشريه.",
+        "price": 900,
+        "type": "warn_removal",
+    },
+
+    # ─── شوتاوت (رسالة تألق فشانيل معينة) ───
+    {
+        "id": "shoutout_public",
+        "emoji": "📣",
+        "name": "شوتاوت عمومي",
+        "description": "البوت غايبعث رسالة كتشهر بيك فـ الشانيل ديال الإعلانات، الكل يشوفك!",
+        "price": 350,
+        "type": "shoutout",
+    },
+
+    # ─── صناديق الحظ (مغامرة — نتيجة عشوائية ديال دراهم) ───
+    {
+        "id": "mysterybox_bronze",
+        "emoji": "🎁",
+        "name": "صندوق برونزي",
+        "description": "خاطر بـ 100 🪙 وشوف شنو غادي تربح — من 50 حتى 700!",
+        "price": 100,
+        "type": "mystery_box",
+        "outcomes": [
+            {"coins": 50, "weight": 40, "label": "50 🪙 — حظ خفيف"},
+            {"coins": 80, "weight": 30, "label": "80 🪙"},
+            {"coins": 150, "weight": 20, "label": "150 🪙 — مزيان!"},
+            {"coins": 300, "weight": 8, "label": "300 🪙 — 🔥"},
+            {"coins": 700, "weight": 2, "label": "700 🪙 — JACKPOT!! 🎉"},
+        ],
+    },
+    {
+        "id": "mysterybox_silver",
+        "emoji": "🎀",
+        "name": "صندوق فضي",
+        "description": "خاطر بـ 300 🪙 وشوف شنو غادي تربح — من 100 حتى 2000!",
+        "price": 300,
+        "type": "mystery_box",
+        "outcomes": [
+            {"coins": 100, "weight": 35, "label": "100 🪙"},
+            {"coins": 250, "weight": 30, "label": "250 🪙"},
+            {"coins": 450, "weight": 20, "label": "450 🪙 — مزيان!"},
+            {"coins": 900, "weight": 12, "label": "900 🪙 — 🔥"},
+            {"coins": 2000, "weight": 3, "label": "2000 🪙 — JACKPOT!! 🎉"},
+        ],
+    },
+    {
+        "id": "mysterybox_gold",
+        "emoji": "💰",
+        "name": "صندوق ذهبي",
+        "description": "خاطر بـ 700 🪙 وشوف شنو غادي تربح — من 200 حتى 6000!",
+        "price": 700,
+        "type": "mystery_box",
+        "outcomes": [
+            {"coins": 200, "weight": 30, "label": "200 🪙"},
+            {"coins": 600, "weight": 30, "label": "600 🪙"},
+            {"coins": 1200, "weight": 20, "label": "1200 🪙 — مزيان!"},
+            {"coins": 2500, "weight": 15, "label": "2500 🪙 — 🔥"},
+            {"coins": 6000, "weight": 5, "label": "6000 🪙 — JACKPOT!! 🎉"},
+        ],
     },
 ]
 
