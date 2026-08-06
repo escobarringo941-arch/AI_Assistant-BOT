@@ -26,7 +26,7 @@ from ai_bot import (
     # banned words / actions
     BANNED_WORDS,
     banned_words_state,
-    BANNEDACTIONS,
+    BANNED_ACTIONS,
     save_banned_lists,
     get_active_banned_words,
     # anti-raid
