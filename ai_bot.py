@@ -226,6 +226,8 @@ EXEMPT_ROLE_IDS = [
     1525712399456272495,  # Admin
     1526182506272133180,  # Moderator
 ]
+ADMIN_ROLE_ID = 1525712399456272495
+MODERATOR_ROLE_ID = 1526182506272133180
 
 # ═══════ لائحة الإدارة (Owner + Admins + Mods) فـ channel "Administrators" ═══════
 ADMINISTRATORS_CHANNEL_ID = 1532115828450000967  # ← حط هنا ID ديال channel "Administrators"
@@ -3572,6 +3574,13 @@ def _is_ticket_staff(member: discord.Member) -> bool:
     return any(role.id in EXEMPT_ROLE_IDS for role in member.roles)
 
 
+def _can_claim_ticket(member: discord.Member) -> bool:
+    """واش هاد العضو يقدر يستلم (Claim) Ticket — Owner + Admin بوحدو (ماشي Moderator)."""
+    if OWNER_ID and member.id == OWNER_ID:
+        return True
+    return any(role.id == ADMIN_ROLE_ID for role in member.roles)
+
+
 class TicketControlView(discord.ui.View):
     """الأزرار جوة channel ديال ticket وحدة (Claim + Close). Persistent —
     كتخدم بـ interaction.channel باش تعرف شنو الـ ticket، بلا ما تحتاج تخزن
@@ -3583,8 +3592,8 @@ class TicketControlView(discord.ui.View):
     @discord.ui.button(label="🙋 نستلمو (Claim)", style=discord.ButtonStyle.secondary, custom_id="ticket_claim_button")
     async def claim_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         member = interaction.user
-        if not isinstance(member, discord.Member) or not _is_ticket_staff(member):
-            await interaction.response.send_message("❌ هاد الزر خاص غير بالإدارة.", ephemeral=True)
+        if not isinstance(member, discord.Member) or not _can_claim_ticket(member):
+            await interaction.response.send_message("❌ هاد الزر خاص غير بالـ Owner و الـ Admin.", ephemeral=True)
             return
 
         record = tickets_db.get("open", {}).get(str(interaction.channel.id))
@@ -3794,7 +3803,7 @@ async def setup_tickets_panel(guild: discord.Guild):
 
 @bot.hybrid_command(name="setuptickets")
 @app_commands.default_permissions(administrator=True)
-@commands.has_permissions(administrator=True)
+@owner_only()
 async def setuptickets_cmd(ctx):
     """كيصاوب/يعاود يصاوب رسالة اللوحة ديال Tickets فـ TICKETS_PANEL_CHANNEL_ID (Admin)"""
     if not TICKETS_PANEL_CHANNEL_ID:
@@ -4033,7 +4042,7 @@ async def setup_applications_panel(guild: discord.Guild):
 
 @bot.hybrid_command(name="setupapplications")
 @app_commands.default_permissions(administrator=True)
-@commands.has_permissions(administrator=True)
+@owner_only()
 async def setupapplications_cmd(ctx):
     """كيصاوب/يعاود يصاوب رسالة اللوحة ديال Applications فـ APPLICATIONS_PANEL_CHANNEL_ID (Admin)"""
     if not APPLICATIONS_PANEL_CHANNEL_ID:
@@ -4345,7 +4354,7 @@ async def setup_suggestions_info(guild: discord.Guild):
 
 @bot.hybrid_command(name="setupsuggestions")
 @app_commands.default_permissions(administrator=True)
-@commands.has_permissions(administrator=True)
+@owner_only()
 async def setupsuggestions_cmd(ctx):
     """كيصاوب/يعاود يصاوب رسالة الشرح ديال channel الاقتراحات فـ SUGGESTIONS_CHANNEL_ID (Admin)"""
     if not SUGGESTIONS_CHANNEL_ID:
@@ -5753,7 +5762,7 @@ async def setup_levels_info_message(guild: discord.Guild):
 
 @bot.hybrid_command(name="setuplevels")
 @app_commands.default_permissions(administrator=True)
-@commands.has_permissions(administrator=True)
+@owner_only()
 async def setuplevels_cmd(ctx):
     """كيصاوب/يعاود يصاوب رسالة شرح نظام الـ Leveling فـ LEVELS_INFO_CHANNEL_ID (Admin)"""
     if not LEVELS_INFO_CHANNEL_ID:
@@ -7052,9 +7061,9 @@ async def raidstatus_cmd(ctx):
     await ctx.send(embed=embed)
 
 
-@bot.hybrid_command(name="testwelcome", description="بعث Welcome Card تجريبية هنا فالشات (Admin)")
+@bot.hybrid_command(name="testwelcome", description="بعث Welcome Card تجريبية هنا فالشات (Owner)")
 @app_commands.default_permissions(administrator=True)
-@commands.has_permissions(administrator=True)
+@owner_only()
 async def testwelcome_cmd(ctx, member: Optional[discord.Member] = None, returning: bool = False):
     """كيبعث Welcome Card تجريبية هنا فالشات بلا ما تحتاج عضو يدخل بصح للسيرفر (Admin).
     استعمال: /testwelcome [@عضو] [true/false للـ returning]"""
@@ -7332,14 +7341,14 @@ class LevelXPModal(discord.ui.Modal, title="📈 صعوبة المستويات (
 
 class XPPanelView(discord.ui.View):
     """أزرار لوحة تحكم XP — كل واحد كيحل Modal باش تبدل القيم ديال طريقة معينة.
-    خاص Administrator باش يستعملها، حتى ملي تكون الرسالة بانة لكل واحد."""
+    خاص الـ Owner بوحدو باش يستعملها، حتى ملي تكون الرسالة بانة لكل واحد."""
 
     def __init__(self):
         super().__init__(timeout=300)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if not isinstance(interaction.user, discord.Member) or not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message("❌ هاد اللوحة خاصة بالإدارة فقط.", ephemeral=True)
+        if not (OWNER_ID and interaction.user.id == OWNER_ID):
+            await interaction.response.send_message("❌ هاد اللوحة خاصة غير بالـ Owner.", ephemeral=True)
             return False
         return True
 
@@ -7383,9 +7392,9 @@ class XPPanelView(discord.ui.View):
         await interaction.response.edit_message(embed=_xp_panel_embed(), view=self)
 
 
-@bot.hybrid_command(name="xppanel", description="لوحة تحكم تفاعلية ديال إعدادات XP (Admin)")
+@bot.hybrid_command(name="xppanel", description="لوحة تحكم تفاعلية ديال إعدادات XP (Owner)")
 @app_commands.default_permissions(administrator=True)
-@commands.has_permissions(administrator=True)
+@owner_only()
 async def xppanel_cmd(ctx):
     """لوحة تحكم تفاعلية باش تبدل شحال ديال XP كياخدو الأعضاء من الشات، الفويس، اللايفستريم، وصعوبة المستويات — Admin"""
     await ctx.send(embed=_xp_panel_embed(), view=XPPanelView())
@@ -7492,7 +7501,7 @@ SOURCE_LABELS_AR = {
 
 @bot.hybrid_command(name="xpaudit")
 @app_commands.default_permissions(administrator=True)
-@commands.has_permissions(administrator=True)
+@owner_only()
 @app_commands.describe(member="العضو اللي بغيتي تشيك عليه")
 async def xpaudit_cmd(ctx, member: discord.Member):
     """كيوري من فين جا كل XP ديال عضو معين (شات/فويس/afk) وآخر events ديالو — Admin"""
@@ -7638,11 +7647,11 @@ class BackToMainButton(discord.ui.Button):
 
 
 class PanelPermissionView(discord.ui.View):
-    """View بيز فيها فحص الصلاحية (Admin فقط) مشترك بين كل صفحات اللوحة."""
+    """View بيز فيها فحص الصلاحية (Owner بوحدو) مشترك بين كل صفحات اللوحة."""
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if not isinstance(interaction.user, discord.Member) or not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message("❌ هاد اللوحة خاصة بالإدارة فقط.", ephemeral=True)
+        if not (OWNER_ID and interaction.user.id == OWNER_ID):
+            await interaction.response.send_message("❌ هاد اللوحة خاصة غير بالـ Owner.", ephemeral=True)
             return False
         return True
 
@@ -7914,9 +7923,9 @@ class MainPanelView(PanelPermissionView):
 
 @bot.hybrid_command(name="botpanel")
 @app_commands.default_permissions(administrator=True)
-@commands.has_permissions(administrator=True)
+@owner_only()
 async def botpanel_cmd(ctx):
-    """لوحة تحكم شاملة فأغلب إعدادات البوت (Anti-Raid، التحذيرات، Auto-Info، مميزات عامة، وXP) — Admin"""
+    """لوحة تحكم شاملة فأغلب إعدادات البوت (Anti-Raid، التحذيرات، Auto-Info، مميزات عامة، وXP) — Owner"""
     await ctx.send(embed=_main_panel_embed(), view=MainPanelView())
 
 
@@ -8181,7 +8190,7 @@ async def update_leaderboard_error(error):
 
 @bot.hybrid_command(name="setlevel")
 @app_commands.default_permissions(administrator=True)
-@commands.has_permissions(administrator=True)
+@owner_only()
 async def setlevel_cmd(ctx, member: discord.Member, level: int):
     """كيحط عضو مباشرة فمستوى معين (Admin) — مفيد إلا بغيتي تصحح غلط ولا تعطي مستوى بداية.
     كيزبط الرول ديال المستوى أوتوماتيكيا: كيحيد الرول القديم (بحال Level 10)
@@ -8222,9 +8231,9 @@ async def clearoldverify(ctx):
     await ctx.send(f"✅ تمسحو {deleted} رسالة/رسائل قديمة." if deleted else "ماكاينش شي رسالة قديمة باش تتمسح.", delete_after=8)
 
 
-@bot.hybrid_command(description="صاوب رسالة التفعيل/القوانين (Admin)")
+@bot.hybrid_command(description="صاوب رسالة التفعيل/القوانين (Owner)")
 @app_commands.default_permissions(administrator=True)
-@commands.has_permissions(administrator=True)
+@owner_only()
 async def setupverify(ctx):
     await setup_verify_message(ctx.guild)
     await ctx.send("✅ تم صاوب رسالة التفعيل!", delete_after=5)
@@ -8232,7 +8241,7 @@ async def setupverify(ctx):
 
 @bot.hybrid_command()
 @app_commands.default_permissions(administrator=True)
-@commands.has_permissions(administrator=True)
+@owner_only()
 async def setupblacklist(ctx):
     """يصاوب رسالة الممنوعات والعقوبات فـ Blacklist channel"""
     if not BLACKLIST_CHANNEL_ID:
@@ -8244,7 +8253,7 @@ async def setupblacklist(ctx):
 
 @bot.hybrid_command()
 @app_commands.default_permissions(administrator=True)
-@commands.has_permissions(administrator=True)
+@owner_only()
 async def setuprules(ctx):
     """يصاوب رسالة القوانين + زرارات كنوافق/كنرفض فـ rules channel"""
     await setup_rules_message(ctx.guild)
@@ -8253,7 +8262,7 @@ async def setuprules(ctx):
 
 @bot.hybrid_command()
 @app_commands.default_permissions(administrator=True)
-@commands.has_permissions(administrator=True)
+@owner_only()
 async def setuproles(ctx):
     """يصاوب رسالة اختيار الأدوار بـ Dropdown Menus (خاصك تعمر PICK_ROLES فـ config أولاً)"""
     has_any_valid_role = any(
