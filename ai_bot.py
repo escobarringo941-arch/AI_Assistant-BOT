@@ -6610,7 +6610,7 @@ async def on_message(message):
 @bot.hybrid_command(description="اطرد عضو من السيرفر")
 @app_commands.default_permissions(kick_members=True)
 @commands.has_permissions(kick_members=True)
-async def kick(ctx, member: discord.Member, *, reason: str = "ما ذكرش سبب"):
+async def old_kick(ctx, member: discord.Member, *, reason: str = "ما ذكرش سبب"):
     if OWNER_ID and member.id == OWNER_ID:
         await ctx.send("❌ ما نقدرش نمس فـ Owner ديال السيرفر!")
         return
@@ -6642,7 +6642,7 @@ async def kick(ctx, member: discord.Member, *, reason: str = "ما ذكرش سب
 @bot.hybrid_command(description="احظر عضو من السيرفر")
 @app_commands.default_permissions(ban_members=True)
 @commands.has_permissions(ban_members=True)
-async def ban(ctx, member: discord.Member, *, reason: str = "ما ذكرش سبب"):
+async def old_ban(ctx, member: discord.Member, *, reason: str = "ما ذكرش سبب"):
     if OWNER_ID and member.id == OWNER_ID:
         await ctx.send("❌ ما نقدرش نمس فـ Owner ديال السيرفر!")
         return
@@ -6674,7 +6674,7 @@ async def ban(ctx, member: discord.Member, *, reason: str = "ما ذكرش سب�
 @bot.hybrid_command(description="فك الحظر على عضو (بالـ User ID)")
 @app_commands.default_permissions(ban_members=True)
 @commands.has_permissions(ban_members=True)
-async def unban(ctx, user_id: int):
+async def old_unban(ctx, user_id: int):
     try:
         user = await bot.fetch_user(user_id)
         await ctx.guild.unban(user)
@@ -6699,7 +6699,7 @@ async def unban(ctx, user_id: int):
 @bot.hybrid_command(description="امسح عدد من الرسائل فالشانيل")
 @app_commands.default_permissions(manage_messages=True)
 @commands.has_permissions(manage_messages=True)
-async def clear(ctx, amount: int = 10):
+async def old_clear(ctx, amount: int = 10):
     if amount < 1 or amount > 100:
         await ctx.send("❌ خاص العدد يكون بين 1 و 100!")
         return
@@ -6723,7 +6723,7 @@ async def clear(ctx, amount: int = 10):
 @bot.hybrid_command(description="كتم عضو (Timeout) لمدة معينة")
 @app_commands.default_permissions(moderate_members=True)
 @commands.has_permissions(moderate_members=True)
-async def mute(ctx, member: discord.Member, duration: int = 5, *, reason: str = "ما ذكرش سبب"):
+async def old_mute(ctx, member: discord.Member, duration: int = 5, *, reason: str = "ما ذكرش سبب"):
     if OWNER_ID and member.id == OWNER_ID:
         await ctx.send("❌ ما نقدرش نمس فـ Owner ديال السيرفر!")
         return
@@ -6764,7 +6764,7 @@ async def mute(ctx, member: discord.Member, duration: int = 5, *, reason: str = 
 @bot.hybrid_command(description="فك الكتم على عضو")
 @app_commands.default_permissions(moderate_members=True)
 @commands.has_permissions(moderate_members=True)
-async def unmute(ctx, member: discord.Member):
+async def old_unmute(ctx, member: discord.Member):
     muted_role = ctx.guild.get_role(MUTED_ROLE_ID)
     if not muted_role:
         await ctx.send("❌ ما لقيتش دور Mute!")
@@ -6847,7 +6847,7 @@ async def report_error(ctx, error):
 @bot.hybrid_command(description="أعطي تحذير لعضو")
 @app_commands.default_permissions(kick_members=True)
 @commands.has_permissions(kick_members=True)
-async def warn(ctx, member: discord.Member, *, reason: str):
+async def old_warn(ctx, member: discord.Member, *, reason: str):
     if OWNER_ID and member.id == OWNER_ID:
         await ctx.send("❌ ما نقدرش نمس فـ Owner ديال السيرفر!")
         return
@@ -6883,7 +6883,7 @@ async def warn(ctx, member: discord.Member, *, reason: str):
 @bot.hybrid_command(description="بين التحذيرات ديال عضو")
 @app_commands.default_permissions(kick_members=True)
 @commands.has_permissions(kick_members=True)
-async def warns(ctx, member: Optional[discord.Member] = None):
+async def old_warns(ctx, member: Optional[discord.Member] = None):
     member = member or ctx.author
     user_warns = get_warns(str(member.id))
     embed = discord.Embed(
@@ -6911,7 +6911,7 @@ async def warns(ctx, member: Optional[discord.Member] = None):
 @bot.hybrid_command(description="حيد آخر تحذير من عضو")
 @app_commands.default_permissions(kick_members=True)
 @commands.has_permissions(kick_members=True)
-async def unwarn(ctx, member: discord.Member):
+async def old_unwarn(ctx, member: discord.Member):
     clear_warns(str(member.id))
     case_id = await log_case(
         ctx.guild, "✅ مسح تحذيرات", "✅", discord.Color.green(),
