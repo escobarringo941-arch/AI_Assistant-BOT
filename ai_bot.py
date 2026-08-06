@@ -9660,21 +9660,21 @@ bot.gg = {
 
 # باش تطفي الألعاب كاملة وترجع للبوت القديم: عمّرها خاوية →  GAMES_COGS = []
 GAMES_COGS = [
-    "cogs.economy",          # ← خاصو يكون الأول (الباقي كيعتمدو عليه)
+    "cogs.economy",
     "cogs.games_panel",
     "cogs.game_counting",
     "cogs.game_tictactoe",
     "cogs.game_hangman",
     "cogs.game_wordle",
     "cogs.game_reaction",
-    "cogs.trivia",           # ← 🧠 لعبة Trivia (الربح بالدراهم 💲)
-    "cogs.game_dice",        # ← 🎲 النرد (رهان)
-    "cogs.game_coinflip",    # ← 🪙 Coinflip (رهان)
-    "cogs.game_slots",       # ← 🎰 Slots (رهان)
-    "cogs.game_scratch",     # ← 🎫 Scratch Card (رهان)
-    "cogs.game_lottery",     # ← 🎟️ Lottery (رهان)
-    "cogs.gambling_panel",   # ← 🎰 panel القمار — خاصو يجي بعد الألعاب ديال الرهان
-    "cogs.moderation",       # ← 👈 زيد هادي باش يحمّل Cog ديال الموديريشن
+    "cogs.trivia",
+    "cogs.game_dice",
+    "cogs.game_coinflip",
+    "cogs.game_slots",
+    "cogs.game_scratch",
+    "cogs.game_lottery",
+    "cogs.gambling_panel",
+    "cogs.moderation",   # ← هادي مهمة بزاف
 ]
 
 
