@@ -195,7 +195,7 @@ class AdvancedModeration(commands.Cog):
     # =====================
 
     @commands.hybrid_command(
-        name="case",
+        name="oldcase",
         description="Show a moderation case by ID",
         with_app_command=True,
     )
@@ -240,7 +240,7 @@ class AdvancedModeration(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.hybrid_command(
-        name="history",
+        name="oldhistory",
         description="Moderation history for a member",
         with_app_command=True,
     )
