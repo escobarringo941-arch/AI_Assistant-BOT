@@ -72,36 +72,70 @@ COOLDOWN_REACTION = 15
 COOLDOWN_DAILY_HOURS = 20  # 20 ساعة ماشي 24، باش ما يتأخرش النهار شوية بشوية
 
 # ═══════════════════════════════════════════════════════
-# ║ 🛒 SHOP ║
+# ║ 🛒 SHOP — أغراض بزاف ومنوّعة ║
 # ═══════════════════════════════════════════════════════
-# type: "xp_boost" | "role_color" | "temp_role" | "custom_role" | "bio_unlock"
+# type: "xp_boost" | "role_color" | "temp_role" | "custom_role" | "double_daily"
+#       "game_retry" | "name_glow" | "poll_ticket" | "special_ping"
+#       "temp_private_room" | "legend_tag" | "role_color_perm" | "bundle"
 # ⚠️ الـ IDs ديال الرولات خاصك تعمّرها بوحدك (ولا خليها 0 وحيّد العنصر)
 
 SHOP_ITEMS = [
+    # ───── فئة: Boosts بسيطة ─────
     {
-        "id": "xpboost",
+        "id": "xpboost_small",
+        "emoji": "💫",
+        "name": "XP Boost 1.5x (30 دقيقة)",
+        "description": "زيادة خفيفة فالـ XP لمدة 30 دقيقة (شات + فويس).",
+        "price": 150,
+        "type": "xp_boost",
+        "multiplier": 1.5,
+        "duration_hours": 0.5,
+    },
+    {
+        "id": "xpboost_medium",
         "emoji": "⚡",
-        "name": "XP Boost 2x",
-        "description": "كتربح ضعف الـ XP لمدة ساعة كاملة (شات + فويس)",
+        "name": "XP Boost 2x (1 ساعة)",
+        "description": "كتربح ضعف الـ XP لمدة ساعة كاملة.",
         "price": 300,
         "type": "xp_boost",
         "multiplier": 2.0,
         "duration_hours": 1,
     },
     {
-        "id": "color",
+        "id": "xpboost_big",
+        "emoji": "🚀",
+        "name": "XP Boost 3x (1 ساعة)",
+        "description": "Boost قوي فالـ XP لمدة ساعة، مزيان للي حابس فمستوى.",
+        "price": 650,
+        "type": "xp_boost",
+        "multiplier": 3.0,
+        "duration_hours": 1,
+    },
+
+    # ───── فئة: ألوان ورولات ─────
+    {
+        "id": "color_basic",
         "emoji": "🎨",
         "name": "لون شخصي (7 أيام)",
-        "description": "رول بلون كتختارو نتا، كيبان فـ السمية ديالك",
+        "description": "رول بلون كتختارو نتا، كيبان فـ السمية ديالك (7 أيام).",
         "price": 500,
         "type": "role_color",
         "duration_days": 7,
     },
     {
+        "id": "color_premium",
+        "emoji": "🌈",
+        "name": "لون Glowy (14 يوم)",
+        "description": "لون مميز ومضيء من ألوان خاصة، كيبان فوق بزاف (14 يوم).",
+        "price": 900,
+        "type": "role_color",
+        "duration_days": 14,
+    },
+    {
         "id": "customrole",
         "emoji": "🏷️",
         "name": "رول مخصص (30 يوم)",
-        "description": "رول بسمية ولون كتختارهم نتا",
+        "description": "رول بسمية ولون كتختارهم نتا، كيبان فالقائمة بحال VIP شخصي.",
         "price": 2000,
         "type": "custom_role",
         "duration_days": 30,
@@ -110,11 +144,106 @@ SHOP_ITEMS = [
         "id": "vip",
         "emoji": "💎",
         "name": "رول VIP (14 يوم)",
-        "description": "رول VIP مؤقت",
+        "description": "رول VIP مؤقت مع صلاحيات/مكانة خاصة فالسيرفر.",
         "price": 1200,
         "type": "temp_role",
         "role_id": 0,  # ← ⚠️ حط هنا ID ديال رول VIP، ولا حيّد هاد العنصر
         "duration_days": 14,
+    },
+
+    # ───── فئة: امتيازات السيرفر ─────
+    {
+        "id": "double_daily_3d",
+        "emoji": "📆",
+        "name": "Double Daily (3 أيام)",
+        "description": "جوائز `/daily` مضاعفة لمدة 3 أيام متتالية.",
+        "price": 800,
+        "type": "double_daily",
+        "duration_days": 3,
+    },
+    {
+        "id": "double_daily_7d",
+        "emoji": "🗓️",
+        "name": "Double Daily (7 أيام)",
+        "description": "للي كيلعب بزاف: `/daily` تعطيك 2x لمدة أسبوع كامل.",
+        "price": 1800,
+        "type": "double_daily",
+        "duration_days": 7,
+    },
+    {
+        "id": "game_retry",
+        "emoji": "🔁",
+        "name": "تذكرة إعادة محاولة",
+        "description": "مرة وحدة: تعطيك فرصة إعادة لعبة خسرتي فيها (Wordle/Hangman/Trivia) بلا ما تستعمل محاولة جديدة.",
+        "price": 250,
+        "type": "game_retry",
+        "uses": 1,
+    },
+    {
+        "id": "name_highlight",
+        "emoji": "✨",
+        "name": "اسم متوهّج (7 أيام)",
+        "description": "Role خاص كيخلي السمية ديالك بارزة ومضيئة فجانب الرولات (cosmetic فقط).",
+        "price": 700,
+        "type": "name_glow",
+        "duration_days": 7,
+    },
+
+    # ───── فئة: امتيازات اجتماعية ─────
+    {
+        "id": "poll_ticket",
+        "emoji": "🗳️",
+        "name": "تذكرة Poll مميّزة",
+        "description": "تقدر تدير `/createpoll` حتى لو ماوصلتيش بعد لـ Level 60 (استعمال واحد).",
+        "price": 600,
+        "type": "poll_ticket",
+        "uses": 1,
+    },
+    {
+        "id": "ping_everyone_once",
+        "emoji": "📢",
+        "name": "Ping خاص (مرة وحدة)",
+        "description": "حق واحد تستعمل Ping خاص فشانيل معيّنة (مثلاً @Games Ping) باتفاق مع الإدارة.",
+        "price": 900,
+        "type": "special_ping",
+        "uses": 1,
+    },
+    {
+        "id": "temp_private_room",
+        "emoji": "🎧",
+        "name": "روم صوتي خاص (يوم واحد)",
+        "description": "روم صوتي خاص بإسمك لمدة 24 ساعة، فقط الناس اللي تختارهم يدخلوا.",
+        "price": 1300,
+        "type": "temp_private_room",
+        "duration_hours": 24,
+    },
+
+    # ───── فئة: أشياء “أسطورية” وغالية ─────
+    {
+        "id": "legend_tag",
+        "emoji": "👑",
+        "name": "Legend Tag (7 أيام)",
+        "description": "Tag \"LEGEND\" كيبان فبداية السمية ديالك لمدة أسبوع (Role خاص، بدون صلاحيات).",
+        "price": 3000,
+        "type": "legend_tag",
+        "duration_days": 7,
+    },
+    {
+        "id": "permanent_color",
+        "emoji": "♾️",
+        "name": "لون شخصي دائم",
+        "description": "لون شخصي كيبقى ديما (بلا مدة صلاحية) حتى إلا غبتي ورجعتي للسيرفر.",
+        "price": 6000,
+        "type": "role_color_perm",
+        "duration_days": 0,
+    },
+    {
+        "id": "mega_bundle",
+        "emoji": "🎁",
+        "name": "حزمة الأسطورة",
+        "description": "XP Boost 2x (1 ساعة) + لون مميز (7 أيام) + تذكرة Poll + Double Daily (3 أيام).",
+        "price": 5000,
+        "type": "bundle",
     },
 ]
 
@@ -173,9 +302,6 @@ COOLDOWN_DICE = 5       # ثواني cooldown بين رهان ورهان
 DICE_MIN_BET = 10       # أقل رهان مسموح
 DICE_MAX_BET = 500      # أقصى رهان مسموح
 
-# النرد كيرمي d20 (1-20). كيربح اللاعب إلا الرقم طلع >= threshold.
-# بدّل threshold/multiplier هنا — الـ house edge كيزيد شوية مع المخاطرة
-# (سهل ≈ 2.5% / متوسط ≈ 8% / صعب ≈ 17.5%) باش يبقى متوازن.
 DICE_RISK_LEVELS = {
     "easy":   {"label": "🟢 سهل",   "threshold": 8,  "multiplier": 1.5},
     "medium": {"label": "🟡 متوسط", "threshold": 13, "multiplier": 2.3},
@@ -189,7 +315,6 @@ DICE_RISK_LEVELS = {
 COOLDOWN_COINFLIP = 5   # ثواني cooldown بين رمية ورمية
 COINFLIP_MIN_BET = 10
 COINFLIP_MAX_BET = 500
-# 50/50 حقيقية، ولكن الربح مضاعف أقل من 2x باش يبقى house edge بسيط (~5%)
 COINFLIP_PAYOUT_MULTIPLIER = 1.9
 
 # ═══════════════════════════════════════════════════════
@@ -200,7 +325,6 @@ COOLDOWN_SLOTS = 5
 SLOTS_MIN_BET = 10
 SLOTS_MAX_BET = 500
 
-# وزن كل رمز + المضاعف عند 3 متطابقين.
 SLOTS_SYMBOLS = {
     "🍒": {"weight": 35, "multiplier": 2},
     "🍋": {"weight": 28, "multiplier": 3},
@@ -210,7 +334,6 @@ SLOTS_SYMBOLS = {
     "7️⃣": {"weight": 2,  "multiplier": 50},
 }
 
-# إلا طلعو رمزين متشابهين بس (Pair) — مكافأة صغيرة
 SLOTS_PAIR_MULTIPLIER = 1.2
 
 # ═══════════════════════════════════════════════════════
@@ -245,9 +368,9 @@ LOTTERY_POOL_SIZE = 20
 LOTTERY_PICK_COUNT = 4
 
 LOTTERY_PAYOUTS = {
-    2: 2,    # تطابق رقمين
-    3: 15,   # تطابق 3 أرقام
-    4: 200,  # جاكبوت
+    2: 2,
+    3: 15,
+    4: 200,
 }
 
 # ═══════════════════════════════════════════════════════
@@ -265,16 +388,16 @@ REACTION_WINDOW_SECONDS = 10
 TRIVIA_ENABLED = True
 TRIVIA_ANSWER_SECONDS = 30
 
-TRIVIA_AUTO_CHANNEL_IDS = []         # أوتوماتيك معطل
+TRIVIA_AUTO_CHANNEL_IDS = []
 TRIVIA_AUTO_INTERVAL_MINUTES = 60
 
 TRIVIA_CHANNEL_ID = 1533700465576116236
 TRIVIA_ROUNDS_PER_DIFFICULTY = 6
 
 TRIVIA_COINS = {
-    "easy": 4,   # 🟢
-    "medium": 7, # 🟡
-    "hard": 12,  # 🔴
+    "easy": 4,
+    "medium": 7,
+    "hard": 12,
 }
 
 TRIVIA_SINGLE_COINS = 8
