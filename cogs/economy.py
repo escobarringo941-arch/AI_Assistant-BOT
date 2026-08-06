@@ -6,20 +6,12 @@
 
 هادا **قلب** النظام. كاع الألعاب كتعيّط عليه باش تعطي دراهم.
 
-⚠️ علاش دراهم ماشي XP؟
-الـ XP ديالك عندو audit log و anti-cheat (check_xp_anomaly).
-إلا الألعاب بداو يعطيو XP:
-1. الأعضاء غادي يـfarmiw الألعاب بدل ما يهضرو → leveling بلا معنى
-2. الـ anti-cheat ديالك غادي يـflaggi ناس بريئين
-بالدراهم: نظام مستقل تماماً، والـ leveling كيبقى نظيف.
-والربط كيتدار غير فـ الـ Shop (XP Boost كتشريه بالدراهم).
-
 الأوامر:
  /balance — شحال عندك
  /daily   — مكافأة يومية
  /shop    — المتجر
  /richest — أغنى 10 أعضاء
- /gamesadmin givecoins — (Admin) عطي/حيّد دراهم
+ /givecoins — (Owner فقط) عطي/حيّد دراهم
 """
 
 import discord
@@ -57,7 +49,7 @@ class Economy(commands.Cog):
         self.db = JsonStore("economy.json", default={})
 
     # ════════════════════════════════════════════════
-    # API داخلي — تستعملو الألعاب الأخرى
+    # API داخلي
     # ════════════════════════════════════════════════
 
     def _acc(self, guild_id: int, user_id: int) -> dict:
@@ -323,6 +315,36 @@ class Economy(commands.Cog):
         embed.set_footer(text="ربح الدراهم من الألعاب فـ #games-panel ولا /daily")
         await ctx.send(embed=embed, view=ShopView(self, ctx.author))
 
+    # ════════════════════════════════════════════════
+    # أمر givecoins — Owner فقط
+    # ════════════════════════════════════════════════
+
+    @commands.hybrid_command(
+        name="givecoins",
+        description="(Owner فقط) عطي/حيّد دراهم لعضو",
+    )
+    @app_commands.describe(
+        member="العضو اللي بغيتي تعطيه الفلوس",
+        amount="العدد (موجب = تزاد، سالب = يتحيد)",
+    )
+    async def givecoins_cmd(
+        self, ctx: commands.Context, member: discord.Member, amount: int
+    ):
+        # Owner فقط (OWNER_ID متعرّف فـ ai_bot-63-3.py)
+        try:
+            from ai_bot-63-3 import OWNER_ID  # إذا الملف فـ نفس الباكيج، عدل الإسم إذا مختلف
+        except Exception:
+            OWNER_ID = None
+
+        if not OWNER_ID or ctx.author.id != OWNER_ID:
+            await ctx.send(
+                "❌ هاد الأمر خاص غير بـ Owner الحقيقي للسيرفر.", delete_after=6
+            )
+            return
+
+        msg = self.admin_give(ctx.guild, member, amount)
+        await ctx.send(msg)
+
 
 class ShopView(discord.ui.View):
     def __init__(self, cog: "Economy", user: discord.abc.User):
@@ -376,7 +398,6 @@ class ShopSelect(discord.ui.Select):
             )
             return
 
-        # role_color → نحتاج اختيار اللون
         if item["type"] == "role_color":
             await interaction.response.send_message(
                 f"🎨 اختار اللون اللي بغيتي "
@@ -386,7 +407,6 @@ class ShopSelect(discord.ui.Select):
             )
             return
 
-        # custom_role → Modal للسمية
         if item["type"] == "custom_role":
             await interaction.response.send_modal(CustomRoleModal(self.cog, item))
             return
@@ -521,12 +541,7 @@ async def apply_purchase(
 
             await user.add_roles(role, reason="شراء لون شخصي")
             _record_purchase(
-                cog,
-                guild.id,
-                user.id,
-                item,
-                role.id,
-                days=item.get("duration_days", 7),
+                cog, guild.id, user.id, item, role.id, days=item.get("duration_days", 7)
             )
             return True, f"🎨 اللون مفعّل لمدة **{item.get('duration_days', 7)} أيام**!"
         except discord.Forbidden:
@@ -588,7 +603,7 @@ async def apply_purchase(
         except Exception as e:
             return False, f"خطأ: {e}"
 
-    # رول مؤقت موجود (VIP مثلاً)
+    # رول مؤقت (VIP)
     if item["type"] == "temp_role":
         role = guild.get_role(item.get("role_id", 0))
         if not role:
@@ -653,33 +668,6 @@ def _record_purchase(
     )
     cog.db.save()
 
-    # ════════════════════════════════════════════════
-    # أوامر خاصة بالـ Owner فقط (فلوس)               ║
-    # ════════════════════════════════════════════════
-
-    @commands.hybrid_command(
-        name="givecoins",
-        description="(Owner فقط) عطي/حيّد دراهم لعضو",
-    )
-    @app_commands.describe(
-        member="العضو اللي بغيتي تعطيه الفلوس",
-        amount="العدد (موجب = تزاد، سالب = يتحيد)",
-    )
-    async def givecoins_cmd(
-        self, ctx: commands.Context, member: discord.Member, amount: int
-    ):
-        # نستعمل OWNER_ID و is_owner من ai_bot (مخزنين فـ bot.gg)
-        bridge = getattr(self.bot, "gg", None)
-        owner_id = getattr(
-            __import__("ai_bot-63-3"), "OWNER_ID", None
-        ) if bridge is None else bridge.get("OWNER_ID")
-
-        if not owner_id or ctx.author.id != owner_id:
-            await ctx.send("❌ هاد الأمر خاص غير بـ Owner الحقيقي للسيرفر.", delete_after=6)
-            return
-
-        msg = self.admin_give(ctx.guild, member, amount)
-        await ctx.send(msg)
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Economy(bot))
