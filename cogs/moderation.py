@@ -191,7 +191,11 @@ class PermsSelect(discord.ui.Select):
 class PermsPanelView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=300)
-        for cmd in COMMAND_ROLES.keys():
+        # Discord كيقبل حتى 25 عنصر فـ View. حنا عندنا 9 أوامر دابا،
+        # ولكن نخلي الكود آمن فحالة زدتي أوامر أخرى فالمستقبل.
+        max_items = 25
+        cmds = list(COMMAND_ROLES.keys())[:max_items]
+        for cmd in cmds:
             self.add_item(PermsSelect(cmd))
 
 
