@@ -120,6 +120,20 @@ def clear_warns(user_id: str):
         warns_db[user_id] = {"count": 0, "reasons": [], "dates": []}
 
 
+def remove_last_warning(user_id: str) -> bool:
+    """كيحيد آخر تحذير وحد ديال العضو (كتستعملها /shop — عنصر warn_shield).
+    كترجع True إلا تحيد شي تحذير، False إلا كان العضو نظيف ديجا."""
+    data = warns_db.get(user_id)
+    if not data or data.get("count", 0) <= 0:
+        return False
+    data["count"] -= 1
+    if data.get("reasons"):
+        data["reasons"].pop()
+    if data.get("dates"):
+        data["dates"].pop()
+    return True
+
+
 async def send_warn_dm(member: discord.Member, count: int, reason: str):
     embed = discord.Embed(
         title="⚠️ تحذير جديد",
@@ -157,6 +171,11 @@ class Moderation(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.mute_tasks = {}  # {user_id: asyncio.Task}
+
+    def remove_last_warning(self, user_id: str) -> bool:
+        """Wrapper باش cogs أخرى (بحال economy.py — عنصر warn_shield فالمتجر)
+        يقدرو يحيدو آخر تحذير عبر bot.get_cog("Moderation")."""
+        return remove_last_warning(user_id)
 
     # ───── بانل الصلاحيات (معطل مؤقتًا) ─────
 
