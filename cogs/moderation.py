@@ -1,19 +1,19 @@
 # -*- coding: utf-8 -*-
 """
 ═══════════════════════════════════════════════════════
-║ cogs/moderation.py — 🛡️ موديريشن + صلاحيات Owner  ║
+║ cogs/moderation.py — 🛡️ موديريشن + صلاحيات Owner ║
 ═══════════════════════════════════════════════════════
 
 أوامر:
- /kick       — طرد
- /ban        — حظر
- /unban      — فك الحظر
- /mute       — كتم
- /unmute     — فك الكتم
- /clear      — مسح رسائل
- /warn       — تحذير
- /warns      — عرض التحذيرات
- /unwarn     — مسح التحذيرات
+ /kick   — طرد عضو
+ /ban    — حظر عضو
+ /unban  — فك الحظر
+ /mute   — كتم عضو (Role)
+ /unmute — فك الكتم
+ /clear  — مسح رسائل
+ /warn   — تحذير
+ /warns  — عرض التحذيرات
+ /unwarn — مسح التحذيرات
  /permspanel — بانل تتحكم منّو فصلاحيات هاد الأوامر
 """
 
@@ -25,7 +25,8 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 
-OWNER_ID = 1260089246216097832  # ← عدّلها بنفس OWNER_ID ديالك
+# عدل هاد IDs والاسم باش يوافقو السيرفر ديالك
+OWNER_ID = 1260089246216097832  # صاحب السيرفر
 SERVER_NAME = "GGMW9"
 
 EXEMPT_ROLE_IDS = [
@@ -42,32 +43,34 @@ COLOR_KICK = discord.Color.orange()
 COLOR_BAN = discord.Color.red()
 COLOR_UNBAN = discord.Color.green()
 
+# شكون يقدر يستعمل كل أمر (Owner-only، Staff-only، أو الكل)
 COMMAND_ROLES = {
-    "kick":   {"owner_only": False, "allowed_roles": []},
-    "ban":    {"owner_only": False, "allowed_roles": []},
-    "unban":  {"owner_only": False, "allowed_roles": []},
-    "mute":   {"owner_only": False, "allowed_roles": []},
+    "kick": {"owner_only": False, "allowed_roles": []},
+    "ban": {"owner_only": False, "allowed_roles": []},
+    "unban": {"owner_only": False, "allowed_roles": []},
+    "mute": {"owner_only": False, "allowed_roles": []},
     "unmute": {"owner_only": False, "allowed_roles": []},
-    "clear":  {"owner_only": False, "allowed_roles": []},
-    "warn":   {"owner_only": False, "allowed_roles": []},
-    "warns":  {"owner_only": False, "allowed_roles": []},
+    "clear": {"owner_only": False, "allowed_roles": []},
+    "warn": {"owner_only": False, "allowed_roles": []},
+    "warns": {"owner_only": False, "allowed_roles": []},
     "unwarn": {"owner_only": False, "allowed_roles": []},
 }
 
 DISPLAY_NAMES = {
-    "kick":   "طرد",
-    "ban":    "حظر",
-    "unban":  "فك الحظر",
-    "mute":   "كتم",
+    "kick": "طرد",
+    "ban": "حظر",
+    "unban": "فك الحظر",
+    "mute": "كتم",
     "unmute": "فك الكتم",
-    "clear":  "مسح رسائل",
-    "warn":   "تحذير",
-    "warns":  "عرض التحذيرات",
+    "clear": "مسح رسائل",
+    "warn": "تحذير",
+    "warns": "عرض التحذيرات",
     "unwarn": "مسح التحذيرات",
 }
 
 
 def is_exempt(member: discord.Member) -> bool:
+    """واش هاد العضو معفي من Auto-Mod/Moderation (Owner أو أدوار معفية)"""
     if OWNER_ID and member.id == OWNER_ID:
         return True
     if EXEMPT_ROLE_IDS:
@@ -78,6 +81,7 @@ def is_exempt(member: discord.Member) -> bool:
 
 
 def has_custom_command_access(member: discord.Member, command_name: str) -> bool:
+    """واش هاد العضو مسموح ليه يستعمل هاد الأمر حسب COMMAND_ROLES"""
     if OWNER_ID and member.id == OWNER_ID:
         return True
 
@@ -118,9 +122,11 @@ async def send_warn_dm(member: discord.Member, count: int, reason: str):
     )
     embed.add_field(
         name="🇲🇦 بالدارجة",
-        value=f"خذيتي تحذير فـ **{SERVER_NAME}**.\n"
-              f"**السبب:** {reason}\n"
-              f"**عدد التحذيرات دابا:** {count}",
+        value=(
+            f"خذيتي تحذير فـ **{SERVER_NAME}**.\n"
+            f"**السبب:** {reason}\n"
+            f"**عدد التحذيرات دابا:** {count}"
+        ),
         inline=False,
     )
     try:
@@ -151,6 +157,7 @@ class PermsSelect(discord.ui.Select):
             discord.SelectOption(label="Admins + Mods", value="staff"),
             discord.SelectOption(label="الكل", value="all"),
         ]
+
         super().__init__(
             placeholder=f"صلاحيات: {DISPLAY_NAMES.get(command_name, command_name)}",
             min_values=1,
@@ -191,8 +198,8 @@ class PermsSelect(discord.ui.Select):
 class PermsPanelView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=300)
-        # Discord كيقبل حتى 25 عنصر فـ View. حنا عندنا 9 أوامر دابا،
-        # ولكن نخلي الكود آمن فحالة زدتي أوامر أخرى فالمستقبل.
+        # Discord كيقبل حتى 25 عنصر فـ View (Buttons + Selects).
+        # هنا عندنا غير Select واحد لكل أمر فـ COMMAND_ROLES، فكنضمنو مانزيدوش أكثر من 25.
         max_items = 25
         cmds = list(COMMAND_ROLES.keys())[:max_items]
         for cmd in cmds:
@@ -246,7 +253,13 @@ class Moderation(commands.Cog):
     @commands.hybrid_command(description="اطرد عضو من السيرفر")
     @app_commands.default_permissions(kick_members=True)
     @commands.has_permissions(kick_members=True)
-    async def kick(self, ctx: commands.Context, member: discord.Member, *, reason: str = "ما ذكرش سبب"):
+    async def kick(
+        self,
+        ctx: commands.Context,
+        member: discord.Member,
+        *,
+        reason: str = "ما ذكرش سبب",
+    ):
         if not has_custom_command_access(ctx.author, ctx.command.name):
             await ctx.send("❌ هاد الأمر مقيد من طرف Owner.", delete_after=6)
             return
@@ -264,7 +277,7 @@ class Moderation(commands.Cog):
                 title="👢 طرد",
                 description=f"**{member.mention}** تم طرده.",
                 color=COLOR_KICK,
-                timestamp=datetime.now()
+                timestamp=datetime.now(),
             )
             embed.add_field(name="السبب", value=reason, inline=False)
             embed.add_field(name="الطارد", value=ctx.author.mention, inline=False)
@@ -280,7 +293,13 @@ class Moderation(commands.Cog):
     @commands.hybrid_command(description="احظر عضو من السيرفر")
     @app_commands.default_permissions(ban_members=True)
     @commands.has_permissions(ban_members=True)
-    async def ban(self, ctx: commands.Context, member: discord.Member, *, reason: str = "ما ذكرش سبب"):
+    async def ban(
+        self,
+        ctx: commands.Context,
+        member: discord.Member,
+        *,
+        reason: str = "ما ذكرش سبب",
+    ):
         if not has_custom_command_access(ctx.author, ctx.command.name):
             await ctx.send("❌ هاد الأمر مقيد من طرف Owner.", delete_after=6)
             return
@@ -298,7 +317,7 @@ class Moderation(commands.Cog):
                 title="🚫 حظر",
                 description=f"**{member.mention}** تم حظره.",
                 color=COLOR_BAN,
-                timestamp=datetime.now()
+                timestamp=datetime.now(),
             )
             embed.add_field(name="السبب", value=reason, inline=False)
             embed.add_field(name="الحاظر", value=ctx.author.mention, inline=False)
@@ -324,7 +343,7 @@ class Moderation(commands.Cog):
                 title="✅ فك الحظر",
                 description=f"**{user.name}** تم فك حظره.",
                 color=COLOR_UNBAN,
-                timestamp=datetime.now()
+                timestamp=datetime.now(),
             )
             embed.set_footer(text=f"{SERVER_NAME} | Moderation")
             await ctx.send(embed=embed)
@@ -362,7 +381,14 @@ class Moderation(commands.Cog):
     @commands.hybrid_command(description="كتم عضو (Role) لمدة معيّنة (دقايق)")
     @app_commands.default_permissions(moderate_members=True)
     @commands.has_permissions(moderate_members=True)
-    async def mute(self, ctx: commands.Context, member: discord.Member, duration: int = 5, *, reason: str = "ما ذكرش سبب"):
+    async def mute(
+        self,
+        ctx: commands.Context,
+        member: discord.Member,
+        duration: int = 5,
+        *,
+        reason: str = "ما ذكرش سبب",
+    ):
         if not has_custom_command_access(ctx.author, ctx.command.name):
             await ctx.send("❌ هاد الأمر مقيد من طرف Owner.", delete_after=6)
             return
@@ -391,7 +417,7 @@ class Moderation(commands.Cog):
                 title="🔇 كتم",
                 description=f"**{member.mention}** تم كتم صوته.",
                 color=COLOR_MUTE,
-                timestamp=datetime.now()
+                timestamp=datetime.now(),
             )
             embed.add_field(name="المدة", value=f"{duration} دقيقة", inline=False)
             embed.add_field(name="السبب", value=reason, inline=False)
@@ -424,7 +450,7 @@ class Moderation(commands.Cog):
                 title="🔊 فك الكتم",
                 description=f"**{member.mention}** تم فك الكتم.",
                 color=COLOR_UNMUTE,
-                timestamp=datetime.now()
+                timestamp=datetime.now(),
             )
             embed.set_footer(text=f"{SERVER_NAME} | Moderation")
             await ctx.send(embed=embed)
@@ -454,7 +480,7 @@ class Moderation(commands.Cog):
             title="⚠️ تحذير",
             description=f"**{member.mention}** تم تحذيره.",
             color=COLOR_WARN,
-            timestamp=datetime.now()
+            timestamp=datetime.now(),
         )
         embed.add_field(name="السبب", value=reason, inline=False)
         embed.add_field(name="عدد التحذيرات", value=f"{count}", inline=False)
@@ -476,7 +502,7 @@ class Moderation(commands.Cog):
         embed = discord.Embed(
             title=f"⚠️ تحذيرات {member.display_name}",
             color=COLOR_WARN,
-            timestamp=datetime.now()
+            timestamp=datetime.now(),
         )
         embed.add_field(name="العدد", value=str(user_warns["count"]), inline=False)
 
@@ -505,7 +531,7 @@ class Moderation(commands.Cog):
             title="✅ مسح التحذيرات",
             description=f"**{member.mention}** تم مسح تحذيراتو.",
             color=discord.Color.green(),
-            timestamp=datetime.now()
+            timestamp=datetime.now(),
         )
         embed.set_footer(text=f"{SERVER_NAME} | Moderation")
         await ctx.send(embed=embed)
