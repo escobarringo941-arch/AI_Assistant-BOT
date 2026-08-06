@@ -14,7 +14,7 @@
  /warn   — تحذير
  /warns  — عرض التحذيرات
  /unwarn — مسح التحذيرات
- /permspanel — بانل تتحكم منّو فصلاحيات هاد الأوامر
+ /permspanel — (معطل مؤقتًا)
 """
 
 import asyncio
@@ -147,71 +147,12 @@ async def add_warn(member: discord.Member, reason: str) -> int:
     return count
 
 
-# ─── بانل الصلاحيات ───
-
-class PermsSelect(discord.ui.Select):
-    def __init__(self, command_name: str):
-        self.command_name = command_name
-        options = [
-            discord.SelectOption(label="Owner فقط", value="owner"),
-            discord.SelectOption(label="Admins + Mods", value="staff"),
-            discord.SelectOption(label="الكل", value="all"),
-        ]
-
-        super().__init__(
-            placeholder=f"صلاحيات: {DISPLAY_NAMES.get(command_name, command_name)}",
-            min_values=1,
-            max_values=1,
-            options=options,
-            custom_id=f"perms_select_{command_name}",
-        )
-
-    async def callback(self, interaction: discord.Interaction):
-        if interaction.user.id != OWNER_ID:
-            await interaction.response.send_message(
-                "❌ هاد البانل خاص فقط بالـ Owner.", ephemeral=True
-            )
-            return
-
-        choice = self.values[0]
-        cfg = COMMAND_ROLES.setdefault(self.command_name, {})
-
-        if choice == "owner":
-            cfg["owner_only"] = True
-            cfg["allowed_roles"] = []
-            text = "⛔ الأمر دابا Owner فقط."
-        elif choice == "staff":
-            cfg["owner_only"] = False
-            cfg["allowed_roles"] = EXEMPT_ROLE_IDS[:]
-            text = "🛡️ الأمر دابا مسموح غير لـ Admins + Mods (+ Owner)."
-        else:
-            cfg["owner_only"] = False
-            cfg["allowed_roles"] = []
-            text = "✅ الأمر دابا كيخضع لصلاحيات Discord العادية فقط."
-
-        await interaction.response.send_message(
-            f"تم تحديث صلاحيات الأمر **{DISPLAY_NAMES.get(self.command_name, self.command_name)}**.\n{text}",
-            ephemeral=True,
-        )
-
-
-class PermsPanelView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=300)
-        # Discord كيقبل حتى 25 عنصر فـ View (Buttons + Selects).
-        # هنا عندنا غير Select واحد لكل أمر فـ COMMAND_ROLES، فكنضمنو مانزيدوش أكثر من 25.
-        max_items = 25
-        cmds = list(COMMAND_ROLES.keys())[:max_items]
-        for cmd in cmds:
-            self.add_item(PermsSelect(cmd))
-
-
 class Moderation(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.mute_tasks = {}  # {user_id: asyncio.Task}
 
-    # ───── بانل الصلاحيات ─────
+    # ───── بانل الصلاحيات (معطل مؤقتًا) ─────
 
     @commands.hybrid_command(
         name="permspanel",
@@ -223,19 +164,17 @@ class Moderation(commands.Cog):
             return
 
         embed = discord.Embed(
-            title="🔧 صلاحيات أوامر الموديريشن",
+            title="🔧 صلاحيات أوامر الموديريشن (بانل معطل مؤقتًا)",
             description=(
-                "اختار لكل أمر شكون يقدر يستعملو:\n"
-                "- Owner فقط\n"
-                "- Admins + Mods\n"
-                "- أو الكل (حسب صلاحيات Discord)\n\n"
-                "التغييرات كتطبق فوراً على /kick /ban /mute /clear /warn ..."
+                "البانل التفاعلي ديال الصلاحيات معطل مؤقتًا حيت Discord UI رفض عدد العناصر.\n"
+                "دابا صلاحيات الأوامر كتخضع لـ `COMMAND_ROLES` فالكود + صلاحيات Discord العادية.\n\n"
+                "إلا بغيتي نضبط صلاحيات أمر معيّن، نقدر نديرها ليك مباشرة من الكود حسب رغبتك."
             ),
-            color=discord.Color.blurple(),
+            color=discord.Color.red(),
             timestamp=datetime.now(),
         )
         embed.set_footer(text=f"{SERVER_NAME} | Moderation Perms")
-        await ctx.send(embed=embed, view=PermsPanelView())
+        await ctx.send(embed=embed)
 
     # ───── Helpers ─────
 
