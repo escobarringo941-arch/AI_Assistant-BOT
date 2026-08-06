@@ -8,8 +8,8 @@ from discord.ext import commands
 from discord import app_commands
 
 # IMPORTS مهمّة من الكود الأساسي ديالك
-# عدّل المسار ai_bot_64 حسب اسم الملف الحقيقي (ai_bot-64.py → ai_bot_64 في import)
-from ai_bot_64 import (
+# عدّل المسار ai_bot حسب اسم الملف الحقيقي (ai_bot.py → ai_bot في import)
+from ai_bot import (
     OWNERID,
     SERVERNAME,
     MUTEDROLEID,
