@@ -24,7 +24,7 @@ GAMES_LEADERBOARD_CHANNEL_ID = 1534235056564867194
 GAMBLING_CHANNEL_ID = 1534672591422226502
 
 SHOP_PANEL_CHANNEL_ID = 1534969085862088744  # ← حط هنا ID ديال #shop إلا بغيتي بانل المتجر
-SHOP_SHOUTOUT_CHANNEL_ID = 0  # ← حط هنا ID ديال الشانيل اللي غادي يبان فيها الشوتاوت (بحال #general)
+SHOP_SHOUTOUT_CHANNEL_ID = 1535047435779317843  # ← حط هنا ID ديال الشانيل اللي غادي يبان فيها الشوتاوت (بحال #general)
 
 MINIGAMES_CATEGORY_ID = 1533697548215128134
 
