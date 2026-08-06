@@ -51,7 +51,7 @@ class AdvancedModeration(commands.Cog):
     # WARN / OLD WARNS SYSTEM
     # =====================
 
-    @commands.hybridcommand(
+    @commands.hybrid_command(
         description="Old warn command (legacy auto-mod escalation)",
         with_app_command=True,
     )
@@ -113,7 +113,7 @@ class AdvancedModeration(commands.Cog):
                 delete_after=10,
             )
 
-    @commands.hybridcommand(
+    @commands.hybrid_command(
         description="Old warns summary (legacy)",
         with_app_command=True,
     )
@@ -160,7 +160,7 @@ class AdvancedModeration(commands.Cog):
         embed.set_footer(text=f"{SERVERNAME} Moderation")
         await ctx.send(embed=embed)
 
-    @commands.hybridcommand(
+    @commands.hybrid_command(
         description="Old unwarn (clear all warns)",
         with_app_command=True,
     )
@@ -194,7 +194,7 @@ class AdvancedModeration(commands.Cog):
     # CASE / HISTORY
     # =====================
 
-    @commands.hybridcommand(
+    @commands.hybrid_command(
         name="case",
         description="Show a moderation case by ID",
         with_app_command=True,
@@ -239,7 +239,7 @@ class AdvancedModeration(commands.Cog):
         embed.set_footer(text=f"{SERVERNAME} Case {record.get('id')}")
         await ctx.send(embed=embed)
 
-    @commands.hybridcommand(
+    @commands.hybrid_command(
         name="history",
         description="Moderation history for a member",
         with_app_command=True,
@@ -281,7 +281,7 @@ class AdvancedModeration(commands.Cog):
     # BANNED WORDS / ACTIONS
     # =====================
 
-    @commands.hybridcommand(
+    @commands.hybrid_command(
         name="addword",
         description="Add banned word (Auto-Mod)",
         with_app_command=True,
@@ -306,7 +306,7 @@ class AdvancedModeration(commands.Cog):
         except Exception:
             pass
 
-    @commands.hybridcommand(
+    @commands.hybrid_command(
         name="removeword",
         description="Remove banned word (Auto-Mod)",
         with_app_command=True,
@@ -331,7 +331,7 @@ class AdvancedModeration(commands.Cog):
         except Exception:
             pass
 
-    @commands.hybridcommand(
+    @commands.hybrid_command(
         name="addaction",
         description="Add Auto-Mod action phrase (Owner)",
         with_app_command=True,
@@ -355,7 +355,7 @@ class AdvancedModeration(commands.Cog):
         except Exception:
             pass
 
-    @commands.hybridcommand(
+    @commands.hybrid_command(
         name="removeaction",
         description="Remove Auto-Mod action phrase (Owner)",
         with_app_command=True,
@@ -380,7 +380,7 @@ class AdvancedModeration(commands.Cog):
         except Exception:
             pass
 
-    @commands.hybridcommand(
+    @commands.hybrid_command(
         name="listbanned",
         description="List banned words & actions (DM to Owner/Admin)",
         with_app_command=True,
@@ -408,7 +408,7 @@ class AdvancedModeration(commands.Cog):
     # OWNER MODERATION + MUTEALL / UNMUTEALL
     # =====================
 
-    @commands.hybridcommand(
+    @commands.hybrid_command(
         name="ownerkick",
         description="Owner-only kick",
         with_app_command=True,
@@ -446,7 +446,7 @@ class AdvancedModeration(commands.Cog):
         except Exception as e:
             await ctx.send(str(e), delete_after=5)
 
-    @commands.hybridcommand(
+    @commands.hybrid_command(
         name="ownerban",
         description="Owner-only ban",
         with_app_command=True,
@@ -484,7 +484,7 @@ class AdvancedModeration(commands.Cog):
         except Exception as e:
             await ctx.send(str(e), delete_after=5)
 
-    @commands.hybridcommand(
+    @commands.hybrid_command(
         name="ownermute",
         description="Owner-only manual mute",
         with_app_command=True,
@@ -547,7 +547,7 @@ class AdvancedModeration(commands.Cog):
             except Exception:
                 pass
 
-    @commands.hybridcommand(
+    @commands.hybrid_command(
         name="muteall",
         description="Owner: mute all non-exempt members (Server Lockdown)",
         with_app_command=True,
@@ -582,7 +582,7 @@ class AdvancedModeration(commands.Cog):
 
         await statusmsg.edit(content=f"Muted {mutedcount} members (Owner mute-all).")
 
-    @commands.hybridcommand(
+    @commands.hybrid_command(
         name="unmuteall",
         description="Owner: unmute all members",
         with_app_command=True,
@@ -617,7 +617,7 @@ class AdvancedModeration(commands.Cog):
     # ANTI-RAID COMMANDS
     # =====================
 
-    @commands.hybridcommand(
+    @commands.hybrid_command(
         name="lockdown",
         description="Anti-Raid Lockdown",
         with_app_command=True,
@@ -646,7 +646,7 @@ class AdvancedModeration(commands.Cog):
         else:
             await ctx.send("Lockdown is already active.", delete_after=6)
 
-    @commands.hybridcommand(
+    @commands.hybrid_command(
         name="unlockdown",
         description="End Anti-Raid lockdown",
         with_app_command=True,
@@ -663,7 +663,7 @@ class AdvancedModeration(commands.Cog):
         else:
             await ctx.send("No active lockdown.", delete_after=6)
 
-    @commands.hybridcommand(
+    @commands.hybrid_command(
         name="raidstatus",
         description="Anti-Raid status",
         with_app_command=True,
