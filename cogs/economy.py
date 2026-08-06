@@ -15,10 +15,11 @@
 """
 
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from discord import app_commands
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Tuple
+import random
 
 from storage import JsonStore
 import games_config as cfg
@@ -47,6 +48,77 @@ class Economy(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.db = JsonStore("economy.json", default={})
+
+    async def cog_load(self):
+        self.expire_purchases_loop.start()
+
+    def cog_unload(self):
+        self.expire_purchases_loop.cancel()
+
+    @tasks.loop(minutes=15)
+    async def expire_purchases_loop(self):
+        """كل 15 دقيقة كتفحص الحوايج المشرية اللي عندها مدة صلاحية (لون، رول مخصص،
+        VIP، Legend Tag...) وكتحيد الرول بصح ملي تخلص المدة — باش "المؤقت" يبقى
+        مؤقت فعلاً وماشي دائم بالغلط."""
+        now = datetime.now(timezone.utc)
+        changed = False
+
+        for guild_id_str, users in list(self.db.data.items()):
+            try:
+                guild_id = int(guild_id_str)
+            except (TypeError, ValueError):
+                continue
+            guild = self.bot.get_guild(guild_id)
+
+            for user_id_str, acc in list(users.items()):
+                purchases = acc.get("purchases") or []
+                if not purchases:
+                    continue
+
+                still_active = []
+                for p in purchases:
+                    expires = p.get("expires")
+                    if not expires:
+                        still_active.append(p)
+                        continue
+                    try:
+                        expired = datetime.fromisoformat(expires) <= now
+                    except Exception:
+                        still_active.append(p)
+                        continue
+
+                    if not expired:
+                        still_active.append(p)
+                        continue
+
+                    # الشراء خلصت مدتو — نحاولو نحيدو الرول بصح
+                    changed = True
+                    if guild is not None:
+                        try:
+                            member = guild.get_member(int(user_id_str)) or await guild.fetch_member(int(user_id_str))
+                        except discord.NotFound:
+                            member = None
+                        except Exception:
+                            member = None
+
+                        role = guild.get_role(p.get("role_id", 0)) if p.get("role_id") else None
+                        if member and role and role in member.roles:
+                            try:
+                                await member.remove_roles(role, reason="انتهت مدة الشراء من المتجر")
+                            except Exception as e:
+                                print(f"[SHOP EXPIRE] ⚠️ ماقدرتش نحيد {role} من {user_id_str}: {e}")
+                    # كنسقطو الـ entry فكل الحالات (حتى لو الرول ماتحيدش) باش
+                    # ما يبقاش يعاود يحاول كل 15 دقيقة لبلاصة
+
+                if len(still_active) != len(purchases):
+                    acc["purchases"] = still_active
+
+        if changed:
+            self.db.save()
+
+    @expire_purchases_loop.before_loop
+    async def before_expire_purchases_loop(self):
+        await self.bot.wait_until_ready()
 
     # ════════════════════════════════════════════════
     # API داخلي
@@ -124,7 +196,28 @@ class Economy(commands.Cog):
         user = getattr(interaction_or_ctx, "user", None) or interaction_or_ctx.author
         if guild is None:
             return 0
+        amount = self._apply_coins_boost(guild.id, user.id, amount)
         return self.add_coins(guild.id, user.id, amount, source=source)
+
+    def _apply_coins_boost(self, guild_id: int, user_id: int, amount: int) -> int:
+        """إلا كان عند العضو بوست فلوس فعّال (مشرِي من المتجر)، كتضاعف المبلغ. كتحيد
+        البوست أوتوماتيكياً إلا كانت مدتو خلصات."""
+        if amount <= 0:
+            return amount
+        acc = self._acc(guild_id, user_id)
+        expires = acc.get("coins_boost_expires")
+        if not expires:
+            return amount
+        try:
+            if datetime.now(timezone.utc) <= datetime.fromisoformat(expires):
+                multiplier = acc.get("coins_boost_multiplier", 1.0)
+                return int(round(amount * multiplier))
+            acc.pop("coins_boost_multiplier", None)
+            acc.pop("coins_boost_expires", None)
+            self.db.save()
+        except Exception:
+            pass
+        return amount
 
     # ════════════════════════════════════════════════
     # أوامر /balance /daily /richest
@@ -646,6 +739,64 @@ async def apply_purchase(
             return False, "ماعنديش صلاحية Manage Roles."
         except Exception as e:
             return False, f"خطأ: {e}"
+
+    # بوست فلوس مؤقت
+    if item["type"] == "coins_boost":
+        acc = cog._acc(guild.id, user.id)
+        acc["coins_boost_multiplier"] = item.get("multiplier", 1.5)
+        acc["coins_boost_expires"] = (
+            datetime.now(timezone.utc) + timedelta(hours=item.get("duration_hours", 1))
+        ).isoformat()
+        cog.db.save()
+        return True, (
+            f"💰 بوست الفلوس **{item.get('multiplier', 1.5)}x** مفعّل لمدة "
+            f"**{item.get('duration_hours', 1)} ساعة**!"
+        )
+
+    # حيّد آخر تحذير
+    if item["type"] == "warn_removal":
+        mod_cog = bot.get_cog("Moderation")
+        if not mod_cog or not hasattr(mod_cog, "remove_last_warning"):
+            return False, "نظام التحذيرات ماشي مربوط دابا — قول للأدمين."
+        removed = mod_cog.remove_last_warning(str(user.id))
+        if not removed:
+            return False, "ماعندكش شي تحذير باش نحيدو — ماخصكش تشري هاد الحاجة."
+        return True, "🛡️ تحيد آخر تحذير ديالك!"
+
+    # شوتاوت عمومي
+    if item["type"] == "shoutout":
+        channel_id = getattr(cfg, "SHOP_SHOUTOUT_CHANNEL_ID", 0) or getattr(
+            cfg, "GAMES_PANEL_CHANNEL_ID", 0
+        )
+        channel = guild.get_channel(channel_id) if channel_id else None
+        if not channel:
+            return False, "شانيل الشوتاوت ماشي معمّرة (SHOP_SHOUTOUT_CHANNEL_ID) — قول للأدمين."
+        embed = discord.Embed(
+            title="📣 شوتاوت!",
+            description=f"{user.mention} خدام ديالو زوين وشرا شوتاوت باش الكل يشوفو! 🎉",
+            color=discord.Color.gold(),
+            timestamp=datetime.now(),
+        )
+        embed.set_thumbnail(url=user.display_avatar.url)
+        embed.set_footer(text=f"{cfg.CURRENCY_NAME_PLURAL} ديال المتجر")
+        try:
+            await channel.send(embed=embed)
+        except discord.Forbidden:
+            return False, "ماعنديش صلاحية نبعث فهاد الشانيل — قول للأدمين."
+        return True, f"📣 الشوتاوت ديالك تبعث فـ <#{channel_id}>!"
+
+    # صندوق الحظ — نتيجة عشوائية
+    if item["type"] == "mystery_box":
+        outcomes = item.get("outcomes") or []
+        if not outcomes:
+            return False, "هاد الصندوق ماشي معمّر (outcomes فارغين) — قول للأدمين."
+        pick = random.choices(
+            outcomes, weights=[o.get("weight", 1) for o in outcomes], k=1
+        )[0]
+        coins_won = pick.get("coins", 0)
+        cog.add_coins(guild.id, user.id, coins_won, source="mystery_box", respect_cap=False)
+        label = pick.get("label", f"{coins_won} 🪙")
+        return True, f"🎁 حليتي الصندوق ولقيتي: **{label}**!"
 
     return False, "نوع الحاجة ماشي معروف (ولا مازال ماخدامش دابا)."
 
