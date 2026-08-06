@@ -34,6 +34,9 @@ EXEMPT_ROLE_IDS = [
     1526182506272133180,  # Moderator
 ]
 
+ADMIN_ROLE_ID = 1525712399456272495
+MODERATOR_ROLE_ID = 1526182506272133180
+
 MUTED_ROLE_ID = 1526468718534590574
 
 COLOR_WARN = discord.Color.yellow()
@@ -44,16 +47,19 @@ COLOR_BAN = discord.Color.red()
 COLOR_UNBAN = discord.Color.green()
 
 # شكون يقدر يستعمل كل أمر (Owner-only، Staff-only، أو الكل)
+# - kick / mute / unmute: Admin + Moderator
+# - ban: Admin بوحدو (الموديراتور ما يقدرش يبان)
+# - clear / warn / warns / unwarn / unban: Admin بوحدو
 COMMAND_ROLES = {
-    "kick": {"owner_only": False, "allowed_roles": []},
-    "ban": {"owner_only": False, "allowed_roles": []},
-    "unban": {"owner_only": False, "allowed_roles": []},
-    "mute": {"owner_only": False, "allowed_roles": []},
-    "unmute": {"owner_only": False, "allowed_roles": []},
-    "clear": {"owner_only": False, "allowed_roles": []},
-    "warn": {"owner_only": False, "allowed_roles": []},
-    "warns": {"owner_only": False, "allowed_roles": []},
-    "unwarn": {"owner_only": False, "allowed_roles": []},
+    "kick": {"owner_only": False, "allowed_roles": [ADMIN_ROLE_ID, MODERATOR_ROLE_ID]},
+    "ban": {"owner_only": False, "allowed_roles": [ADMIN_ROLE_ID]},
+    "unban": {"owner_only": False, "allowed_roles": [ADMIN_ROLE_ID]},
+    "mute": {"owner_only": False, "allowed_roles": [ADMIN_ROLE_ID, MODERATOR_ROLE_ID]},
+    "unmute": {"owner_only": False, "allowed_roles": [ADMIN_ROLE_ID, MODERATOR_ROLE_ID]},
+    "clear": {"owner_only": False, "allowed_roles": [ADMIN_ROLE_ID]},
+    "warn": {"owner_only": False, "allowed_roles": [ADMIN_ROLE_ID]},
+    "warns": {"owner_only": False, "allowed_roles": [ADMIN_ROLE_ID]},
+    "unwarn": {"owner_only": False, "allowed_roles": [ADMIN_ROLE_ID]},
 }
 
 DISPLAY_NAMES = {
