@@ -9674,6 +9674,7 @@ GAMES_COGS = [
     "cogs.game_scratch",     # ← 🎫 Scratch Card (رهان)
     "cogs.game_lottery",     # ← 🎟️ Lottery (رهان)
     "cogs.gambling_panel",   # ← 🎰 panel القمار — خاصو يجي بعد الألعاب ديال الرهان
+    "cogs.moderation",       # ← 👈 زيد هادي باش يحمّل Cog ديال الموديريشن
 ]
 
 
