@@ -330,11 +330,8 @@ class Economy(commands.Cog):
     async def givecoins_cmd(
         self, ctx: commands.Context, member: discord.Member, amount: int
     ):
-        # Owner فقط (OWNER_ID متعرّف فـ ai_bot-63-3.py)
-        try:
-            from ai_bot-63-3 import OWNER_ID  # إذا الملف فـ نفس الباكيج، عدل الإسم إذا مختلف
-        except Exception:
-            OWNER_ID = None
+        # Owner فقط (OWNER_ID كيوصل عبر bot.gg، البريدج المعرف فـ ai_bot.py)
+        OWNER_ID = getattr(self.bot, "gg", {}).get("OWNER_ID")
 
         if not OWNER_ID or ctx.author.id != OWNER_ID:
             await ctx.send(
