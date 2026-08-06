@@ -3,6 +3,18 @@
 ═══════════════════════════════════════════════════════
 ║ cogs/moderation.py — 🛡️ موديريشن + صلاحيات Owner  ║
 ═══════════════════════════════════════════════════════
+
+أوامر:
+ /kick       — طرد
+ /ban        — حظر
+ /unban      — فك الحظر
+ /mute       — كتم
+ /unmute     — فك الكتم
+ /clear      — مسح رسائل
+ /warn       — تحذير
+ /warns      — عرض التحذيرات
+ /unwarn     — مسح التحذيرات
+ /permspanel — بانل تتحكم منّو فصلاحيات هاد الأوامر
 """
 
 import asyncio
@@ -13,7 +25,6 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 
-# نفس القيم اللي عندك فـ ai_bot-63-3.py
 OWNER_ID = 1260089246216097832  # ← عدّلها بنفس OWNER_ID ديالك
 SERVER_NAME = "GGMW9"
 
@@ -22,7 +33,7 @@ EXEMPT_ROLE_IDS = [
     1526182506272133180,  # Moderator
 ]
 
-MUTED_ROLE_ID = 1526468718534590574  # Role ديال Mute
+MUTED_ROLE_ID = 1526468718534590574
 
 COLOR_WARN = discord.Color.yellow()
 COLOR_MUTE = discord.Color.yellow()
@@ -31,17 +42,7 @@ COLOR_KICK = discord.Color.orange()
 COLOR_BAN = discord.Color.red()
 COLOR_UNBAN = discord.Color.green()
 
-# ═══════════════════════════════════════════════════════
-# نظام صلاحيات إضافي (Owner يتحكم)
-# ═══════════════════════════════════════════════════════
-
 COMMAND_ROLES = {
-    "ownerkick":  {"owner_only": True, "allowed_roles": []},
-    "ownerban":   {"owner_only": True, "allowed_roles": []},
-    "ownermute":  {"owner_only": True, "allowed_roles": []},
-    "muteall":    {"owner_only": True, "allowed_roles": []},
-    "unmuteall":  {"owner_only": True, "allowed_roles": []},
-
     "kick":   {"owner_only": False, "allowed_roles": []},
     "ban":    {"owner_only": False, "allowed_roles": []},
     "unban":  {"owner_only": False, "allowed_roles": []},
@@ -54,20 +55,15 @@ COMMAND_ROLES = {
 }
 
 DISPLAY_NAMES = {
-    "kick": "طرد",
-    "ban": "حظر",
-    "unban": "فك الحظر",
-    "mute": "كتم",
+    "kick":   "طرد",
+    "ban":    "حظر",
+    "unban":  "فك الحظر",
+    "mute":   "كتم",
     "unmute": "فك الكتم",
-    "clear": "مسح رسائل",
-    "warn": "تحذير",
-    "warns": "عرض التحذيرات",
+    "clear":  "مسح رسائل",
+    "warn":   "تحذير",
+    "warns":  "عرض التحذيرات",
     "unwarn": "مسح التحذيرات",
-    "ownerkick": "طرد (Owner)",
-    "ownerban": "حظر (Owner)",
-    "ownermute": "كتم (Owner)",
-    "muteall": "كتم الجميع",
-    "unmuteall": "فك الكتم عن الجميع",
 }
 
 
@@ -82,7 +78,6 @@ def is_exempt(member: discord.Member) -> bool:
 
 
 def has_custom_command_access(member: discord.Member, command_name: str) -> bool:
-    # Owner دايماً مسموح
     if OWNER_ID and member.id == OWNER_ID:
         return True
 
@@ -101,9 +96,7 @@ def has_custom_command_access(member: discord.Member, command_name: str) -> bool
     return bool(member_roles.intersection(allowed_roles))
 
 
-# ═══════════════════════════════════════════════════════
-# نظام تحذيرات بسيط (محلي)
-# ═══════════════════════════════════════════════════════
+# ─── تحذيرات بسيطة ───
 
 warns_db = {}  # {user_id: {"count": int, "reasons": [...], "dates": [...]}}
 
@@ -148,9 +141,7 @@ async def add_warn(member: discord.Member, reason: str) -> int:
     return count
 
 
-# ═══════════════════════════════════════════════════════
-# بانل الصلاحيات (Owner فقط)
-# ═══════════════════════════════════════════════════════
+# ─── بانل الصلاحيات ───
 
 class PermsSelect(discord.ui.Select):
     def __init__(self, command_name: str):
@@ -200,19 +191,9 @@ class PermsSelect(discord.ui.Select):
 class PermsPanelView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=300)
-        for cmd in [
-            "kick", "ban", "unban",
-            "mute", "unmute",
-            "clear",
-            "warn", "warns", "unwarn",
-        ]:
-            if cmd in COMMAND_ROLES:
-                self.add_item(PermsSelect(cmd))
+        for cmd in COMMAND_ROLES.keys():
+            self.add_item(PermsSelect(cmd))
 
-
-# ═══════════════════════════════════════════════════════
-# Cog ديال الموديريشن
-# ═══════════════════════════════════════════════════════
 
 class Moderation(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -237,7 +218,7 @@ class Moderation(commands.Cog):
                 "- Owner فقط\n"
                 "- Admins + Mods\n"
                 "- أو الكل (حسب صلاحيات Discord)\n\n"
-                "التغييرات كتطبق فوراً وكتخدم في جميع الأوامر ديال الموديريشن."
+                "التغييرات كتطبق فوراً على /kick /ban /mute /clear /warn ..."
             ),
             color=discord.Color.blurple(),
             timestamp=datetime.now(),
@@ -256,14 +237,14 @@ class Moderation(commands.Cog):
             except Exception:
                 pass
 
-    # ───── Kick ─────
+    # ───── kick ─────
 
     @commands.hybrid_command(description="اطرد عضو من السيرفر")
     @app_commands.default_permissions(kick_members=True)
     @commands.has_permissions(kick_members=True)
     async def kick(self, ctx: commands.Context, member: discord.Member, *, reason: str = "ما ذكرش سبب"):
         if not has_custom_command_access(ctx.author, ctx.command.name):
-            await ctx.send("❌ هاد الأمر مقيد من طرف Owner، ماعندكش صلاحية تستعملو.", delete_after=6)
+            await ctx.send("❌ هاد الأمر مقيد من طرف Owner.", delete_after=6)
             return
 
         if OWNER_ID and member.id == OWNER_ID:
@@ -290,14 +271,14 @@ class Moderation(commands.Cog):
         except Exception as e:
             await ctx.send(f"❌ خطأ: {str(e)}", delete_after=5)
 
-    # ───── Ban / Unban ─────
+    # ───── ban / unban ─────
 
     @commands.hybrid_command(description="احظر عضو من السيرفر")
     @app_commands.default_permissions(ban_members=True)
     @commands.has_permissions(ban_members=True)
     async def ban(self, ctx: commands.Context, member: discord.Member, *, reason: str = "ما ذكرش سبب"):
         if not has_custom_command_access(ctx.author, ctx.command.name):
-            await ctx.send("❌ هاد الأمر مقيد من طرف Owner، ماعندكش صلاحية تستعملو.", delete_after=6)
+            await ctx.send("❌ هاد الأمر مقيد من طرف Owner.", delete_after=6)
             return
 
         if OWNER_ID and member.id == OWNER_ID:
@@ -329,7 +310,7 @@ class Moderation(commands.Cog):
     @commands.has_permissions(ban_members=True)
     async def unban(self, ctx: commands.Context, user_id: int):
         if not has_custom_command_access(ctx.author, ctx.command.name):
-            await ctx.send("❌ هاد الأمر مقيد من طرف Owner، ماعندكش صلاحية تستعملو.", delete_after=6)
+            await ctx.send("❌ هاد الأمر مقيد من طرف Owner.", delete_after=6)
             return
 
         try:
@@ -350,14 +331,14 @@ class Moderation(commands.Cog):
         except Exception as e:
             await ctx.send(f"❌ خطأ: {str(e)}", delete_after=5)
 
-    # ───── Clear ─────
+    # ───── clear ─────
 
     @commands.hybrid_command(description="امسح عدد من الرسائل فالشانيل")
     @app_commands.default_permissions(manage_messages=True)
     @commands.has_permissions(manage_messages=True)
     async def clear(self, ctx: commands.Context, amount: int = 10):
         if not has_custom_command_access(ctx.author, ctx.command.name):
-            await ctx.send("❌ هاد الأمر مقيد من طرف Owner، ماعندكش صلاحية تستعملو.", delete_after=6)
+            await ctx.send("❌ هاد الأمر مقيد من طرف Owner.", delete_after=6)
             return
 
         if amount < 1 or amount > 100:
@@ -372,14 +353,14 @@ class Moderation(commands.Cog):
         except discord.Forbidden:
             await ctx.send("❌ ما عنديش الصلاحية!", delete_after=5)
 
-    # ───── Mute / Unmute ─────
+    # ───── mute / unmute ─────
 
     @commands.hybrid_command(description="كتم عضو (Role) لمدة معيّنة (دقايق)")
     @app_commands.default_permissions(moderate_members=True)
     @commands.has_permissions(moderate_members=True)
     async def mute(self, ctx: commands.Context, member: discord.Member, duration: int = 5, *, reason: str = "ما ذكرش سبب"):
         if not has_custom_command_access(ctx.author, ctx.command.name):
-            await ctx.send("❌ هاد الأمر مقيد من طرف Owner، ماعندكش صلاحية تستعملو.", delete_after=6)
+            await ctx.send("❌ هاد الأمر مقيد من طرف Owner.", delete_after=6)
             return
 
         if OWNER_ID and member.id == OWNER_ID:
@@ -421,7 +402,7 @@ class Moderation(commands.Cog):
     @commands.has_permissions(moderate_members=True)
     async def unmute(self, ctx: commands.Context, member: discord.Member):
         if not has_custom_command_access(ctx.author, ctx.command.name):
-            await ctx.send("❌ هاد الأمر مقيد من طرف Owner، ماعندكش صلاحية تستعملو.", delete_after=6)
+            await ctx.send("❌ هاد الأمر مقيد من طرف Owner.", delete_after=6)
             return
 
         muted_role = ctx.guild.get_role(MUTED_ROLE_ID)
@@ -446,14 +427,14 @@ class Moderation(commands.Cog):
         except discord.Forbidden:
             await ctx.send("❌ ما عنديش الصلاحية!", delete_after=5)
 
-    # ───── Warn / Warns / Unwarn ─────────
+    # ───── warn / warns / unwarn ─────
 
     @commands.hybrid_command(description="أعطي تحذير لعضو")
     @app_commands.default_permissions(kick_members=True)
     @commands.has_permissions(kick_members=True)
     async def warn(self, ctx: commands.Context, member: discord.Member, *, reason: str):
         if not has_custom_command_access(ctx.author, ctx.command.name):
-            await ctx.send("❌ هاد الأمر مقيد من طرف Owner، ماعندكش صلاحية تستعملو.", delete_after=6)
+            await ctx.send("❌ هاد الأمر مقيد من طرف Owner.", delete_after=6)
             return
 
         if OWNER_ID and member.id == OWNER_ID:
@@ -482,7 +463,7 @@ class Moderation(commands.Cog):
     @commands.has_permissions(kick_members=True)
     async def warns(self, ctx: commands.Context, member: Optional[discord.Member] = None):
         if not has_custom_command_access(ctx.author, ctx.command.name):
-            await ctx.send("❌ هاد الأمر مقيد من طرف Owner، ماعندكش صلاحية تستعملو.", delete_after=6)
+            await ctx.send("❌ هاد الأمر مقيد من طرف Owner.", delete_after=6)
             return
 
         member = member or ctx.author
@@ -512,7 +493,7 @@ class Moderation(commands.Cog):
     @commands.has_permissions(kick_members=True)
     async def unwarn(self, ctx: commands.Context, member: discord.Member):
         if not has_custom_command_access(ctx.author, ctx.command.name):
-            await ctx.send("❌ هاد الأمر مقيد من طرف Owner، ماعندكش صلاحية تستعملو.", delete_after=6)
+            await ctx.send("❌ هاد الأمر مقيد من طرف Owner.", delete_after=6)
             return
 
         clear_warns(str(member.id))
