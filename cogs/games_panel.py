@@ -117,12 +117,6 @@ GAMES = [
         "label": "العدّاد",
         "desc": "عدّو جماعة فـ #counting",
     },
-    {
-        "id": "shop",
-        "emoji": "🛒",
-        "label": "المتجر",
-        "desc": "شري بالدراهم اللي ربحتي",
-    },
 ]
 
 
@@ -224,39 +218,6 @@ class GameMenuView(discord.ui.View):
                     "دير `/counting` باش تشوف فين وصلنا والريكورد."
                 ),
                 view=None,
-            )
-            return
-
-        # ═══ المتجر (من داخل البانل) ═══
-        if choice == "shop":
-            eco = self.bot.get_cog("Economy")
-            if not eco:
-                await interaction.response.send_message(
-                    "❌ المتجر ماشي متوفر.", ephemeral=True
-                )
-                return
-
-            from cogs.economy import ShopView
-
-            balance = eco.get_balance(interaction.guild.id, interaction.user.id)
-            embed = discord.Embed(
-                title="🛒 المتجر",
-                description=f"الرصيد ديالك: **{balance:,}** {cfg.CURRENCY_EMOJI}",
-                color=discord.Color.blurple(),
-            )
-
-            for item in cfg.SHOP_ITEMS:
-                if item["type"] == "temp_role" and not item.get("role_id"):
-                    continue
-                ok = "✅" if balance >= item["price"] else "❌"
-                embed.add_field(
-                    name=f"{item['emoji']} {item['name']} — {item['price']:,} 🪙 {ok}",
-                    value=item["description"],
-                    inline=False,
-                )
-
-            await interaction.response.edit_message(
-                content=None, embed=embed, view=ShopView(eco, interaction.user)
             )
             return
 
