@@ -8443,12 +8443,22 @@ async def update_leaderboard_error(error):
 @app_commands.default_permissions(administrator=True)
 @commands.has_permissions(administrator=True)
 async def setlevel_cmd(ctx, member: discord.Member, level: int):
-    """كيحط عضو مباشرة فمستوى معين (Admin) — مفيد إلا بغيتي تصحح غلط ولا تعطي مستوى بداية"""
+    """كيحط عضو مباشرة فمستوى معين (Admin) — مفيد إلا بغيتي تصحح غلط ولا تعطي مستوى بداية.
+    كيزبط الرول ديال المستوى أوتوماتيكيا: كيحيد الرول القديم (بحال Level 10)
+    وكيعطي الرول الصحيح ديال المستوى الجديد (بحال Level 15) — رول واحد بوحدو فأي وقت."""
     data = get_user_level_data(ctx.guild.id, member.id)
     data["level"] = max(0, level)
     data["xp"] = 0
     save_levels()
-    await ctx.send(f"✅ {member.mention} تحط فـ Level {data['level']}.")
+
+    roles_added, roles_removed = await sync_level_roles(member, ctx.guild, data["level"])
+
+    msg = f"✅ {member.mention} تحط فـ Level {data['level']}."
+    if roles_added:
+        msg += f"\n🎖️ رول جديد: {', '.join(roles_added)}"
+    if roles_removed:
+        msg += f"\n🗑️ تحيدو: {', '.join(roles_removed)}"
+    await ctx.send(msg)
 
 
 @bot.hybrid_command()
