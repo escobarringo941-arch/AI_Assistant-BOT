@@ -128,6 +128,37 @@ class Lottery(commands.Cog):
         embed.set_thumbnail(url=target.display_avatar.url)
         return embed
 
+    def build_top_embed(self, guild: discord.Guild) -> discord.Embed:
+        """كيتسمى من بانل الـ leaderboards — أكبر رابحين صافي فـ Lottery."""
+        guild_data = self.db.guild(guild.id)
+        ranked = sorted(
+            [(uid, d) for uid, d in guild_data.items() if d.get("wins", 0) or d.get("losses", 0)],
+            key=lambda kv: kv[1].get("won", 0) - kv[1].get("wagered", 0),
+            reverse=True,
+        )[:10]
+
+        if not ranked:
+            return discord.Embed(
+                title="🎟️ Lottery — أكبر الرابحين",
+                description="📭 مازال حتى واحد ماشرا تيكي. دير `!lottery`!",
+                color=discord.Color.blurple(),
+            )
+
+        medals = ["🥇", "🥈", "🥉"]
+        lines = []
+        for i, (uid, d) in enumerate(ranked):
+            m = guild.get_member(int(uid))
+            name = m.display_name if m else f"عضو خارج ({uid})"
+            net = d.get("won", 0) - d.get("wagered", 0)
+            prefix = medals[i] if i < 3 else f"`#{i + 1}`"
+            lines.append(f"{prefix} **{name}** — 📈 {net:+,} {cfg.CURRENCY_EMOJI}")
+
+        return discord.Embed(
+            title="🎟️ Lottery — أكبر الرابحين",
+            description="\n".join(lines),
+            color=discord.Color.blurple(),
+        )
+
 
 # ═══════════════════════════════════════════════════════
 
