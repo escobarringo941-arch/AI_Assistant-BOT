@@ -99,6 +99,38 @@ class TicTacToe(commands.Cog):
         embed.set_thumbnail(url=target.display_avatar.url)
         return embed
 
+    def build_top_embed(self, guild: discord.Guild) -> discord.Embed:
+        """كيتسمى من بانل الـ leaderboards — أكثر الأعضاء فوز فـ X/O."""
+        guild_data = self.db.guild(guild.id)
+        ranked = sorted(
+            [(uid, d) for uid, d in guild_data.items() if d.get("wins", 0) > 0],
+            key=lambda kv: kv[1].get("wins", 0),
+            reverse=True,
+        )[:10]
+
+        if not ranked:
+            return discord.Embed(
+                title="⭕ X/O — أكثر فوز",
+                description="📭 مازال حتى واحد مالعب. دير `/xo @عضو`!",
+                color=discord.Color.blurple(),
+            )
+
+        medals = ["🥇", "🥈", "🥉"]
+        lines = []
+        for i, (uid, d) in enumerate(ranked):
+            m = guild.get_member(int(uid))
+            name = m.display_name if m else f"عضو خارج ({uid})"
+            total = d.get("wins", 0) + d.get("losses", 0) + d.get("draws", 0)
+            rate = (d.get("wins", 0) / total * 100) if total else 0
+            prefix = medals[i] if i < 3 else f"`#{i + 1}`"
+            lines.append(f"{prefix} **{name}** — 🏆 {d.get('wins', 0)} ({rate:.0f}%)")
+
+        return discord.Embed(
+            title="⭕ X/O — أكثر فوز",
+            description="\n".join(lines),
+            color=discord.Color.blurple(),
+        )
+
 
 # ═══════════════════════════════════════════════════════
 # ║                  View ديال التحدي                     ║
