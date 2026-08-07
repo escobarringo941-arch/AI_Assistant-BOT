@@ -9582,6 +9582,7 @@ GAMES_COGS = [
     "cogs.game_lottery",
     "cogs.gambling_panel",
     "cogs.moderation",           # Cog ديال الموديريشن الأساسي
+    "cogs.temp_room_full_control",
 ]
 
 
