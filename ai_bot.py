@@ -448,7 +448,7 @@ AFK_XP_DAILY_CAP = 150            # ← سقف يومي لـ XP ديال AFK ل�
 
 # ═══════ Auto AFK Move — Self-Deafen مستمر 30 دقيقة → روم AFK ═══════
 AFK_AUTO_MOVE_ENABLED = True
-AFK_AUTO_MOVE_AFTER_MINUTES = 1      # خاص Self-Deafen يبقى متواصل هاد المدة
+AFK_AUTO_MOVE_AFTER_MINUTES = 30      # خاص Self-Deafen يبقى متواصل هاد المدة
 AFK_AUTO_MOVE_CHECK_SECONDS = 30      # كل شحال البوت يشيك واش سالات المدة
 AFK_AUTO_RETURN_ENABLED = True        # ملي يفك Self-Deafen فـ AFK يرجع للروم الأصلية
 AFK_AUTO_RETURN_KEEP_TEMP_ROOM = True # إلا الروم الأصلية Temp وخاوية، ما تتحذفش حتى يرجع/يلغي الرجوع
