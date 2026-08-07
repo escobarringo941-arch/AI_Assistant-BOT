@@ -90,6 +90,36 @@ class Hangman(commands.Cog):
         embed.set_thumbnail(url=target.display_avatar.url)
         return embed
 
+    def build_top_embed(self, guild: discord.Guild) -> discord.Embed:
+        """كيتسمى من بانل الـ leaderboards — أحسن سلاسل فوز فالمشنوق."""
+        guild_data = self.db.guild(guild.id)
+        ranked = sorted(
+            [(uid, d) for uid, d in guild_data.items() if d.get("best_streak", 0) > 0],
+            key=lambda kv: kv[1].get("best_streak", 0),
+            reverse=True,
+        )[:10]
+
+        if not ranked:
+            return discord.Embed(
+                title="🪢 المشنوق — أحسن السلاسل",
+                description="📭 مازال حتى واحد مالعب. دير `/hangman`!",
+                color=discord.Color.orange(),
+            )
+
+        medals = ["🥇", "🥈", "🥉"]
+        lines = []
+        for i, (uid, d) in enumerate(ranked):
+            m = guild.get_member(int(uid))
+            name = m.display_name if m else f"عضو خارج ({uid})"
+            prefix = medals[i] if i < 3 else f"`#{i + 1}`"
+            lines.append(f"{prefix} **{name}** — 🔥 {d.get('best_streak', 0)} (فوز {d.get('wins', 0)})")
+
+        return discord.Embed(
+            title="🪢 المشنوق — أحسن السلاسل",
+            description="\n".join(lines),
+            color=discord.Color.orange(),
+        )
+
 
 # ═══════════════════════════════════════════════════════
 
