@@ -448,8 +448,10 @@ AFK_XP_DAILY_CAP = 150            # ← سقف يومي لـ XP ديال AFK ل�
 
 # ═══════ Auto AFK Move — Self-Deafen مستمر 30 دقيقة → روم AFK ═══════
 AFK_AUTO_MOVE_ENABLED = True
-AFK_AUTO_MOVE_AFTER_MINUTES = 2      # خاص Self-Deafen يبقى متواصل هاد المدة
-AFK_AUTO_MOVE_CHECK_SECONDS = 30      # كل شحال البوت يشيك واش سالات 30 دقيقة
+AFK_AUTO_MOVE_AFTER_MINUTES = 1      # خاص Self-Deafen يبقى متواصل هاد المدة
+AFK_AUTO_MOVE_CHECK_SECONDS = 30      # كل شحال البوت يشيك واش سالات المدة
+AFK_AUTO_RETURN_ENABLED = True        # ملي يفك Self-Deafen فـ AFK يرجع للروم الأصلية
+AFK_AUTO_RETURN_KEEP_TEMP_ROOM = True # إلا الروم الأصلية Temp وخاوية، ما تتحذفش حتى يرجع/يلغي الرجوع
 # الهدف: guild.afk_channel أولاً (Server Settings → Inactive Channel)، وإلا أول ID صالح فـ AFK_CHANNEL_IDS
 
 # ⚠️ القيم اللي فوق (XP_MIN_PER_MESSAGE, XP_MAX_PER_MESSAGE, XP_COOLDOWN_SECONDS,
@@ -1365,11 +1367,15 @@ load_afk_xp_daily()
 
 
 # ═══════════════════════════════════════════════════════
-# ║   Auto AFK Move — 30min Self-Deafen متواصل             ║
+# ║   Auto AFK Move + Auto Return                         ║
+# ║   Self-Deafen X min → AFK | Undeafen → previous room ║
 # ═══════════════════════════════════════════════════════
 AFK_DEAF_TRACK_FILE = os.path.join(DATA_DIR, "afk_deafen_tracking.json")
-# {"guild_id:user_id": {"since": unix_ts, "channel_id": voice_channel_id}}
+AFK_AUTO_RETURN_FILE = os.path.join(DATA_DIR, "afk_auto_return.json")
+# tracking: {"guild_id:user_id": {"since": unix_ts, "channel_id": voice_channel_id}}
 afk_deafen_tracking = {}
+# returns: {"guild_id:user_id": {"channel_id": previous_voice_id, "moved_at": unix_ts}}
+afk_auto_return = {}
 
 
 def load_afk_deafen_tracking():
@@ -1391,6 +1397,27 @@ def save_afk_deafen_tracking():
             json.dump(afk_deafen_tracking, f, ensure_ascii=False, indent=2)
     except Exception as e:
         print(f"[AFK-AUTO-MOVE] خطأ فـ حفظ التتبع: {e}")
+
+
+def load_afk_auto_return():
+    global afk_auto_return
+    try:
+        with open(AFK_AUTO_RETURN_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        afk_auto_return = data if isinstance(data, dict) else {}
+    except FileNotFoundError:
+        afk_auto_return = {}
+    except Exception as e:
+        print(f"[AFK-AUTO-RETURN] خطأ فـ تحميل السجل: {e}")
+        afk_auto_return = {}
+
+
+def save_afk_auto_return():
+    try:
+        with open(AFK_AUTO_RETURN_FILE, "w", encoding="utf-8") as f:
+            json.dump(afk_auto_return, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[AFK-AUTO-RETURN] خطأ فـ حفظ السجل: {e}")
 
 
 def _afk_deafen_key(guild_id: int, user_id: int) -> str:
@@ -1416,17 +1443,65 @@ def _channel_is_afk_target(channel: Optional[discord.VoiceChannel], guild: disco
     return channel.id in AFK_CHANNEL_IDS
 
 
+def _has_pending_afk_return_to_channel(guild_id: int, channel_id: int) -> bool:
+    """كيحمي Temp Room من الحذف إلا شي عضو تهبط منها للـ AFK ومازال خاصو يرجع ليها."""
+    if not AFK_AUTO_RETURN_ENABLED or not AFK_AUTO_RETURN_KEEP_TEMP_ROOM:
+        return False
+    prefix = f"{guild_id}:"
+    return any(
+        key.startswith(prefix) and int(rec.get("channel_id", 0) or 0) == channel_id
+        for key, rec in afk_auto_return.items()
+    )
+
+
+async def _cleanup_abandoned_afk_origin(guild: discord.Guild, channel_id: int):
+    """إلا تلغى Auto Return والروم الأصلية Temp وبقات خاوية، نمسحوها باش ما تبقاش orphan."""
+    channel = guild.get_channel(channel_id)
+    if not isinstance(channel, discord.VoiceChannel):
+        return
+    if str(channel.id) not in temp_voice_channels:
+        return
+    if channel.members or _has_pending_afk_return_to_channel(guild.id, channel.id):
+        return
+    temp_voice_channels.pop(str(channel.id), None)
+    temp_voice_acl.pop(str(channel.id), None)
+    save_temp_voice_channels()
+    save_temp_voice_acl()
+    try:
+        await channel.delete(reason="Auto AFK Return تلغى والروم المؤقتة بقات خاوية")
+    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+        pass
+
+
+def _can_auto_return_to_channel(member: discord.Member, channel: discord.VoiceChannel) -> bool:
+    """يحترم ACL ديال Temp Rooms؛ Administrator ماكيستعملش هنا باش يتجاوز قرار مول الروم."""
+    if is_temp_voice_channel(channel):
+        rec = get_temp_voice_acl(channel, create=False)
+        if rec:
+            uid = member.id
+            # Server Owner مسموح ليه يرجع؛ الاستثناء هنا غير من ACL، ماشي من Auto-AFK.
+            if is_temp_voice_protected_target(member):
+                return True
+            if uid in rec.get("blocked", []) or uid in rec.get("denied", []):
+                return False
+            owner_id = int(rec.get("owner_id", 0) or 0)
+            if rec.get("private") and uid != owner_id and uid not in rec.get("allowed", []):
+                return False
+    perms = channel.permissions_for(member)
+    return bool(perms.view_channel and perms.connect)
+
+
 def update_afk_deafen_tracking(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
     """
     كيتحسب AFK غير Self-Deafen الحقيقي (self_deaf=True) لمدة متواصلة.
+    - كيتطبق على الجميع، حتى Server Owner
     - Server Deafen بوحدو ما كيتحسبش
-    - تبديل الروم وهو Self-Deaf كيرجع العداد للصفر (حيت دار interaction)
+    - تبديل الروم وهو Self-Deaf كيرجع العداد للصفر
     - Undeafen / خروج من voice / الدخول لروم AFK كيمسح العداد
-    - Server Owner محمي حسب قاعدة النظام كاملة
     """
     key = _afk_deafen_key(member.guild.id, member.id)
 
-    if not AFK_AUTO_MOVE_ENABLED or is_temp_voice_protected_target(member):
+    if not AFK_AUTO_MOVE_ENABLED:
         if afk_deafen_tracking.pop(key, None) is not None:
             save_afk_deafen_tracking()
         return
@@ -1440,7 +1515,6 @@ def update_afk_deafen_tracking(member: discord.Member, before: discord.VoiceStat
     channel_changed = (before.channel is None or before.channel.id != after_channel.id)
     just_deafened = not bool(before.self_deaf) and bool(after.self_deaf)
 
-    # أول Self-Deafen، أو تبديل الروم وهو Deaf = بداية 30 دقيقة جديدة
     if key not in afk_deafen_tracking or channel_changed or just_deafened:
         afk_deafen_tracking[key] = {
             "since": int(datetime.now().timestamp()),
@@ -1450,7 +1524,7 @@ def update_afk_deafen_tracking(member: discord.Member, before: discord.VoiceStat
 
 
 def reconcile_afk_deafen_tracking(guild: discord.Guild):
-    """بعد restart: نخلي timer محفوظ إلا نفس العضو مازال Self-Deaf فنفس الروم؛ وإلا نصححو السجل."""
+    """بعد restart: نحافظ على timer لأي عضو، بما فيه Owner، إلا مازال Self-Deaf فنفس الروم."""
     changed = False
     active_keys = set()
     now_ts = int(datetime.now().timestamp())
@@ -1459,7 +1533,7 @@ def reconcile_afk_deafen_tracking(guild: discord.Guild):
         if _channel_is_afk_target(channel, guild):
             continue
         for member in channel.members:
-            if member.bot or is_temp_voice_protected_target(member):
+            if member.bot:
                 continue
             if not member.voice or not member.voice.self_deaf:
                 continue
@@ -1480,18 +1554,104 @@ def reconcile_afk_deafen_tracking(guild: discord.Guild):
         save_afk_deafen_tracking()
 
 
+def reconcile_afk_auto_return(guild: discord.Guild):
+    """بعد restart: نخلي return غير لعضو مازال فعلاً فـ AFK والروم الأصلية مازالت موجودة."""
+    changed = False
+    prefix = f"{guild.id}:"
+    for key, rec in list(afk_auto_return.items()):
+        if not key.startswith(prefix):
+            continue
+        try:
+            user_id = int(key.split(":", 1)[1])
+        except (ValueError, IndexError):
+            afk_auto_return.pop(key, None)
+            changed = True
+            continue
+        member = guild.get_member(user_id)
+        origin = guild.get_channel(int(rec.get("channel_id", 0) or 0))
+        current = member.voice.channel if member and member.voice else None
+        if (not member or member.bot or not isinstance(origin, discord.VoiceChannel)
+                or not _channel_is_afk_target(current, guild)):
+            afk_auto_return.pop(key, None)
+            changed = True
+    if changed:
+        save_afk_auto_return()
+
+
+async def handle_afk_auto_return(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
+    """ملي عضو نقله البوت للـ AFK يفك Self-Deafen، يرجعو للروم اللي كان فيها قبل."""
+    if not AFK_AUTO_RETURN_ENABLED:
+        return False
+    key = _afk_deafen_key(member.guild.id, member.id)
+    rec = afk_auto_return.get(key)
+    if not rec:
+        return False
+
+    before_channel = before.channel if isinstance(before.channel, discord.VoiceChannel) else None
+    after_channel = after.channel if isinstance(after.channel, discord.VoiceChannel) else None
+
+    # إلا خرج/بدل AFK بيدو، نلغي الرجوع القديم. إذا بقى Deaf فروم أخرى، tracking غادي يبدا من جديد.
+    if not after_channel or not _channel_is_afk_target(after_channel, member.guild):
+        origin_id = int(rec.get("channel_id", 0) or 0)
+        afk_auto_return.pop(key, None)
+        save_afk_auto_return()
+        await _cleanup_abandoned_afk_origin(member.guild, origin_id)
+        return False
+
+    just_undeafened = bool(before.self_deaf) and not bool(after.self_deaf)
+    if not (_channel_is_afk_target(before_channel, member.guild) and just_undeafened):
+        return False
+
+    origin_id = int(rec.get("channel_id", 0) or 0)
+    origin = member.guild.get_channel(origin_id)
+    # نمسحو قبل move_to باش الـ voice event الجديد ما يعاودش نفس العملية.
+    afk_auto_return.pop(key, None)
+    save_afk_auto_return()
+
+    if not isinstance(origin, discord.VoiceChannel):
+        return False
+    if not _can_auto_return_to_channel(member, origin):
+        try:
+            await member.send(f"⚠️ ماقدرتش نرجعك لـ **{origin.name}** حيت الدخول ليها ماعادش مسموح ليك.")
+        except discord.HTTPException:
+            pass
+        await _cleanup_abandoned_afk_origin(member.guild, origin.id)
+        return False
+
+    try:
+        await member.move_to(origin, reason="Auto AFK Return: العضو فك Self-Deafen فـ AFK")
+    except (discord.Forbidden, discord.HTTPException) as e:
+        print(f"[AFK-AUTO-RETURN] ماقدرتش نرجع {member} لـ {origin}: {e}")
+        await _cleanup_abandoned_afk_origin(member.guild, origin.id)
+        return False
+
+    try:
+        await log_action(
+            member.guild,
+            "🔙 Auto AFK Return",
+            f"**العضو:** {member.mention}\n**رجع إلى:** {origin.mention}\n"
+            f"**السبب:** فك Self-Deafen وهو فـ AFK",
+            discord.Color.green()
+        )
+    except Exception:
+        pass
+    return True
+
+
 load_afk_deafen_tracking()
+load_afk_auto_return()
 
 
 @tasks.loop(seconds=AFK_AUTO_MOVE_CHECK_SECONDS)
 async def afk_auto_move_loop():
-    """كيهبط أي عضو بقى Self-Deaf 30 دقيقة متواصلة للروم الرسمية ديال AFK."""
+    """كيهبط أي عضو (حتى Owner) بقى Self-Deaf المدة المحددة، ويحفظ الروم باش يرجعو منين يفك Deafen."""
     if not AFK_AUTO_MOVE_ENABLED:
         return
 
     now_ts = int(datetime.now().timestamp())
     required_seconds = max(1, int(AFK_AUTO_MOVE_AFTER_MINUTES * 60))
-    changed = False
+    tracking_changed = False
+    return_changed = False
 
     for guild in bot.guilds:
         target = get_afk_move_target(guild)
@@ -1506,13 +1666,13 @@ async def afk_auto_move_loop():
                 user_id = int(key.split(":", 1)[1])
             except (ValueError, IndexError):
                 afk_deafen_tracking.pop(key, None)
-                changed = True
+                tracking_changed = True
                 continue
 
             member = guild.get_member(user_id)
-            if not member or member.bot or is_temp_voice_protected_target(member):
+            if not member or member.bot:
                 afk_deafen_tracking.pop(key, None)
-                changed = True
+                tracking_changed = True
                 continue
 
             voice = member.voice
@@ -1520,29 +1680,35 @@ async def afk_auto_move_loop():
             if (not voice or not current_channel or not voice.self_deaf
                     or _channel_is_afk_target(current_channel, guild)):
                 afk_deafen_tracking.pop(key, None)
-                changed = True
+                tracking_changed = True
                 continue
 
-            # تبدّل الروم بين جوج checks = نعاود 30 دقيقة من الصفر
             if int(rec.get("channel_id", 0)) != current_channel.id:
                 rec["channel_id"] = current_channel.id
                 rec["since"] = now_ts
-                changed = True
+                tracking_changed = True
                 continue
 
             since = int(rec.get("since", now_ts))
             if now_ts - since < required_seconds:
                 continue
 
+            old_channel = current_channel
+            # نسجلو الروم قبل النقل باش cleanup ديال Temp Room يشوفها محمية ومايحذفهاش.
+            afk_auto_return[key] = {"channel_id": old_channel.id, "moved_at": now_ts}
+            save_afk_auto_return()
+            return_changed = True
+
             try:
-                old_channel = current_channel
                 await member.move_to(target, reason=f"Auto AFK: Self-Deafen لمدة {AFK_AUTO_MOVE_AFTER_MINUTES} دقيقة")
             except (discord.Forbidden, discord.HTTPException) as e:
+                afk_auto_return.pop(key, None)
+                save_afk_auto_return()
                 print(f"[AFK-AUTO-MOVE] ماقدرتش نهبط {member} لـ {target}: {e}")
                 continue
 
             afk_deafen_tracking.pop(key, None)
-            changed = True
+            tracking_changed = True
             try:
                 await log_action(
                     guild,
@@ -1550,14 +1716,17 @@ async def afk_auto_move_loop():
                     f"**العضو:** {member.mention}\n"
                     f"**من:** {old_channel.mention}\n"
                     f"**إلى:** {target.mention}\n"
-                    f"**السبب:** Self-Deafen متواصل لمدة {AFK_AUTO_MOVE_AFTER_MINUTES} دقيقة",
+                    f"**السبب:** Self-Deafen متواصل لمدة {AFK_AUTO_MOVE_AFTER_MINUTES} دقيقة\n"
+                    f"**Auto Return:** منين يفك Deafen فـ AFK يرجع للروم الأصلية",
                     discord.Color.greyple()
                 )
             except Exception:
                 pass
 
-    if changed:
+    if tracking_changed:
         save_afk_deafen_tracking()
+    if return_changed:
+        save_afk_auto_return()
 
 
 @afk_auto_move_loop.before_loop
@@ -6717,11 +6886,13 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
     if member.bot:
         return
 
-    # ═══════ Auto AFK: Self-Deafen حقيقي ومتواصل 30 دقيقة ═══════
+    # ═══════ Auto AFK: حتى Owner كيتنقل؛ Undeafen فـ AFK كيرجع للروم الأصلية ═══════
     try:
+        returned_from_afk = await handle_afk_auto_return(member, before, after)
         update_afk_deafen_tracking(member, before, after)
     except Exception as e:
-        print(f"[AFK-AUTO-MOVE] خطأ فـ voice tracking ديال {member}: {e}")
+        returned_from_afk = False
+        print(f"[AFK-AUTO-MOVE] خطأ فـ voice tracking/return ديال {member}: {e}")
 
     # ═══════ Temp Room ACL: Block > Private > Voice Mute. Server Owner محمي. ═══════
     blocked_entry_handled = False
@@ -6829,14 +7000,18 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
     if before.channel and str(before.channel.id) in temp_voice_channels:
         left_channel = before.channel
         if len(left_channel.members) == 0:
-            temp_voice_channels.pop(str(left_channel.id), None)
-            temp_voice_acl.pop(str(left_channel.id), None)
-            save_temp_voice_channels()
-            save_temp_voice_acl()
-            try:
-                await left_channel.delete(reason="روم مؤقت بقات فارغة")
-            except (discord.NotFound, discord.Forbidden):
+            # إلا البوت هبط شي واحد من هاد الروم للـ AFK، نخليها موجودة باش يقدر يرجع ليها ملي يفك Deafen.
+            if _has_pending_afk_return_to_channel(member.guild.id, left_channel.id):
                 pass
+            else:
+                temp_voice_channels.pop(str(left_channel.id), None)
+                temp_voice_acl.pop(str(left_channel.id), None)
+                save_temp_voice_channels()
+                save_temp_voice_acl()
+                try:
+                    await left_channel.delete(reason="روم مؤقت بقات فارغة")
+                except (discord.NotFound, discord.Forbidden):
+                    pass
 
 
 @bot.hybrid_command(name="voicerename", description="بدل سمية الروم الصوتي المؤقت ديالك")
@@ -10519,7 +10694,7 @@ async def on_ready():
     print(f"⏰ Reminders: {len(reminders)} مبرمجين (كيتفقّد كل 30 ثانية)")
     print(f"🌐 Auto-Translate: {'نشط' if bot_settings['auto_translate_enabled'] else 'معطل'} ({len(FLAG_TO_LANGUAGE)} علم مدعوم) | Auto-React: {'نشط' if bot_settings['auto_react_enabled'] else 'معطل'} ({', '.join(AUTO_REACT_FLAGS) if AUTO_REACT_FLAGS else 'بلا أعلام'})")
     print(f"🔊 Join to Create: {'نشط' if (bot_settings['join_to_create_enabled'] and JOIN_TO_CREATE_CHANNEL_ID) else 'معطل'} | Voice XP: {'نشط' if bot_settings['voice_xp_enabled'] else 'معطل'} (فويس: {xp_settings['voice_per_interval']} / لايفستريم: {xp_settings['stream_per_interval']} XP كل {xp_settings['voice_interval_minutes']}د)")
-    print(f"💤 Auto AFK Move: {'نشط' if AFK_AUTO_MOVE_ENABLED else 'معطل'} | Self-Deafen {AFK_AUTO_MOVE_AFTER_MINUTES}د → AFK Channel")
+    print(f"💤 Auto AFK Move: {'نشط' if AFK_AUTO_MOVE_ENABLED else 'معطل'} | Self-Deafen {AFK_AUTO_MOVE_AFTER_MINUTES}د → AFK | Undeafen → Previous Room")
 
     await bot.change_presence(
         activity=discord.Activity(
@@ -10567,6 +10742,7 @@ async def on_ready():
         # ═══ Self-healing ديال Auto AFK tracking بعد restart ═══
         try:
             reconcile_afk_deafen_tracking(guild)
+            reconcile_afk_auto_return(guild)
         except Exception as e:
             print(f"[AFK-AUTO-MOVE] خطأ فـ reconcile: {e}")
 
