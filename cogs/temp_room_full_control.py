@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-🎤 نظام الروم المؤقتة — أوامر /room مرتبطة مباشرة بالنظام الرئيسي ديال Join-to-Create.
-ماكايناش DB ثانية وماكاينش listener ثاني للـ Deny، باش مايبقاش تعارض.
+🎤 Temp Room commands — نفس source of truth ديال Join-to-Create فـ ai_bot.py.
+ماكاين لا DB ثانية لا voice listener ثاني.
 """
 
 import discord
@@ -33,101 +33,60 @@ class TempRoom(commands.Cog):
             await ctx.response.send_message("❌ هادي ماشي روم مؤقتة ديال Join-to-Create.", ephemeral=True)
             return None
         if not self.is_owner(ctx.user, ch):
-            await ctx.response.send_message("❌ غير مول الروم يقدر يدير هاد العملية — Admin/Mod ماشي Owner ديالها.", ephemeral=True)
+            await ctx.response.send_message("❌ غير مول الروم يقدر يتحكم فيها — Admin/Mod ماشي Owner ديالها.", ephemeral=True)
             return None
         return ch
 
-    room = app_commands.Group(name="room", description="🎤 إدارة الروم المؤقتة ديالك")
+    async def _call_member_action(self, ctx: discord.Interaction, bridge_name: str, user: discord.Member, *args):
+        ch = await self._owner_room(ctx)
+        if not ch:
+            return
+        fn = self._gg(bridge_name)
+        if not fn:
+            return await ctx.response.send_message("❌ Temp Voice bridge ما تحملش مزيان.", ephemeral=True)
+        await ctx.response.defer(ephemeral=True)
+        ok, msg = await fn(ch, user, *args, actor=ctx.user)
+        await ctx.followup.send(msg, ephemeral=True)
 
-    @room.command(name="allow", description="✅ سماح لعضو يدخل الروم حتى إلا كانت Private")
+    room = app_commands.Group(name="room", description="🎤 تحكم كامل فالروم المؤقتة ديالك")
+
+    @room.command(name="allow", description="✅ سمح لعضو يدخل حتى إلا كانت الروم Private")
     async def allow(self, ctx: discord.Interaction, user: discord.Member):
-        ch = await self._owner_room(ctx)
-        if not ch:
-            return
-        fn = self._gg("temp_voice_allow_member")
-        if not fn:
-            return await ctx.response.send_message("❌ Temp Voice bridge ما تحملش مزيان.", ephemeral=True)
-        await ctx.response.defer(ephemeral=True)
-        ok, msg = await fn(ch, user, actor=ctx.user)
-        await ctx.followup.send(msg, ephemeral=True)
+        await self._call_member_action(ctx, "temp_voice_allow_member", user)
 
-    @room.command(name="deny", description="⛔ عدم السماح لعضو يدخل الروم")
-    async def deny(self, ctx: discord.Interaction, user: discord.Member):
-        ch = await self._owner_room(ctx)
-        if not ch:
-            return
-        fn = self._gg("temp_voice_deny_member")
-        if not fn:
-            return await ctx.response.send_message("❌ Temp Voice bridge ما تحملش مزيان.", ephemeral=True)
-        await ctx.response.defer(ephemeral=True)
-        ok, msg = await fn(ch, user, actor=ctx.user)
-        await ctx.followup.send(msg, ephemeral=True)
-
-    # aliases باش الأوامر القديمة يبقاو خدامين
-    @room.command(name="block", description="🔐 نفس /room deny")
+    @room.command(name="block", description="🔐 خبي الروم على عضو ومنعو منها حتى Unblock")
     async def block(self, ctx: discord.Interaction, user: discord.Member):
-        ch = await self._owner_room(ctx)
-        if not ch:
-            return
-        fn = self._gg("temp_voice_deny_member")
-        if not fn:
-            return await ctx.response.send_message("❌ Temp Voice bridge ما تحملش مزيان.", ephemeral=True)
-        await ctx.response.defer(ephemeral=True)
-        ok, msg = await fn(ch, user, actor=ctx.user)
-        await ctx.followup.send(msg, ephemeral=True)
+        await self._call_member_action(ctx, "temp_voice_block_member", user)
 
-    @room.command(name="unblock", description="✅ نفس /room allow")
+    @room.command(name="unblock", description="🔓 فك Block وخلي الروم تبان للعضو من جديد")
     async def unblock(self, ctx: discord.Interaction, user: discord.Member):
-        ch = await self._owner_room(ctx)
-        if not ch:
-            return
-        fn = self._gg("temp_voice_allow_member")
-        if not fn:
-            return await ctx.response.send_message("❌ Temp Voice bridge ما تحملش مزيان.", ephemeral=True)
-        await ctx.response.defer(ephemeral=True)
-        ok, msg = await fn(ch, user, actor=ctx.user)
-        await ctx.followup.send(msg, ephemeral=True)
+        await self._call_member_action(ctx, "temp_voice_unblock_member", user)
 
-    @room.command(name="mute", description="🔇 كتم عضو داخل الروم")
-    async def mute(self, ctx: discord.Interaction, user: discord.Member):
-        ch = await self._owner_room(ctx)
-        if not ch:
-            return
-        fn = self._gg("temp_voice_set_manual_mute")
-        if not fn:
-            return await ctx.response.send_message("❌ Temp Voice bridge ما تحملش مزيان.", ephemeral=True)
-        await ctx.response.defer(ephemeral=True)
-        ok, msg = await fn(ch, user, True, actor=ctx.user)
-        await ctx.followup.send(msg, ephemeral=True)
+    @room.command(name="deny", description="⛔ خلي الروم باينة ولكن منع العضو من الدخول")
+    async def deny(self, ctx: discord.Interaction, user: discord.Member):
+        await self._call_member_action(ctx, "temp_voice_deny_member", user)
 
-    @room.command(name="unmute", description="🔊 فك الكتم على عضو داخل الروم")
-    async def unmute(self, ctx: discord.Interaction, user: discord.Member):
-        ch = await self._owner_room(ctx)
-        if not ch:
-            return
-        fn = self._gg("temp_voice_set_manual_mute")
-        if not fn:
-            return await ctx.response.send_message("❌ Temp Voice bridge ما تحملش مزيان.", ephemeral=True)
-        await ctx.response.defer(ephemeral=True)
-        ok, msg = await fn(ch, user, False, actor=ctx.user)
-        await ctx.followup.send(msg, ephemeral=True)
-
-    @room.command(name="kick", description="🚫 خرج عضو من الروم فقط")
+    @room.command(name="kick", description="🚪 خرج عضو من الروم فقط بلا Block")
     async def kick(self, ctx: discord.Interaction, user: discord.Member):
-        ch = await self._owner_room(ctx)
-        if not ch:
-            return
-        if user.id == ctx.user.id:
-            return await ctx.response.send_message("❌ مايمكنش تخرج راسك بهاد الأمر.", ephemeral=True)
-        if not user.voice or not user.voice.channel or user.voice.channel.id != ch.id:
-            return await ctx.response.send_message("❌ هاد العضو ماشي داخل الروم دابا.", ephemeral=True)
-        try:
-            await user.move_to(None, reason=f"Temp room kick by {ctx.user}")
-            await ctx.response.send_message(f"🚫 {user.mention} خرج من الروم.", ephemeral=True)
-        except (discord.Forbidden, discord.HTTPException) as e:
-            await ctx.response.send_message(f"❌ ما قدرتش نخرجو: {e}", ephemeral=True)
+        await self._call_member_action(ctx, "temp_voice_kick_member", user)
 
-    @room.command(name="private", description="🔒 خلي الروم Private ولكن تبقى باينة للجميع")
+    @room.command(name="mute", description="🔇 كتم صوت عضو فهاد الروم")
+    async def mute(self, ctx: discord.Interaction, user: discord.Member):
+        await self._call_member_action(ctx, "temp_voice_set_voice_mute", user, True)
+
+    @room.command(name="unmute", description="🔊 فك كتم الصوت على عضو")
+    async def unmute(self, ctx: discord.Interaction, user: discord.Member):
+        await self._call_member_action(ctx, "temp_voice_set_voice_mute", user, False)
+
+    @room.command(name="chatmute", description="💬🔇 منع عضو من الكتابة فـ Chat ديال الروم")
+    async def chatmute(self, ctx: discord.Interaction, user: discord.Member):
+        await self._call_member_action(ctx, "temp_voice_set_chat_mute", user, True)
+
+    @room.command(name="chatunmute", description="💬🔊 فك كتم الكتابة فـ Chat ديال الروم")
+    async def chatunmute(self, ctx: discord.Interaction, user: discord.Member):
+        await self._call_member_action(ctx, "temp_voice_set_chat_mute", user, False)
+
+    @room.command(name="private", description="🔒 الروم تبقى باينة ولكن الدخول غير لـ Owner + Allowed")
     async def private(self, ctx: discord.Interaction):
         ch = await self._owner_room(ctx)
         if not ch:
@@ -151,7 +110,7 @@ class TempRoom(commands.Cog):
         ok, msg = await fn(ch, False, actor=ctx.user)
         await ctx.followup.send(msg, ephemeral=True)
 
-    @room.command(name="list", description="📋 شوف Allow / Deny ديال الروم")
+    @room.command(name="list", description="📋 شوف Allow / Deny / Block / Voice Mute / Chat Mute")
     async def list_cmd(self, ctx: discord.Interaction):
         ch = await self._owner_room(ctx)
         if not ch:
@@ -162,29 +121,29 @@ class TempRoom(commands.Cog):
         rec = get_acl(ch)
         allowed = rec.get("allowed", [])
         denied = rec.get("denied", [])
-        attempts = rec.get("attempts", {})
-        muted = rec.get("muted", [])
-        embed = discord.Embed(
-            title=f"📋 {ch.name}",
-            description=f"الحالة: **{'🔒 Private' if rec.get('private') else '🔓 Public'}**",
-            color=discord.Color.blurple()
-        )
-        def _lines(items, formatter, limit=20):
-            vals = [formatter(x) for x in items[:limit]]
+        blocked = rec.get("blocked", [])
+        voice_muted = rec.get("voice_muted", [])
+        chat_muted = rec.get("chat_muted", [])
+
+        def lines(items, limit=20):
+            vals = [f"<@{uid}>" for uid in items[:limit]]
             if len(items) > limit:
                 vals.append(f"... +{len(items) - limit}")
             return "\n".join(vals) or "—"
 
-        embed.add_field(name=f"✅ مسموح ({len(allowed)})", value=_lines(allowed, lambda uid: f"<@{uid}>"), inline=False)
-        embed.add_field(
-            name=f"⛔ ممنوع ({len(denied)})",
-            value=_lines(denied, lambda uid: f"<@{uid}> — محاولات: {attempts.get(str(uid), 0)}"),
-            inline=False
+        embed = discord.Embed(
+            title=f"📋 {ch.name}",
+            description=f"الحالة: **{'🔒 Private' if rec.get('private') else '🔓 Public'}**",
+            color=discord.Color.blurple(),
         )
-        embed.add_field(name=f"🔇 مكتومين ({len(muted)})", value=_lines(muted, lambda uid: f"<@{uid}>"), inline=False)
+        embed.add_field(name=f"✅ Allowed ({len(allowed)})", value=lines(allowed), inline=False)
+        embed.add_field(name=f"⛔ Denied ({len(denied)})", value=lines(denied), inline=False)
+        embed.add_field(name=f"🔐 Blocked ({len(blocked)})", value=lines(blocked), inline=False)
+        embed.add_field(name=f"🔇 Voice Muted ({len(voice_muted)})", value=lines(voice_muted), inline=False)
+        embed.add_field(name=f"💬 Chat Muted ({len(chat_muted)})", value=lines(chat_muted), inline=False)
         await ctx.response.send_message(embed=embed, ephemeral=True)
 
 
 async def setup(bot):
     await bot.add_cog(TempRoom(bot))
-    print("✅ نظام الروم: /room + Allow/Deny مربوط بـ Join-to-Create")
+    print("✅ نظام الروم: Panel + /room Allow/Deny/Block/Kick/VoiceMute/ChatMute")
