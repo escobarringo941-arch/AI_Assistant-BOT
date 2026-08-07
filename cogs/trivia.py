@@ -762,6 +762,36 @@ class Trivia(commands.Cog):
             "is_record": is_record and streak > 0,
         }
 
+    def build_top_embed(self, guild: discord.Guild) -> discord.Embed:
+        """كيتسمى من بانل الـ leaderboards — أكثر الأعضاء جاوبو صحيح فـ Trivia."""
+        guild_data = self.stats.guild(guild.id)
+        ranked = sorted(
+            [(uid, d) for uid, d in guild_data.items() if d.get("correct", 0) > 0],
+            key=lambda kv: kv[1].get("correct", 0),
+            reverse=True,
+        )[:10]
+
+        if not ranked:
+            return discord.Embed(
+                title="🧠 Trivia — أكثر الأجوبة الصحيحة",
+                description="📭 مازال حتى واحد ماجاوب. جرب سؤال Trivia!",
+                color=discord.Color.teal(),
+            )
+
+        medals = ["🥇", "🥈", "🥉"]
+        lines = []
+        for i, (uid, d) in enumerate(ranked):
+            m = guild.get_member(int(uid))
+            name = m.display_name if m else f"عضو خارج ({uid})"
+            prefix = medals[i] if i < 3 else f"`#{i + 1}`"
+            lines.append(f"{prefix} **{name}** — ✅ {d.get('correct', 0)} (🔥 {d.get('best_streak', 0)})")
+
+        return discord.Embed(
+            title="🧠 Trivia — أكثر الأجوبة الصحيحة",
+            description="\n".join(lines),
+            color=discord.Color.teal(),
+        )
+
     # ═══════════════════════════════════════════════════
     # ║        الترجمة للدارجة (لأسئلة OpenTDB فقط)          ║
     # ═══════════════════════════════════════════════════
