@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 """
 ═══════════════════════════════════════════════════════
-║ cogs/games_panel.py — 🎮 Panel موحّد + Setup تلقائي ║
+║ cogs/games_panel.py — 🎮 Panel موحّد ديال الألعاب ║
 ═══════════════════════════════════════════════════════
 
-جوج حوايج:
-1. `/setupminigames` — كيصاوب **category "Mini Games"** بكاع الـ channels
-   أوتوماتيكياً وكيطبع ليك الـ IDs باش تحطهم فـ games_config.py
-2. Panel دائم فـ #games-panel — قائمة وحدة فيها كاع الألعاب
+3 بانلات دائمين، كل واحد فـ channel ديالو:
+1. #games-panel — قائمة وحدة فيها كاع الألعاب (اختيار + رصيد)
+2. #shop — المتجر
+3. #games-leaderboard — لوحة موحّدة فيها لوائح كاع الألعاب
 
 ⚠️ نقطة تقنية حرجة — Persistent Views:
 الأزرار العادية كيموتو بعد restart ديال البوت (timeout).
@@ -71,14 +71,13 @@ class GamesPanelView(discord.ui.View):
         custom_id="ggmw9:games_panel:tops",
     )
     async def tops_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        ch = (
+            f"<#{cfg.GAMES_LEADERBOARD_CHANNEL_ID}>"
+            if getattr(cfg, "GAMES_LEADERBOARD_CHANNEL_ID", 0)
+            else "#games-leaderboard"
+        )
         await interaction.response.send_message(
-            "🏆 **اللوائح المتوفرة:**\n"
-            "`/richest` — أغنى الأعضاء 🪙\n"
-            "`/wordletop` — أحسن streaks فـ Wordle 🔤\n"
-            "`/reactiontop` — أسرع الأعضاء ⚡\n"
-            "`/xostats` — إحصائيات X/O ⭕\n"
-            "`/hangmanstats` — إحصائيات المشنوق 🪢\n"
-            "`/counting` — حالة العدّاد 🔢",
+            f"🏆 كاع اللوائح كاينين فبانل موحّد فـ {ch} — اختار اللعبة من القائمة تما!",
             ephemeral=True,
         )
 
@@ -271,6 +270,67 @@ class ShopPanelView(discord.ui.View):
         )
 
 
+# ═══════════════════════════════════════════════════════
+# ║ بانل الـ Leaderboards موحّد (GAMES_LEADERBOARD_CHANNEL_ID) ║
+# ═══════════════════════════════════════════════════════
+
+LEADERBOARDS = [
+    {"id": "richest", "emoji": "💰", "label": "أغنى الأعضاء", "cog": "Economy", "method": "build_richest_embed"},
+    {"id": "wordle", "emoji": "🔤", "label": "Wordle", "cog": "Wordle", "method": "build_top_embed"},
+    {"id": "reaction", "emoji": "⚡", "label": "أسرع ضغطة", "cog": "ReactionSpeed", "method": "build_top_embed"},
+    {"id": "xo", "emoji": "⭕", "label": "X/O", "cog": "TicTacToe", "method": "build_top_embed"},
+    {"id": "hangman", "emoji": "🪢", "label": "المشنوق", "cog": "Hangman", "method": "build_top_embed"},
+    {"id": "trivia", "emoji": "🧠", "label": "Trivia", "cog": "Trivia", "method": "build_top_embed"},
+    {"id": "dice", "emoji": "🎲", "label": "النرد", "cog": "Dice", "method": "build_top_embed"},
+    {"id": "coinflip", "emoji": "🪙", "label": "Coinflip", "cog": "Coinflip", "method": "build_top_embed"},
+    {"id": "slots", "emoji": "🎰", "label": "Slots", "cog": "Slots", "method": "build_top_embed"},
+    {"id": "scratch", "emoji": "🎫", "label": "Scratch Card", "cog": "Scratch", "method": "build_top_embed"},
+    {"id": "lottery", "emoji": "🎟️", "label": "Lottery", "cog": "Lottery", "method": "build_top_embed"},
+    {"id": "counting", "emoji": "🔢", "label": "العدّاد", "cog": "Counting", "method": "build_status_embed"},
+]
+
+
+class LeaderboardSelect(discord.ui.Select):
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+        options = [
+            discord.SelectOption(label=lb["label"], value=lb["id"], emoji=lb["emoji"])
+            for lb in LEADERBOARDS
+        ]
+        super().__init__(
+            placeholder="🏆 اختار اللوحة اللي بغيتي تشوف...",
+            options=options,
+            custom_id="ggmw9:leaderboard_panel:select",
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        choice = self.values[0]
+        lb = next((x for x in LEADERBOARDS if x["id"] == choice), None)
+        if not lb:
+            await interaction.response.send_message("❌ ماكايناش هاد اللوحة.", ephemeral=True)
+            return
+
+        cog = self.bot.get_cog(lb["cog"])
+        if not cog or not hasattr(cog, lb["method"]):
+            await interaction.response.send_message(
+                "❌ هاد اللعبة ماشي متوفرة دابا.", ephemeral=True
+            )
+            return
+
+        embed = getattr(cog, lb["method"])(interaction.guild)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+class LeaderboardPanelView(discord.ui.View):
+    """بانل دائم فـ #games-leaderboard — Select menu فيه لوحة لكل لعبة، كل واحد
+    كيختار وكتبان ليه بوحدو (ephemeral) — بلا ما يخربق الشانيل."""
+
+    def __init__(self, bot: commands.Bot):
+        super().__init__(timeout=None)
+        self.bot = bot
+        self.add_item(LeaderboardSelect(bot))
+
+
 class GamesPanel(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -279,8 +339,10 @@ class GamesPanel(commands.Cog):
         """كيتسمى أوتوماتيك ملي كيتحمّل الـ cog — هنا كنسجّلو الـ persistent views."""
         self.bot.add_view(GamesPanelView(self.bot))
         self.bot.add_view(ShopPanelView(self.bot))
+        self.bot.add_view(LeaderboardPanelView(self.bot))
         print("✅ [GAMES] Persistent panel view مسجّل.")
         print("✅ [SHOP] Persistent shop panel view مسجّل.")
+        print("✅ [LEADERBOARD] Persistent leaderboard panel view مسجّل.")
 
     @commands.Cog.listener()
     async def on_ready(self):
@@ -318,6 +380,24 @@ class GamesPanel(commands.Cog):
                             break
                     else:
                         await self._send_shop_panel(shop_ch)
+                except discord.Forbidden:
+                    pass
+
+        # بانل الـ Leaderboards (شانيل خاصة)
+        if getattr(cfg, "GAMES_LEADERBOARD_CHANNEL_ID", 0):
+            lb_ch = self.bot.get_channel(cfg.GAMES_LEADERBOARD_CHANNEL_ID)
+            if lb_ch:
+                try:
+                    async for msg in lb_ch.history(limit=20):
+                        if (
+                            msg.author == self.bot.user
+                            and msg.embeds
+                            and msg.embeds[0].title
+                            and "Leaderboards" in msg.embeds[0].title
+                        ):
+                            break
+                    else:
+                        await self._send_leaderboard_panel(lb_ch)
                 except discord.Forbidden:
                     pass
 
@@ -393,16 +473,26 @@ class GamesPanel(commands.Cog):
 
         await channel.send(embed=embed, view=ShopPanelView(self.bot))
 
-    # ==================================================================
-    # باقي الكود ديال /gamestats و /gamesadmin و setupminigames
-    # كما هو عندك (ما مسّيتو) — خليه تحت بلا تغيير
-    # ==================================================================
+    async def _send_leaderboard_panel(self, channel: discord.TextChannel):
+        embed = discord.Embed(
+            title="🏆 Leaderboards",
+            description=(
+                "هنا كاع اللوائح ديال الألعاب فبلاصة وحدة!\n"
+                "اختار من القائمة تحت باش تشوف الترتيب — النتيجة كتبان ليك نتا بوحدك."
+            ),
+            color=discord.Color.gold(),
+            timestamp=datetime.now(),
+        )
+        embed.add_field(
+            name="📋 اللوائح المتوفرة",
+            value="\n".join(f"{lb['emoji']} {lb['label']}" for lb in LEADERBOARDS),
+            inline=False,
+        )
+        embed.set_footer(text="GGMW9 | اختار من القائمة تحت")
+        await channel.send(embed=embed, view=LeaderboardPanelView(self.bot))
 
-    # ... كل الكود ديال stats_group و admin_group و _do_setup يبقى كما عندك ...
-
-
-# في الأخير، تأكد setup فيه جوج cogs:
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(GamesPanel(bot))
-    # ShopPanel داخل GamesPanel (ما خاصوش Cog منفصل لأننا حطين الدوال ديالو فالكلاس)
+    # ShopPanel و LeaderboardPanel داخل GamesPanel — ماخصهمش Cog منفصل
+    # حيت حطينا الدوال ديالهم فنفس الكلاس.
