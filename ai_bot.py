@@ -416,6 +416,9 @@ JOIN_TO_CREATE_CHANNEL_ID = 1533290892947882064   # ← ID ديال الـ voice
 TEMP_VC_CATEGORY_ID = 1533257707543461939          # ← ID ديال الـ Category فين غادي تتخلق الروومات المؤقتة (0 = نفس category ديال JOIN_TO_CREATE_CHANNEL_ID)
 TEMP_VC_NAME_TEMPLATE = "🔊 روم ديال {name}"
 TEMP_VC_DEFAULT_LIMIT = 0        # ← 0 = بلا حد أقصى للأعضاء
+# حماية Deny ديال الرومات المؤقتة: محاولة 1/2 = طرد من الروم + إنذار DM، المحاولة 3 = Kick من السيرفر
+TEMP_VC_DENY_MAX_ATTEMPTS = 3
+TEMP_VC_DENY_KICK_FROM_SERVER = True
 
 # ═══════ نظام الصوت — Voice XP (نقط XP على الوقت فالـ Voice) ═══════
 VOICE_XP_ENABLED = True
@@ -5162,6 +5165,12 @@ async def birthday_loop_error(error):
 TEMP_VOICE_FILE = os.path.join(DATA_DIR, "temp_voice.json")
 temp_voice_channels = {}  # {channel_id (str): owner_id (int)} — الروومات المؤقتة اللي تخلقو
 
+# ACL/Panel منفصل باش نبقاو backward-compatible مع temp_voice.json القديم
+TEMP_VOICE_ACL_FILE = os.path.join(DATA_DIR, "temp_voice_acl.json")
+LEGACY_TEMP_ROOM_FILE = os.path.join(DATA_DIR, "temp_room.json")  # migration ديال الـ Cog القديم
+# {channel_id: {owner_id, created_at, private, allowed, denied, muted, attempts, panel_message_id}}
+temp_voice_acl = {}
+
 
 def load_temp_voice_channels():
     global temp_voice_channels
@@ -5183,14 +5192,763 @@ def save_temp_voice_channels():
         print(f"[VOICE] خطأ فـ حفظ temp_voice.json: {e}")
 
 
+def load_temp_voice_acl():
+    global temp_voice_acl
+    try:
+        with open(TEMP_VOICE_ACL_FILE, "r", encoding="utf-8") as f:
+            temp_voice_acl = json.load(f)
+        if not isinstance(temp_voice_acl, dict):
+            temp_voice_acl = {}
+    except FileNotFoundError:
+        temp_voice_acl = {}
+    except Exception as e:
+        print(f"[TEMP-VOICE ACL] خطأ فـ تحميل temp_voice_acl.json: {e}")
+        temp_voice_acl = {}
+
+    # Migration مرة بوحدة من data/temp_room.json القديم باش blocked/muted ما يضيعوش بعد التحديث.
+    try:
+        with open(LEGACY_TEMP_ROOM_FILE, "r", encoding="utf-8") as f:
+            legacy = json.load(f)
+        if isinstance(legacy, dict):
+            changed = False
+            for cid, old_rec in legacy.items():
+                if not isinstance(old_rec, dict) or cid not in temp_voice_channels:
+                    continue
+                rec = temp_voice_acl.setdefault(str(cid), {})
+                rec.setdefault("owner_id", old_rec.get("owner") or temp_voice_channels.get(str(cid)))
+                rec.setdefault("created_at", 0)
+                rec.setdefault("allowed", [])
+                if "denied" not in rec:
+                    rec["denied"] = list(dict.fromkeys(old_rec.get("blocked", []) or []))
+                if "muted" not in rec:
+                    rec["muted"] = list(dict.fromkeys(old_rec.get("muted", []) or []))
+                rec.setdefault("attempts", {})
+                rec.setdefault("panel_message_id", None)
+                changed = True
+            if changed:
+                save_temp_voice_acl()
+                print("[TEMP-VOICE ACL] ✅ migration ديال temp_room.json القديم تمت")
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        print(f"[TEMP-VOICE ACL] migration القديم فشلات بلا ما توقف البوت: {e}")
+
+
+def save_temp_voice_acl():
+    try:
+        with open(TEMP_VOICE_ACL_FILE, "w", encoding="utf-8") as f:
+            json.dump(temp_voice_acl, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[TEMP-VOICE ACL] خطأ فـ حفظ temp_voice_acl.json: {e}")
+
+
 load_temp_voice_channels()
+load_temp_voice_acl()
+
+
+def is_temp_voice_channel(channel) -> bool:
+    return bool(channel and str(channel.id) in temp_voice_channels)
+
+
+def get_temp_voice_owner_id(channel: discord.VoiceChannel) -> Optional[int]:
+    raw = temp_voice_channels.get(str(channel.id))
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
 
 
 def is_temp_voice_owner(member: discord.Member, channel: discord.VoiceChannel) -> bool:
-    owner_id = temp_voice_channels.get(str(channel.id))
-    if owner_id is not None and int(owner_id) == member.id:
-        return True
-    return member.guild_permissions.manage_channels  # Admins يقدرو يتحكمو فأي روم برضو
+    """غير مول الروم الحقيقي. Manage Channels/Administrator ما كيعطيش تحكم فـ panel ديال شي حد آخر."""
+    owner_id = get_temp_voice_owner_id(channel)
+    return owner_id is not None and owner_id == member.id
+
+
+def get_temp_voice_acl(channel: discord.VoiceChannel, create: bool = True) -> Optional[dict]:
+    cid = str(channel.id)
+    rec = temp_voice_acl.get(cid)
+    if rec is None and not create:
+        return None
+    if rec is None:
+        owner_id = get_temp_voice_owner_id(channel)
+        try:
+            created_at = int(channel.created_at.timestamp())
+        except Exception:
+            created_at = int(datetime.now().timestamp())
+        try:
+            everyone_ow = channel.overwrites_for(channel.guild.default_role)
+            detected_private = everyone_ow.connect is False
+        except Exception:
+            detected_private = False
+        rec = {
+            "owner_id": owner_id,
+            "created_at": created_at,
+            "private": detected_private,
+            "allowed": [],
+            "denied": [],
+            "muted": [],
+            "attempts": {},
+            "panel_message_id": None,
+        }
+        temp_voice_acl[cid] = rec
+        save_temp_voice_acl()
+    else:
+        changed = False
+        owner_id = get_temp_voice_owner_id(channel)
+        if rec.get("owner_id") != owner_id:
+            rec["owner_id"] = owner_id
+            changed = True
+        if not rec.get("created_at"):
+            try:
+                rec["created_at"] = int(channel.created_at.timestamp())
+            except Exception:
+                rec["created_at"] = int(datetime.now().timestamp())
+            changed = True
+        if "private" not in rec:
+            try:
+                rec["private"] = channel.overwrites_for(channel.guild.default_role).connect is False
+            except Exception:
+                rec["private"] = False
+            changed = True
+        for key, default in (("allowed", []), ("denied", []), ("muted", []), ("attempts", {}), ("panel_message_id", None)):
+            if key not in rec:
+                rec[key] = default.copy() if isinstance(default, (dict, list)) else default
+                changed = True
+        if changed:
+            save_temp_voice_acl()
+    return rec
+
+
+def _temp_voice_mentions(ids, limit: int = 8) -> str:
+    ids = [int(x) for x in ids if str(x).isdigit()]
+    if not ids:
+        return "—"
+    shown = " ".join(f"<@{uid}>" for uid in ids[:limit])
+    if len(ids) > limit:
+        shown += f"  +{len(ids) - limit}"
+    return shown
+
+
+def build_temp_voice_control_embed(channel: discord.VoiceChannel) -> discord.Embed:
+    rec = get_temp_voice_acl(channel)
+    owner_id = get_temp_voice_owner_id(channel)
+    is_private = bool(rec.get("private"))
+    created_at = int(rec.get("created_at") or int(datetime.now().timestamp()))
+    allowed = rec.get("allowed", [])
+    denied = rec.get("denied", [])
+    muted = rec.get("muted", [])
+
+    embed = discord.Embed(
+        title="🎛️ تحكم فالروم المؤقتة",
+        description=(
+            f"**الروم:** {channel.mention}\n"
+            f"**مول الروم:** <@{owner_id}>\n"
+            f"**الحالة:** {'🔒 Private — باينة للجميع، غير Owner + Allowed يقدرو يدخلو' if is_private else '🔓 Public — باينة والدخول محلول'}\n"
+            f"**تصاوبات:** <t:{created_at}:R>  •  <t:{created_at}:t>\n"
+            f"**الأعضاء دابا:** {len(channel.members)}  •  **Limit:** {channel.user_limit or '∞'}\n\n"
+            "✅ **سماح لعضو:** كيدخلو حتى إلا كانت Private، وكيحيد عليه Deny.\n"
+            "⛔ **عدم السماح:** كيمنعو من الدخول. إلا عندو Administrator وقدر يتجاوز Permission، "
+            f"البوت كيخرجو فوراً؛ فالمحاولة **{TEMP_VC_DENY_MAX_ATTEMPTS}** كيجرب يطردو من السيرفر."
+        ),
+        color=discord.Color.orange() if is_private else discord.Color.green(),
+        timestamp=datetime.now()
+    )
+    embed.add_field(name=f"✅ مسموح ({len(allowed)})", value=_temp_voice_mentions(allowed), inline=False)
+    embed.add_field(name=f"⛔ ممنوع ({len(denied)})", value=_temp_voice_mentions(denied), inline=False)
+    embed.add_field(name=f"🔇 مكتوم يدوياً ({len(muted)})", value=_temp_voice_mentions(muted), inline=False)
+    embed.set_footer(text=f"{SERVER_NAME} | غير مول الروم يقدر يستعمل هاد البانل")
+    return embed
+
+
+async def _temp_voice_target_member(guild: discord.Guild, user_obj):
+    if isinstance(user_obj, discord.Member):
+        return user_obj
+    member = guild.get_member(user_obj.id)
+    if member:
+        return member
+    try:
+        return await guild.fetch_member(user_obj.id)
+    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+        return None
+
+
+async def temp_voice_allow_member(channel: discord.VoiceChannel, member: discord.Member, *, actor=None):
+    rec = get_temp_voice_acl(channel)
+    owner_id = get_temp_voice_owner_id(channel)
+    if member.bot:
+        return False, "❌ مايمكنش تختار Bot."
+    if member.id == owner_id:
+        return False, "ℹ️ مول الروم مسموح ليه ديجا."
+
+    denied = rec.setdefault("denied", [])
+    allowed = rec.setdefault("allowed", [])
+    if member.id in denied:
+        denied.remove(member.id)
+    if member.id not in allowed:
+        allowed.append(member.id)
+    rec.setdefault("attempts", {}).pop(str(member.id), None)
+
+    try:
+        await channel.set_permissions(
+            member,
+            view_channel=True, connect=True, speak=True,
+            send_messages=True, read_message_history=True,
+            reason=f"Temp room allow by {getattr(actor, 'display_name', actor) or 'owner'}"
+        )
+    except (discord.Forbidden, discord.HTTPException) as e:
+        return False, f"❌ ما قدرتش نطبق السماح: {e}"
+
+    save_temp_voice_acl()
+    await refresh_temp_voice_control_panel(channel, create_if_missing=True)
+    return True, f"✅ {member.mention} ولى مسموح ليه يدخل لهاد الروم."
+
+
+async def temp_voice_deny_member(channel: discord.VoiceChannel, member: discord.Member, *, actor=None):
+    rec = get_temp_voice_acl(channel)
+    owner_id = get_temp_voice_owner_id(channel)
+    if member.bot:
+        return False, "❌ مايمكنش تدير Deny لبوت."
+    if member.id == owner_id:
+        return False, "❌ مايمكنش مول الروم يدير Deny لراسو."
+    if member.id == channel.guild.owner_id:
+        return False, "❌ Discord ماكيخليش نضمن حظر Server Owner؛ هو كيتجاوز permissions ومايمكنش Kick ديالو."
+
+    denied = rec.setdefault("denied", [])
+    allowed = rec.setdefault("allowed", [])
+    if member.id in allowed:
+        allowed.remove(member.id)
+    if member.id not in denied:
+        denied.append(member.id)
+    rec.setdefault("attempts", {})[str(member.id)] = 0
+
+    # أول Deny: الروم كتبقى باينة، غير Connect كيتسد. بعد 3 محاولات كنخبيوها عليه كـ fallback.
+    try:
+        await channel.set_permissions(
+            member,
+            view_channel=True, connect=False, speak=False,
+            send_messages=False,
+            reason=f"Temp room deny by {getattr(actor, 'display_name', actor) or 'owner'}"
+        )
+    except (discord.Forbidden, discord.HTTPException) as e:
+        return False, f"❌ ما قدرتش نطبق عدم السماح: {e}"
+
+    save_temp_voice_acl()
+
+    # إلا كان داخل دابا، خرجو فوراً (هاد الخروج ما كنحسبوهش محاولة جديدة)
+    if member.voice and member.voice.channel and member.voice.channel.id == channel.id:
+        try:
+            await member.move_to(None, reason="مول الروم دار Deny لهاد العضو")
+        except (discord.Forbidden, discord.HTTPException):
+            pass
+
+    try:
+        await member.send(
+            f"⛔ مول **{channel.name}** منعك من الدخول لهاد الروم. "
+            f"إلا عاودتي تحاول تدخل، البوت غادي يخرجك فوراً، وفـ المحاولة {TEMP_VC_DENY_MAX_ATTEMPTS} يمكن يطردك من السيرفر."
+        )
+    except (discord.Forbidden, discord.HTTPException):
+        pass
+
+    await refresh_temp_voice_control_panel(channel, create_if_missing=True)
+    return True, f"⛔ {member.mention} ولى فـ عدم السماح ديال هاد الروم."
+
+
+async def temp_voice_set_manual_mute(channel: discord.VoiceChannel, member: discord.Member, muted: bool, *, actor=None):
+    rec = get_temp_voice_acl(channel)
+    muted_list = rec.setdefault("muted", [])
+    if muted:
+        if member.id not in muted_list:
+            muted_list.append(member.id)
+    else:
+        if member.id in muted_list:
+            muted_list.remove(member.id)
+    save_temp_voice_acl()
+
+    if member.voice and member.voice.channel and member.voice.channel.id == channel.id:
+        try:
+            await member.edit(mute=muted, reason=f"Temp room {'mute' if muted else 'unmute'} by {getattr(actor, 'display_name', actor) or 'owner'}")
+        except (discord.Forbidden, discord.HTTPException) as e:
+            return False, f"❌ ما قدرتش نبدل الكتم: {e}"
+    await refresh_temp_voice_control_panel(channel, create_if_missing=True)
+    return True, (f"🔇 {member.mention} تكتم وغادي يبقى مكتوم فهاد الروم." if muted
+                  else f"🔊 تفك الكتم على {member.mention} فهاد الروم.")
+
+
+async def set_temp_voice_private(channel: discord.VoiceChannel, private: bool, *, actor=None):
+    """Private هنا = الروم تبقى باينة للجميع، ولكن @everyone ما يقدرش Connect."""
+    rec = get_temp_voice_acl(channel)
+    try:
+        await channel.set_permissions(
+            channel.guild.default_role,
+            view_channel=True,
+            connect=(not private),
+            reason=f"Temp room {'private' if private else 'public'} by {getattr(actor, 'display_name', actor) or 'owner'}"
+        )
+    except (discord.Forbidden, discord.HTTPException) as e:
+        return False, f"❌ ما قدرتش نبدل Privacy: {e}"
+
+    rec["private"] = bool(private)
+    owner_id = get_temp_voice_owner_id(channel)
+    owner = channel.guild.get_member(owner_id) if owner_id else None
+    if owner:
+        try:
+            await channel.set_permissions(
+                owner,
+                view_channel=True, connect=True, speak=True,
+                manage_channels=True, move_members=True, mute_members=True, deafen_members=True,
+                send_messages=True, read_message_history=True,
+                reason="Temp room owner access"
+            )
+        except (discord.Forbidden, discord.HTTPException):
+            pass
+
+    # Explicit Allow يبقى داخل حتى فـ Private
+    for uid in list(rec.get("allowed", [])):
+        m = channel.guild.get_member(int(uid))
+        if not m:
+            continue
+        try:
+            await channel.set_permissions(m, view_channel=True, connect=True, speak=True,
+                                          send_messages=True, read_message_history=True,
+                                          reason="Temp room allowed member")
+        except (discord.Forbidden, discord.HTTPException):
+            pass
+
+    # Explicit Deny يبقى ممنوع حتى فـ Public. بعد 3 محاولات نخلي view=False لغير Admin كـ fallback.
+    attempts = rec.get("attempts", {})
+    for uid in list(rec.get("denied", [])):
+        m = channel.guild.get_member(int(uid))
+        if not m:
+            continue
+        hidden = int(attempts.get(str(uid), 0) or 0) >= TEMP_VC_DENY_MAX_ATTEMPTS
+        try:
+            await channel.set_permissions(m, view_channel=(False if hidden else True), connect=False, speak=False,
+                                          send_messages=False, reason="Temp room denied member")
+        except (discord.Forbidden, discord.HTTPException):
+            pass
+
+    save_temp_voice_acl()
+
+    # إلا تحولات لـ Private وناس ماشي Allowed كانوا داخلين من قبل، نخرجهم دابا فوراً.
+    # ما كنحسبوش هادشي كمحاولة Deny حيث دخلوا قبل ما الروم تتقفل.
+    ejected = 0
+    if private:
+        allowed_ids = {int(x) for x in rec.get("allowed", [])}
+        for current in list(channel.members):
+            if current.bot or current.id == owner_id or current.id in allowed_ids:
+                continue
+            try:
+                await current.move_to(None, reason="Temp room changed to Private; not in Allow list")
+                ejected += 1
+                try:
+                    await current.send(f"🔒 **{channel.name}** ولات Private. الدخول دابا غير بإذن مول الروم.")
+                except (discord.Forbidden, discord.HTTPException):
+                    pass
+            except (discord.Forbidden, discord.HTTPException):
+                pass
+
+    await refresh_temp_voice_control_panel(channel, create_if_missing=True)
+    return True, ((f"🔒 الروم ولات Private: باينة للجميع، والدخول غير للمسموح ليهم. خرجنا {ejected} عضو ماكانش Allowed." if ejected else
+                   "🔒 الروم ولات Private: باينة للجميع، والدخول غير للمسموح ليهم.")
+                  if private else "🔓 الروم ولات Public: باينة والدخول محلول، غير Denied باقين ممنوعين.")
+
+
+async def enforce_temp_voice_private_access(member: discord.Member, channel: discord.VoiceChannel) -> bool:
+    """Private الحقيقي: الروم تبقى باينة، ولكن غير Owner + Allowed يقدرو يبقاو داخلها.
+    هاد الحارس مهم خصوصاً للي عندهم Administrator حيت Discord كيخليهم يتجاوزو connect=False.
+    """
+    rec = get_temp_voice_acl(channel, create=False)
+    if not rec or not rec.get("private"):
+        return False
+    if member.id == get_temp_voice_owner_id(channel):
+        return False
+    if member.id in rec.get("allowed", []):
+        return False
+    # Denied عندو مسار أقوى بوحدو (warnings + kick after N attempts)
+    if member.id in rec.get("denied", []):
+        return False
+
+    moved_out = False
+    try:
+        await member.move_to(None, reason="Temp room Private: member is not in Allow list")
+        moved_out = True
+    except (discord.Forbidden, discord.HTTPException) as e:
+        print(f"[TEMP-VOICE PRIVATE] ما قدرتش نخرج {member} من {channel.id}: {e}")
+
+    try:
+        await member.send(
+            f"🔒 **{channel.name}** راه Private. الروم باينة فالسيرفر، ولكن الدخول خاصو سماح من مول الروم."
+        )
+    except (discord.Forbidden, discord.HTTPException):
+        pass
+
+    if not moved_out:
+        await log_action(
+            member.guild,
+            "⚠️ فشل إخراج عضو من Private Temp Room",
+            f"**الروم:** {channel.mention}\n**العضو:** {member.mention} (`{member.id}`)\n"
+            "خاص البوت تكون عندو MOVE_MEMBERS.",
+            discord.Color.red()
+        )
+    return True
+
+
+async def enforce_temp_voice_deny(member: discord.Member, channel: discord.VoiceChannel) -> bool:
+    """True = العضو كان Denied وتعالج. Administrator يقدر يتجاوز overwrite، لذلك كنخرجو بالـ bot فوراً."""
+    rec = get_temp_voice_acl(channel, create=False)
+    if not rec or member.id not in rec.get("denied", []):
+        return False
+    if member.id == get_temp_voice_owner_id(channel):
+        return False
+
+    attempts = rec.setdefault("attempts", {})
+    count = int(attempts.get(str(member.id), 0) or 0) + 1
+    attempts[str(member.id)] = count
+    save_temp_voice_acl()
+
+    # خرجو من الروم فوراً — MOVE_MEMBERS كافي حتى إلا كان Administrator.
+    moved_out = False
+    try:
+        await member.move_to(None, reason=f"Temp room Deny attempt {count}/{TEMP_VC_DENY_MAX_ATTEMPTS}")
+        moved_out = True
+    except (discord.Forbidden, discord.HTTPException) as e:
+        print(f"[TEMP-VOICE DENY] ما قدرتش نخرج {member} من {channel.id}: {e}")
+
+    try:
+        await member.send(
+            f"⚠️ ممنوع عليك تدخل **{channel.name}** بقرار من مول الروم. "
+            f"المحاولة: **{count}/{TEMP_VC_DENY_MAX_ATTEMPTS}**. "
+            + ("إلا عاودتي مرة أخرى غادي يتطبق Kick من السيرفر." if count == TEMP_VC_DENY_MAX_ATTEMPTS - 1 else "")
+        )
+    except (discord.Forbidden, discord.HTTPException):
+        pass
+
+    await log_action(
+        member.guild,
+        "⛔ محاولة دخول لروم ممنوعة",
+        f"**الروم:** {channel.mention}\n**العضو:** {member.mention} (`{member.id}`)\n"
+        f"**المحاولة:** {count}/{TEMP_VC_DENY_MAX_ATTEMPTS}\n**خرج من الروم:** {'نعم' if moved_out else 'فشل — راجع MOVE_MEMBERS'}",
+        discord.Color.orange()
+    )
+
+    if count >= TEMP_VC_DENY_MAX_ATTEMPTS:
+        # نخبي الروم على هاد ID كـ fallback. Administrator غادي يبقى يشوفها حيت Discord كيتجاوز overwrites.
+        try:
+            await channel.set_permissions(
+                member, view_channel=False, connect=False, speak=False, send_messages=False,
+                reason=f"Temp room: {count} denied join attempts"
+            )
+        except (discord.Forbidden, discord.HTTPException):
+            pass
+
+        kicked = False
+        kick_error = None
+        if TEMP_VC_DENY_KICK_FROM_SERVER and member.id != member.guild.owner_id:
+            try:
+                await member.kick(reason=f"كرر دخول روم ممنوعة {count} مرات: {channel.name}")
+                kicked = True
+            except (discord.Forbidden, discord.HTTPException) as e:
+                kick_error = str(e)
+
+        if kicked:
+            await log_action(
+                member.guild,
+                "👢 طرد تلقائي — تكرار دخول روم ممنوعة",
+                f"**العضو:** <@{member.id}> (`{member.id}`)\n**الروم:** {channel.mention}\n"
+                f"**المحاولات:** {count}\n**السبب:** تجاهل Deny ديال مول الروم",
+                discord.Color.red()
+            )
+        else:
+            await log_action(
+                member.guild,
+                "⚠️ ما قدرناش نديرو Kick بعد 3 محاولات",
+                f"**العضو:** {member.mention} (`{member.id}`)\n**الروم:** {channel.mention}\n"
+                f"**السبب التقني:** {kick_error or 'Server Owner أو Kick معطل'}\n"
+                "البوت غادي يبقى يخرجو من الروم فوراً فكل محاولة. باش Kick يخدم، خاص Role ديال البوت يكون فوق Role ديال العضو ومعاه Kick Members.",
+                discord.Color.red()
+            )
+
+    await refresh_temp_voice_control_panel(channel, create_if_missing=True)
+    return True
+
+
+async def refresh_temp_voice_control_panel(channel: discord.VoiceChannel, create_if_missing: bool = False):
+    # ممكن الروم تتحذف وسط async move/kick؛ ما نعاودوش نخلقو ACL/panel لروم ميتة.
+    if not is_temp_voice_channel(channel):
+        return None
+    rec = get_temp_voice_acl(channel)
+    msg_id = rec.get("panel_message_id")
+    if msg_id:
+        try:
+            msg = await channel.fetch_message(int(msg_id))
+            await msg.edit(embed=build_temp_voice_control_embed(channel), view=TempVoiceControlView(bool(rec.get("private"))))
+            return msg
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException, AttributeError, TypeError, ValueError) as e:
+            print(f"[TEMP-VOICE PANEL] refresh فشل فـ {channel.id}: {e}")
+            rec["panel_message_id"] = None
+            save_temp_voice_acl()
+    if create_if_missing:
+        return await send_temp_voice_control_panel(channel)
+    return None
+
+
+async def send_temp_voice_control_panel(channel: discord.VoiceChannel):
+    if not is_temp_voice_channel(channel):
+        return None
+    rec = get_temp_voice_acl(channel)
+    try:
+        msg = await channel.send(
+            content=f"<@{get_temp_voice_owner_id(channel)}> هادي لوحة التحكم ديال الروم ديالك 👇",
+            embed=build_temp_voice_control_embed(channel),
+            view=TempVoiceControlView(bool(rec.get("private")))
+        )
+        rec["panel_message_id"] = msg.id
+        save_temp_voice_acl()
+        return msg
+    except (discord.Forbidden, discord.HTTPException, AttributeError, TypeError, ValueError) as e:
+        print(f"[TEMP-VOICE PANEL] ما قدرتش نبعث البانل فـ {channel.id}: {e}")
+        return None
+
+
+def temp_voice_permission_problems(guild: discord.Guild) -> list:
+    """تشيك startup باش نعرفو واش الحماية كاملة تقدر تخدم."""
+    me = guild.me
+    if not me:
+        return ["ما لقيناش bot member فـ guild cache"]
+    p = me.guild_permissions
+    problems = []
+    required = [
+        ("manage_channels", "Manage Channels"),
+        ("manage_roles", "Manage Roles / Permissions"),
+        ("move_members", "Move Members"),
+        ("kick_members", "Kick Members"),
+    ]
+    for attr, label in required:
+        if not getattr(p, attr, False):
+            problems.append(f"خاص البوت Permission: {label}")
+    # باش Kick ديال Admin/Mod يخدم فالمحاولة الثالثة، top role ديال البوت خاصها تكون فوقهم.
+    for rid, label in ((ADMIN_ROLE_ID, "Admin"), (MODERATOR_ROLE_ID, "Moderator")):
+        role = guild.get_role(rid) if rid else None
+        if role and me.top_role <= role:
+            problems.append(f"Role ديال البوت خاصها تكون فوق Role {label} ({role.name}) باش Kick يخدم")
+    return problems
+
+
+async def _temp_voice_interaction_channel(interaction: discord.Interaction) -> Optional[discord.VoiceChannel]:
+    ch = interaction.channel
+    if isinstance(ch, discord.VoiceChannel) and is_temp_voice_channel(ch):
+        return ch
+    return None
+
+
+async def _temp_voice_require_owner(interaction: discord.Interaction) -> Optional[discord.VoiceChannel]:
+    ch = await _temp_voice_interaction_channel(interaction)
+    if not ch:
+        await interaction.response.send_message("❌ هاد البانل ماعادش مربوط بروم مؤقتة صالحة.", ephemeral=True)
+        return None
+    if not isinstance(interaction.user, discord.Member) or not is_temp_voice_owner(interaction.user, ch):
+        await interaction.response.send_message("❌ غير مول الروم يقدر يستعمل هاد البانل — حتى Admin/Mod ماعندوش التحكم فيه.", ephemeral=True)
+        return None
+    return ch
+
+
+TEMP_VOICE_HAS_USER_SELECT = hasattr(discord.ui, "UserSelect")
+
+
+if TEMP_VOICE_HAS_USER_SELECT:
+    class TempVoiceAllowSelect(discord.ui.UserSelect):
+        def __init__(self):
+            super().__init__(
+                placeholder="✅ سماح لعضو — اختار الشخص...",
+                min_values=1, max_values=1,
+                custom_id="temp_voice_allow_member_select",
+                row=1,
+            )
+
+        async def callback(self, interaction: discord.Interaction):
+            ch = await _temp_voice_require_owner(interaction)
+            if not ch:
+                return
+            target = await _temp_voice_target_member(interaction.guild, self.values[0])
+            if not target:
+                await interaction.response.send_message("❌ ما لقيتش هاد العضو فالسيرفر.", ephemeral=True)
+                return
+            await interaction.response.defer(ephemeral=True)
+            ok, msg = await temp_voice_allow_member(ch, target, actor=interaction.user)
+            await interaction.followup.send(msg, ephemeral=True)
+
+
+    class TempVoiceDenySelect(discord.ui.UserSelect):
+        def __init__(self):
+            super().__init__(
+                placeholder="⛔ عدم السماح — اختار الشخص...",
+                min_values=1, max_values=1,
+                custom_id="temp_voice_deny_member_select",
+                row=2,
+            )
+
+        async def callback(self, interaction: discord.Interaction):
+            ch = await _temp_voice_require_owner(interaction)
+            if not ch:
+                return
+            target = await _temp_voice_target_member(interaction.guild, self.values[0])
+            if not target:
+                await interaction.response.send_message("❌ ما لقيتش هاد العضو فالسيرفر.", ephemeral=True)
+                return
+            await interaction.response.defer(ephemeral=True)
+            ok, msg = await temp_voice_deny_member(ch, target, actor=interaction.user)
+            await interaction.followup.send(msg, ephemeral=True)
+else:
+    TempVoiceAllowSelect = None
+    TempVoiceDenySelect = None
+
+
+class TempVoiceMemberIdModal(discord.ui.Modal):
+    """Fallback لdiscord.py 2.0: إلا UserSelect ماكايناش، المالك يدخل Mention ولا User ID."""
+    def __init__(self, channel_id: int, action: str):
+        title = "✅ سماح لعضو" if action == "allow" else "⛔ عدم السماح لعضو"
+        super().__init__(title=title)
+        self.channel_id = channel_id
+        self.action = action
+        self.member_value = discord.ui.TextInput(
+            label="Mention أو User ID",
+            placeholder="مثال: @Ahmed أو 123456789012345678",
+            min_length=2,
+            max_length=60,
+        )
+        self.add_item(self.member_value)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        guild = interaction.guild
+        channel = guild.get_channel(self.channel_id) if guild else None
+        if not guild or not channel or not isinstance(channel, discord.VoiceChannel):
+            await interaction.response.send_message("❌ الروم ماعادش موجودة.", ephemeral=True)
+            return
+        if not isinstance(interaction.user, discord.Member) or not is_temp_voice_owner(interaction.user, channel):
+            await interaction.response.send_message("❌ غير مول الروم يقدر يدير هاد العملية.", ephemeral=True)
+            return
+        match = re.search(r"(\d{15,22})", str(self.member_value.value))
+        if not match:
+            await interaction.response.send_message("❌ دخل Mention صحيح ولا User ID صحيح.", ephemeral=True)
+            return
+        uid = int(match.group(1))
+        target = guild.get_member(uid)
+        if not target:
+            try:
+                target = await guild.fetch_member(uid)
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                target = None
+        if not target:
+            await interaction.response.send_message("❌ هاد العضو ما لقيتوش فالسيرفر.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        if self.action == "allow":
+            ok, msg = await temp_voice_allow_member(channel, target, actor=interaction.user)
+        else:
+            ok, msg = await temp_voice_deny_member(channel, target, actor=interaction.user)
+        await interaction.followup.send(msg, ephemeral=True)
+
+
+class TempVoiceControlView(discord.ui.View):
+    """Persistent panel داخل Text Chat ديال Voice Channel. غير مول الروم يقدر يستعملو."""
+    def __init__(self, private: bool = False):
+        super().__init__(timeout=None)
+        if TEMP_VOICE_HAS_USER_SELECT:
+            # خاص نحيدو fallback buttons قبل ما نضيفو UserSelect حيث Select كياخد row كاملة.
+            for item in list(self.children):
+                if getattr(item, "custom_id", None) in {"temp_voice_allow_id_button", "temp_voice_deny_id_button"}:
+                    self.remove_item(item)
+            self.add_item(TempVoiceAllowSelect())
+            self.add_item(TempVoiceDenySelect())
+        # label/style ديال زر privacy كيتبدلو بصرياً حسب الحالة، custom_id ثابت باش persistent يبقى خدام
+        for item in self.children:
+            if getattr(item, "custom_id", None) == "temp_voice_privacy_toggle":
+                item.label = "🔓 خليها Public" if private else "🔒 خليها Private"
+                item.style = discord.ButtonStyle.success if private else discord.ButtonStyle.secondary
+
+    @discord.ui.button(label="🔒 خليها Private", style=discord.ButtonStyle.secondary,
+                       custom_id="temp_voice_privacy_toggle", row=0)
+    async def privacy_toggle(self, interaction: discord.Interaction, button: discord.ui.Button):
+        ch = await _temp_voice_require_owner(interaction)
+        if not ch:
+            return
+        rec = get_temp_voice_acl(ch)
+        new_private = not bool(rec.get("private"))
+        await interaction.response.defer(ephemeral=True)
+        ok, msg = await set_temp_voice_private(ch, new_private, actor=interaction.user)
+        await interaction.followup.send(msg, ephemeral=True)
+
+    @discord.ui.button(label="✅ سماح بـ ID", style=discord.ButtonStyle.success,
+                       custom_id="temp_voice_allow_id_button", row=1)
+    async def allow_id_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        ch = await _temp_voice_require_owner(interaction)
+        if not ch:
+            return
+        await interaction.response.send_modal(TempVoiceMemberIdModal(ch.id, "allow"))
+
+    @discord.ui.button(label="⛔ منع بـ ID", style=discord.ButtonStyle.danger,
+                       custom_id="temp_voice_deny_id_button", row=2)
+    async def deny_id_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        ch = await _temp_voice_require_owner(interaction)
+        if not ch:
+            return
+        await interaction.response.send_modal(TempVoiceMemberIdModal(ch.id, "deny"))
+
+    @discord.ui.button(label="🔄 تحديث البانل", style=discord.ButtonStyle.primary,
+                       custom_id="temp_voice_panel_refresh", row=0)
+    async def refresh_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        ch = await _temp_voice_require_owner(interaction)
+        if not ch:
+            return
+        await interaction.response.edit_message(
+            embed=build_temp_voice_control_embed(ch),
+            view=TempVoiceControlView(bool(get_temp_voice_acl(ch).get("private")))
+        )
+
+
+async def reconcile_temp_voice_rooms(guild: discord.Guild):
+    """Self-healing بعد restart: يمسح IDs الميتة، يضمن panel، ويرجع يطبق ACL على اللي داخلين."""
+    problems = temp_voice_permission_problems(guild)
+    if problems:
+        print("[TEMP-VOICE] ⚠️ " + " | ".join(problems))
+    else:
+        print("[TEMP-VOICE] ✅ permissions/hierarchy الأساسية باينة مزيانة")
+
+    stale = []
+    for cid, owner_id in list(temp_voice_channels.items()):
+        channel = bot.get_channel(int(cid))
+        if not channel or not isinstance(channel, discord.VoiceChannel):
+            stale.append(str(cid))
+            continue
+        if channel.guild.id != guild.id:
+            continue
+        rec = get_temp_voice_acl(channel)
+        await refresh_temp_voice_control_panel(channel, create_if_missing=True)
+
+        # إلا البوت دار restart وشي واحد ممنوع/غير مسموح كان داخل، نطبق الحماية مباشرة.
+        for m in list(channel.members):
+            if m.bot or m.id == get_temp_voice_owner_id(channel):
+                continue
+            if m.id in rec.get("denied", []):
+                await enforce_temp_voice_deny(m, channel)
+                continue
+            if rec.get("private") and m.id not in rec.get("allowed", []):
+                await enforce_temp_voice_private_access(m, channel)
+                continue
+            if m.id in rec.get("muted", []):
+                try:
+                    if not (m.voice and m.voice.mute):
+                        await m.edit(mute=True, reason="Temp room manual mute restore after restart")
+                except (discord.Forbidden, discord.HTTPException):
+                    pass
+    if stale:
+        for cid in stale:
+            temp_voice_channels.pop(cid, None)
+            temp_voice_acl.pop(cid, None)
+        save_temp_voice_channels()
+        save_temp_voice_acl()
 
 
 # ═══════════════════════════════════════════════════════
@@ -5477,9 +6235,35 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
     if member.bot:
         return
 
+    # ═══════ Temp Room ACL: Denied member دخل/تحرك لهاد الروم → خرجو فوراً + escalation ═══════
+    denied_entry_handled = False
+    private_entry_handled = False
+    if after.channel and (not before.channel or before.channel.id != after.channel.id) and is_temp_voice_channel(after.channel):
+        denied_entry_handled = await enforce_temp_voice_deny(member, after.channel)
+        if not denied_entry_handled:
+            private_entry_handled = await enforce_temp_voice_private_access(member, after.channel)
+        if not denied_entry_handled and not private_entry_handled:
+            rec = get_temp_voice_acl(after.channel, create=False)
+            if rec and member.id in rec.get("muted", []):
+                try:
+                    if not after.mute:
+                        await member.edit(mute=True, reason="Temp room manual mute persisted")
+                except (discord.Forbidden, discord.HTTPException):
+                    pass
+
+    # ملي يخرج من روم فيها Manual Mute، نفكو عليه باش الكتم مايتسربش لروم أخرى. إلا رجع، كيتطبق من جديد.
+    if before.channel and (not after.channel or before.channel.id != after.channel.id) and is_temp_voice_channel(before.channel):
+        before_rec = get_temp_voice_acl(before.channel, create=False)
+        if before_rec and member.id in before_rec.get("muted", []):
+            try:
+                if after.mute:
+                    await member.edit(mute=False, reason="خرج من temp room اللي كان مكتوم فيها")
+            except (discord.Forbidden, discord.HTTPException):
+                pass
+
     # ═══════ Room Mute Lock: دخل لروم مقفولة → يتكتم توا (بلا استثناء) | خرج منها → يتفك ═══════
     muted_channels = room_mute_db.get("muted_channels", [])
-    if muted_channels:
+    if muted_channels and not denied_entry_handled and not private_entry_handled:
         after_channel_id = after.channel.id if after.channel else None
         before_channel_id = before.channel.id if before.channel else None
 
@@ -5508,16 +6292,23 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
             category = creator_channel.category
 
         overwrites = {
+            # الروم كتبان للجميع من البداية. Privacy من بعد غادي تسد غير Connect وما غاديش تخبيها.
             guild.default_role: discord.PermissionOverwrite(view_channel=True, connect=True),
             member: discord.PermissionOverwrite(
-                view_channel=True, connect=True, manage_channels=True,
-                move_members=True, mute_members=True, deafen_members=True
+                view_channel=True, connect=True, speak=True, send_messages=True, read_message_history=True,
+                manage_channels=True, move_members=True, mute_members=True, deafen_members=True
             ),
         }
-        # ═══ رول Unverified ما يشوفش الروومات المؤقتة حتى يوافق على الشروط ═══
+        # البوت خاصو يبقى قادر يبعث/يحدّث البانل ويخرج Denied من الروم.
+        if guild.me:
+            overwrites[guild.me] = discord.PermissionOverwrite(
+                view_channel=True, connect=True, send_messages=True, read_message_history=True,
+                manage_channels=True, move_members=True
+            )
+        # Unverified حتى هو يشوف اسم الروم، ولكن ما يدخلش حتى يتفعل.
         unverified_role = guild.get_role(UNVERIFIED_ROLE_ID) if UNVERIFIED_ROLE_ID else None
         if unverified_role:
-            overwrites[unverified_role] = discord.PermissionOverwrite(view_channel=False, connect=False)
+            overwrites[unverified_role] = discord.PermissionOverwrite(view_channel=True, connect=False)
         try:
             new_channel = await guild.create_voice_channel(
                 name=TEMP_VC_NAME_TEMPLATE.format(name=member.display_name)[:100],
@@ -5528,7 +6319,13 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
             )
             temp_voice_channels[str(new_channel.id)] = member.id
             save_temp_voice_channels()
+            rec = get_temp_voice_acl(new_channel)
+            rec["owner_id"] = member.id
+            rec["created_at"] = int(new_channel.created_at.timestamp())
+            rec["private"] = False
+            save_temp_voice_acl()
             await member.move_to(new_channel, reason="Join to Create")
+            await send_temp_voice_control_panel(new_channel)
         except discord.Forbidden:
             print("[VOICE] ⚠️ ماعندش صلاحية Manage Channels باش نخلق الروومات المؤقتة.")
         except Exception as e:
@@ -5539,7 +6336,9 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
         left_channel = before.channel
         if len(left_channel.members) == 0:
             temp_voice_channels.pop(str(left_channel.id), None)
+            temp_voice_acl.pop(str(left_channel.id), None)
             save_temp_voice_channels()
+            save_temp_voice_acl()
             try:
                 await left_channel.delete(reason="روم مؤقت بقات فارغة")
             except (discord.NotFound, discord.Forbidden):
@@ -5557,6 +6356,7 @@ async def voicerename_cmd(ctx, *, new_name: str):
         return
     try:
         await channel.edit(name=new_name[:100], reason=f"Renamed by {ctx.author.display_name}")
+        await refresh_temp_voice_control_panel(channel, create_if_missing=True)
         await ctx.send(f"✅ تبدلات سمية الروم لـ **{new_name[:100]}**")
     except discord.HTTPException as e:
         await ctx.send(f"❌ ما قدرتش نبدل السمية: {e}", ephemeral=True)
@@ -5574,6 +6374,7 @@ async def voicelimit_cmd(ctx, limit: int):
     limit = max(0, min(limit, 99))
     try:
         await channel.edit(user_limit=limit, reason=f"Limit set by {ctx.author.display_name}")
+        await refresh_temp_voice_control_panel(channel, create_if_missing=True)
         await ctx.send(f"✅ الحد الأقصى دابا هو **{limit if limit else 'بلا حدود'}**")
     except discord.HTTPException as e:
         await ctx.send(f"❌ خطأ: {e}", ephemeral=True)
@@ -5588,11 +6389,8 @@ async def voicelock_cmd(ctx):
     if not is_temp_voice_owner(ctx.author, channel):
         await ctx.send("❌ هاد الروم ماشي ديالك.", ephemeral=True)
         return
-    try:
-        await channel.set_permissions(ctx.guild.default_role, connect=False)
-        await ctx.send("🔒 الروم مسدود دابا — حتى واحد جديد ما يقدر يدخل.")
-    except discord.HTTPException as e:
-        await ctx.send(f"❌ خطأ: {e}", ephemeral=True)
+    ok, msg = await set_temp_voice_private(channel, True, actor=ctx.author)
+    await ctx.send(msg, ephemeral=not ok)
 
 
 @bot.hybrid_command(name="voiceunlock", description="حل الروم الصوتي المؤقت ديالك")
@@ -5604,11 +6402,8 @@ async def voiceunlock_cmd(ctx):
     if not is_temp_voice_owner(ctx.author, channel):
         await ctx.send("❌ هاد الروم ماشي ديالك.", ephemeral=True)
         return
-    try:
-        await channel.set_permissions(ctx.guild.default_role, connect=True)
-        await ctx.send("🔓 الروم محلول دابا.")
-    except discord.HTTPException as e:
-        await ctx.send(f"❌ خطأ: {e}", ephemeral=True)
+    ok, msg = await set_temp_voice_private(channel, False, actor=ctx.author)
+    await ctx.send(msg, ephemeral=not ok)
 
 
 def is_afk_channel(channel: discord.VoiceChannel, guild: discord.Guild) -> bool:
@@ -9265,8 +10060,15 @@ async def on_ready():
     bot.add_view(ApplicationReviewView())  # باش أزرار قبول/رفض الطلبات يبقاو خدامين
     bot.add_view(SuggestionReviewView())   # باش أزرار قبول/رفض الاقتراحات يبقاو خدامين
     bot.add_view(RoomMuteToggleView())     # باش زر كتم/فك كتم الروم يبقى خدام حتى بعد ريستارت البوت
+    bot.add_view(TempVoiceControlView())    # Panel ديال كل روم مؤقتة: Private/Public + Allow/Deny
 
     for guild in bot.guilds:
+        # ═══ Self-healing ديال الرومات المؤقتة + panels بعد restart ═══
+        try:
+            await reconcile_temp_voice_rooms(guild)
+        except Exception as e:
+            print(f"[TEMP-VOICE] خطأ فـ reconcile: {e}")
+
         # ═══ Self-healing: صلاحيات رولات LEVEL_ROLES نفسها (5→100) مزبوطة تراكمياً ═══
         try:
             await sync_level_role_permissions(guild)
@@ -9341,6 +10143,17 @@ bot.gg = {
     "log_action": log_action,
     "is_exempt": is_exempt,
     "call_openrouter_chat": call_openrouter_chat,   # ← باش cogs/trivia.py يقدر يترجم أسئلة OpenTDB للدارجة
+    # Temp Voice bridge — cogs/temp_room_full_control.py كيستعمل نفس source of truth بلا DB ثانية
+    "temp_voice_channels": temp_voice_channels,
+    "temp_voice_acl": temp_voice_acl,
+    "is_temp_voice_channel": is_temp_voice_channel,
+    "is_temp_voice_owner": is_temp_voice_owner,
+    "get_temp_voice_acl": get_temp_voice_acl,
+    "temp_voice_allow_member": temp_voice_allow_member,
+    "temp_voice_deny_member": temp_voice_deny_member,
+    "temp_voice_set_manual_mute": temp_voice_set_manual_mute,
+    "set_temp_voice_private": set_temp_voice_private,
+    "refresh_temp_voice_control_panel": refresh_temp_voice_control_panel,
 }
 
 # باش تطفي الألعاب كاملة وترجع للبوت القديم: عمّرها خاوية →  GAMES_COGS = []
