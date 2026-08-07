@@ -9,6 +9,9 @@ from discord import app_commands
 import json
 import os
 
+# ملف الـ Join to Create ديال البوت الرئيسي (ai_bot) — هو المصدر الحقيقي لصاحب الروم
+EXTERNAL_TEMP_VOICE_PATH = "/app/data/temp_voice.json"
+
 class TempRoom(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -30,10 +33,28 @@ class TempRoom(commands.Cog):
             return False
         return "🎤" in channel.category.name or "temp" in channel.category.name.lower()
     
+    def get_external_owner_id(self, channel):
+        """كيقرا صاحب الروم من ملف الـ Join to Create ديال ai_bot (temp_voice.json)."""
+        try:
+            if os.path.exists(EXTERNAL_TEMP_VOICE_PATH):
+                with open(EXTERNAL_TEMP_VOICE_PATH, "r", encoding="utf-8") as f:
+                    external = json.load(f)
+                owner_id = external.get(str(channel.id))
+                return int(owner_id) if owner_id is not None else None
+        except Exception:
+            pass
+        return None
+    
     def is_owner(self, member, channel):
         cid = str(channel.id)
         if cid in self.data:
             return self.data[cid]["owner"] == member.id
+        
+        # ما كايناش مسجل عندنا؟ نشوفو عند ai_bot (Join to Create) — هو صاحب الحقيقة
+        external_owner_id = self.get_external_owner_id(channel)
+        if external_owner_id is not None:
+            return external_owner_id == member.id
+        
         return member.guild_permissions.manage_channels
     
     def register_owner(self, channel, owner):
@@ -203,7 +224,7 @@ class TempRoom(commands.Cog):
     
     @commands.Cog.listener()
     async def on_voice_state_update(self, member, before, after):
-        if after.channel and not before.channel:
+        if after.channel and after.channel != before.channel:
             ch = after.channel
             cid = str(ch.id)
             
