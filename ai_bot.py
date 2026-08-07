@@ -9359,9 +9359,9 @@ GAMES_COGS = [
     "cogs.game_scratch",
     "cogs.game_lottery",
     "cogs.gambling_panel",
-    "cogs.moderation",           # Cog ديال الموديريشن الأساسي
+    "cogs.moderation",
+    "cogs.temp_room_full_control",
 ]
-
 
 @bot.event
 async def setup_hook():
