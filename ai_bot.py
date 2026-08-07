@@ -443,6 +443,21 @@ AFK_CHANNEL_IDS = []              # ← (اختياري) زيد هنا IDs دي�
 AFK_XP_REQUIRE_MIN_HUMANS = False # ← False = XP ديال AFK كيتعطى حتى لو كان بوحدو (طبيعي، حيت الروم ديال AFK غالبا خاوية)
 AFK_XP_DAILY_CAP = 150            # ← سقف يومي لـ XP ديال AFK لكل عضو (0 = بلا سقف). كيمنع اللي كيخلي البيسي شعال 24/24 يفرمي
 
+# ═══════ نظام Auto-Move لـ AFK (ديفن متواصل لـ 60 دقيقة) ═══════
+# إلا شي حد بقى Deafen (سد السماعة، بيدو أو Server) لمدة متواصلة بلا ما يبدل الحالة،
+# البوت غادي يهزو أوتوماتيكيا ويحطو فـ روم AFK المحددة تحت.
+AUTO_AFK_MOVE_ENABLED = True
+AUTO_AFK_MOVE_CHANNEL_ID = 1525984685740785716   # ← الروم اللي غادي يتهزو ليها الأعضاء AFK
+AUTO_AFK_MOVE_MINUTES = 60                          # ← شحال ديال الدقايق ديال Deafen متواصل قبل ما يتهز أوتوماتيكيا
+
+# ═══════ نظام حماية الـ Owner (Owner Shield) ═══════
+# الأوامر ديال البوت (kick/ban/mute/warn) ديجا محميين — ما يقدروش يطبقو على OWNER_ID.
+# هاد النظام كيزيد حماية إضافية: كيراقب ديسكورد مباشرة (بواسطة Audit Log) وكيرجع
+# تلقائياً أي حاجة ديرها حد آخر فـ الـ Owner (Server Mute/Deafen، تحريك من روم لروم،
+# Timeout) — حتى ولو دارها بصلاحيات ديسكورد مباشرة بلا ما يمر من أوامر البوت.
+# (كيتطلب البوت يكون عندو صلاحية "View Audit Log" فالسيرفر باش يخدم مزيان.)
+OWNER_SHIELD_ENABLED = True
+
 # ⚠️ القيم اللي فوق (XP_MIN_PER_MESSAGE, XP_MAX_PER_MESSAGE, XP_COOLDOWN_SECONDS,
 # VOICE_XP_PER_INTERVAL, VOICE_XP_INTERVAL_MINUTES, VOICE_XP_MIN_HUMANS_IN_CHANNEL,
 # STREAM_XP_PER_INTERVAL) هي غير القيم الافتراضية عند أول تشغيل. من بعد، تقدر تبدلهم
@@ -5472,10 +5487,76 @@ async def roommutepanel_cmd(ctx, channel: Optional[discord.VoiceChannel] = None)
     )
 
 
+# ═══════════════════════════════════════════════════════
+# ║   Auto-Move AFK (ديفن متواصل) + حماية الـ Owner          ║
+# ═══════════════════════════════════════════════════════
+afk_deafen_since = {}  # {member_id: datetime} — بدا إيمتى الـ Deafen المتواصل ديال هاد العضو
+
+
+def _is_deafened(vs: Optional[discord.VoiceState]) -> bool:
+    return bool(vs and (vs.self_deaf or vs.deaf))
+
+
+async def _find_recent_audit_executor(guild: discord.Guild, target_id: int, actions: list, seconds: int = 10):
+    """كيقلب فـ Audit Log الأخير (آخر X ثانية) على شكون دار حدث فحق target_id.
+    كترجع discord.Member/User ديال المنفذ، ولا None إلا ما لقاتش والو أو ماعندهاش الصلاحية."""
+    try:
+        for action in actions:
+            async for entry in guild.audit_logs(action=action, limit=5):
+                if entry.target and getattr(entry.target, "id", None) == target_id:
+                    age = (discord.utils.utcnow() - entry.created_at).total_seconds()
+                    if age <= seconds:
+                        return entry.user
+        return None
+    except (discord.Forbidden, discord.HTTPException):
+        return None
+
+
 @bot.event
 async def on_voice_state_update(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
     if member.bot:
         return
+
+    # ═══════ 🛡️ Owner Shield: حد آخر دار Server Mute/Deafen ولا حرك الـ Owner من روم لروم ═══════
+    if OWNER_SHIELD_ENABLED and OWNER_ID and member.id == OWNER_ID:
+        # سكات/ديفن مفروض من حد آخر (ماشي self_mute/self_deaf ديال Owner نفسو)
+        if after.channel and (after.mute and not before.mute or after.deaf and not before.deaf):
+            executor = await _find_recent_audit_executor(
+                member.guild, member.id, [discord.AuditLogAction.member_update]
+            )
+            if executor and executor.id != member.id and executor.id != bot.user.id:
+                try:
+                    await member.edit(mute=False, deafen=False, reason="Owner Shield: رجعت تلقائياً")
+                    await log_action(
+                        member.guild, "🛡️ Owner Shield — تم الإرجاع",
+                        f"**{executor.mention}** حاول يسكت/يديفن الـ Owner، تم إرجاعها أوتوماتيكياً.",
+                        discord.Color.red()
+                    )
+                except (discord.Forbidden, discord.HTTPException):
+                    pass
+
+        # تحريك من روم لروم من طرف حد آخر
+        if before.channel and after.channel and before.channel.id != after.channel.id:
+            executor = await _find_recent_audit_executor(
+                member.guild, member.id, [discord.AuditLogAction.member_move]
+            )
+            if executor and executor.id != member.id and executor.id != bot.user.id:
+                try:
+                    await member.move_to(before.channel, reason="Owner Shield: رجعت تلقائياً")
+                    await log_action(
+                        member.guild, "🛡️ Owner Shield — تم الإرجاع",
+                        f"**{executor.mention}** حاول يحرك الـ Owner لـ {after.channel.mention}، تم إرجاعه لـ {before.channel.mention}.",
+                        discord.Color.red()
+                    )
+                except (discord.Forbidden, discord.HTTPException):
+                    pass
+
+    # ═══════ Auto-Move AFK: تتبع الـ Deafen المتواصل (لكاع الأعضاء) ═══════
+    if AUTO_AFK_MOVE_ENABLED and AUTO_AFK_MOVE_CHANNEL_ID:
+        if after.channel and _is_deafened(after) and after.channel.id != AUTO_AFK_MOVE_CHANNEL_ID:
+            afk_deafen_since.setdefault(member.id, datetime.now())
+        else:
+            afk_deafen_since.pop(member.id, None)
 
     # ═══════ Room Mute Lock: دخل لروم مقفولة → يتكتم توا (بلا استثناء) | خرج منها → يتفك ═══════
     muted_channels = room_mute_db.get("muted_channels", [])
@@ -5711,6 +5792,52 @@ async def before_voice_xp_loop():
 @voice_xp_loop.error
 async def voice_xp_loop_error(error):
     print(f"[VOICE-XP] خطأ كبير وقف الـ loop: {error}")
+
+
+@tasks.loop(minutes=1)
+async def afk_auto_move_loop():
+    """كل دقيقة كيتفقّد شكون بقى Deafen متواصل لـ AUTO_AFK_MOVE_MINUTES دقيقة، وكيهزو لروم الـ AFK."""
+    if not AUTO_AFK_MOVE_ENABLED or not AUTO_AFK_MOVE_CHANNEL_ID:
+        return
+
+    now = datetime.now()
+    for member_id, since in list(afk_deafen_since.items()):
+        if (now - since).total_seconds() < AUTO_AFK_MOVE_MINUTES * 60:
+            continue
+
+        moved = False
+        for guild in bot.guilds:
+            member = guild.get_member(member_id)
+            if not member or not member.voice or not member.voice.channel:
+                continue
+            vs = member.voice
+            if not (vs.self_deaf or vs.deaf):
+                continue
+            if vs.channel.id == AUTO_AFK_MOVE_CHANNEL_ID:
+                moved = True  # راه ديجا هناك، ماشي خاصنا نهزوه
+                continue
+
+            target = guild.get_channel(AUTO_AFK_MOVE_CHANNEL_ID)
+            if not target:
+                continue
+            try:
+                await member.move_to(target, reason=f"AFK (Deafen متواصل) لأكثر من {AUTO_AFK_MOVE_MINUTES} دقيقة")
+                moved = True
+            except (discord.Forbidden, discord.HTTPException):
+                pass
+
+        # كنحيدوه من التتبع فكل الحالات (تحرك، ولا ديجا هناك، ولا خرج من الفويس)
+        afk_deafen_since.pop(member_id, None)
+
+
+@afk_auto_move_loop.before_loop
+async def before_afk_auto_move_loop():
+    await bot.wait_until_ready()
+
+
+@afk_auto_move_loop.error
+async def afk_auto_move_loop_error(error):
+    print(f"[AFK-AUTO-MOVE] خطأ كبير وقف الـ loop: {error}")
 
 
 async def setup_levels_info_message(guild: discord.Guild):
@@ -6266,6 +6393,34 @@ async def on_member_join(member):
         f"**الدور:** {unverified_role.mention if unverified_role else 'N/A'}",
         discord.Color.orange()
     )
+
+
+@bot.event
+async def on_member_update(before: discord.Member, after: discord.Member):
+    # ═══════ 🛡️ Owner Shield: حد آخر دار Timeout فـ الـ Owner ═══════
+    if not (OWNER_SHIELD_ENABLED and OWNER_ID and after.id == OWNER_ID):
+        return
+
+    before_until = before.communication_disabled_until
+    after_until = after.communication_disabled_until
+    now = discord.utils.utcnow()
+    was_timed_out = bool(before_until and before_until > now)
+    is_timed_out = bool(after_until and after_until > now)
+
+    if is_timed_out and not was_timed_out:
+        executor = await _find_recent_audit_executor(
+            after.guild, after.id, [discord.AuditLogAction.member_update]
+        )
+        if executor and executor.id != after.id and executor.id != bot.user.id:
+            try:
+                await after.edit(timed_out_until=None, reason="Owner Shield: رجعت تلقائياً")
+                await log_action(
+                    after.guild, "🛡️ Owner Shield — تم الإرجاع",
+                    f"**{executor.mention}** حاول يدير Timeout فـ الـ Owner، تم إلغاؤه أوتوماتيكياً.",
+                    discord.Color.red()
+                )
+            except (discord.Forbidden, discord.HTTPException):
+                pass
 
 
 @bot.event
@@ -9319,6 +9474,9 @@ async def on_ready():
 
     if not voice_xp_loop.is_running():
         voice_xp_loop.start()
+
+    if AUTO_AFK_MOVE_ENABLED and not afk_auto_move_loop.is_running():
+        afk_auto_move_loop.start()
 
 
     bot.add_view(RulesVerifyView())  # باش الأزرار يبقاو خدامين حتى بعد ريستارت البوت
