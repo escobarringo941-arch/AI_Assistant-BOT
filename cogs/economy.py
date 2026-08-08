@@ -266,6 +266,8 @@ class Economy(commands.Cog):
             ),
             discord.Color.red(),
         )
+        # باش الاقتصاد العام يبان متحدث فوراً، ما نستناوش loop ديال الدقيقتين.
+        await self.refresh_economy_stats(guild)
         return splits
 
     async def route_shop_purchase(
@@ -310,6 +312,7 @@ class Economy(commands.Cog):
             ),
             discord.Color.gold(),
         )
+        await self.refresh_economy_stats(guild)
         return splits
 
     async def claim_global_jackpot(
