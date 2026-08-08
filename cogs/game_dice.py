@@ -256,7 +256,7 @@ async def run_roll(cog: Dice, interaction: discord.Interaction, user: discord.ab
 
     if won:
         payout = int(bet * multiplier)
-        granted = eco.add_coins(guild_id, user_id, payout, source="dice")
+        granted = eco.add_coins(guild_id, user_id, payout, source="dice", respect_cap=False)
         s["wins"] += 1
         s["won"] += granted
         s["biggest_win"] = max(s["biggest_win"], granted)
@@ -265,8 +265,6 @@ async def run_roll(cog: Dice, interaction: discord.Interaction, user: discord.ab
         color = discord.Color.green()
         title = "🎉 ربحتي!"
         desc_extra = f"\n💰 ربحتي **{granted:,}** {cfg.CURRENCY_EMOJI} (×{multiplier})"
-        if granted < payout:
-            desc_extra += f"\n⚠️ وصلتي قريب من السقف اليومي — كان خاصك تربح {payout:,}."
     else:
         s["losses"] += 1
         cog.db.save()
