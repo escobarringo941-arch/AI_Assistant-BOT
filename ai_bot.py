@@ -12167,6 +12167,249 @@ class OwnerVoiceSelectView(OwnerOnlyView):
         self.add_item(OwnerVoiceChannelSelect())
 
 
+
+class OwnerChannelMoveSelect(discord.ui.ChannelSelect):
+    """اختيار Channel باش نجربو Discord Channel Position API مباشرة."""
+
+    def __init__(self):
+        super().__init__(
+            placeholder="🧪 اختار Channel باش نجربو تحريكها",
+            channel_types=[
+                discord.ChannelType.text,
+                discord.ChannelType.news,
+                discord.ChannelType.voice,
+                discord.ChannelType.stage_voice,
+                discord.ChannelType.forum,
+            ],
+            min_values=1,
+            max_values=1,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        if not (OWNER_ID and interaction.user.id == OWNER_ID):
+            await interaction.response.send_message("❌ Owner فقط.", ephemeral=True)
+            return
+
+        selected = self.values[0]
+        channel = interaction.guild.get_channel(selected.id)
+        if not channel:
+            try:
+                fetched = await interaction.guild.fetch_channels()
+                channel = next((c for c in fetched if c.id == selected.id), None)
+            except (discord.Forbidden, discord.HTTPException):
+                channel = None
+
+        if not channel:
+            await interaction.response.edit_message(
+                content="❌ ما قدرتش نجيب هاد Channel من Discord API.",
+                embed=None,
+                view=None,
+            )
+            return
+
+        category_name = channel.category.name if getattr(channel, "category", None) else "بلا Category"
+        bot_member = interaction.guild.me
+        manage_channels = False
+        if bot_member:
+            try:
+                manage_channels = channel.permissions_for(bot_member).manage_channels
+            except Exception:
+                pass
+
+        embed = discord.Embed(
+            title="🧪 Channel Move API Test",
+            description=(
+                f"**Channel:** {channel.mention}\n"
+                f"**ID:** `{channel.id}`\n"
+                f"**Category:** `{category_name}`\n"
+                f"**Position الحالية:** `{getattr(channel, 'position', '?')}`\n"
+                f"**Bot Manage Channels هنا:** {'✅ نعم' if manage_channels else '❌ لا'}\n\n"
+                "جرّب تحركها **Position وحدة فقط**. "
+                "إذا API نجحات والموقع مازال ما كيجرّش، فالمشكل من Discord UI/Drag & Drop."
+            ),
+            color=discord.Color.blurple(),
+        )
+        await interaction.response.edit_message(
+            content=None,
+            embed=embed,
+            view=OwnerChannelMoveActionView(channel.id),
+        )
+
+
+class OwnerChannelMoveSelectView(OwnerOnlyView):
+    def __init__(self):
+        super().__init__(timeout=180)
+        self.add_item(OwnerChannelMoveSelect())
+
+
+class OwnerChannelMoveActionView(OwnerOnlyView):
+    def __init__(self, channel_id: int):
+        super().__init__(timeout=180)
+        self.channel_id = int(channel_id)
+
+    async def _run_test(self, interaction: discord.Interaction, delta: int):
+        if not (OWNER_ID and interaction.user.id == OWNER_ID):
+            await interaction.response.send_message("❌ Owner فقط.", ephemeral=True)
+            return
+
+        channel = interaction.guild.get_channel(self.channel_id)
+        if not channel:
+            await interaction.response.edit_message(
+                content="❌ Channel ما بقاتش موجودة.",
+                embed=None,
+                view=None,
+            )
+            return
+
+        old_position = int(getattr(channel, "position", 0) or 0)
+        wanted_position = max(0, old_position + int(delta))
+        direction = "⬆️ لفوق" if delta < 0 else "⬇️ لتحت"
+
+        if wanted_position == old_position:
+            await interaction.response.edit_message(
+                content=f"ℹ️ {channel.mention} راه أصلاً فـPosition `{old_position}` وما نقدرش نهبط الرقم أكثر.",
+                embed=None,
+                view=OwnerChannelMoveActionView(channel.id),
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        try:
+            # هادي كتضرب Discord Channel Position API مباشرة.
+            await channel.edit(
+                position=wanted_position,
+                reason=f"Owner Channel Move API Test by {interaction.user} ({interaction.user.id})",
+            )
+
+            # Fetch حقيقي من API باش ما نعتمدوش غير على cache.
+            fresh_channels = await interaction.guild.fetch_channels()
+            fresh = next((c for c in fresh_channels if c.id == channel.id), None)
+            new_position = (
+                int(getattr(fresh, "position", wanted_position) or wanted_position)
+                if fresh else wanted_position
+            )
+
+            embed = discord.Embed(
+                title="✅ CHANNEL MOVE API — SUCCESS",
+                description=(
+                    f"Discord API **قبلات الحركة**.\n\n"
+                    f"**Channel:** <#{channel.id}>\n"
+                    f"**الحركة:** {direction}\n"
+                    f"**Position قبل:** `{old_position}`\n"
+                    f"**Position من API دابا:** `{new_position}`\n\n"
+                    "➡️ **الاستنتاج:** Backend + صلاحية Manage Channels خدامين. "
+                    "إلا Drag & Drop اليدوي باقي كيتبلوكا، فالمشكل من واجهة Discord/Client ماشي من السيرفر."
+                ),
+                color=discord.Color.green(),
+            )
+
+            await log_action(
+                interaction.guild,
+                "🧪 Channel Move API Test — SUCCESS",
+                (
+                    f"**Channel:** <#{channel.id}> (`{channel.id}`)\n"
+                    f"**Position:** {old_position} → {new_position}\n"
+                    f"**Direction:** {direction}\n"
+                    f"**Owner:** {interaction.user.mention}"
+                ),
+                discord.Color.green(),
+            )
+
+            await interaction.edit_original_response(
+                content=None,
+                embed=embed,
+                view=OwnerChannelMoveActionView(channel.id),
+            )
+
+        except discord.Forbidden as e:
+            status = getattr(e, "status", 403)
+            code = getattr(e, "code", "N/A")
+            detail = str(e)[:1200]
+            embed = discord.Embed(
+                title="❌ CHANNEL MOVE API — FORBIDDEN",
+                description=(
+                    f"Discord API رفضات الحركة بصلاحيات.\n\n"
+                    f"**HTTP Status:** `{status}`\n"
+                    f"**Discord Code:** `{code}`\n"
+                    f"**Error:**\n```{detail}```\n"
+                    "➡️ هنا خاصنا نراجع صلاحيات البوت / Manage Channels / Discord backend."
+                ),
+                color=discord.Color.red(),
+            )
+            await interaction.edit_original_response(
+                content=None,
+                embed=embed,
+                view=OwnerChannelMoveActionView(channel.id),
+            )
+
+        except discord.HTTPException as e:
+            status = getattr(e, "status", "N/A")
+            code = getattr(e, "code", "N/A")
+            detail = getattr(e, "text", None) or str(e)
+            detail = str(detail)[:1200]
+            embed = discord.Embed(
+                title="⚠️ CHANNEL MOVE API — HTTP ERROR",
+                description=(
+                    f"Discord API رجعات Error حقيقي.\n\n"
+                    f"**HTTP Status:** `{status}`\n"
+                    f"**Discord Code:** `{code}`\n"
+                    f"**Response:**\n```{detail}```\n"
+                    "صور ليا هاد الرسالة ونحدد السبب مباشرة."
+                ),
+                color=discord.Color.orange(),
+            )
+            await interaction.edit_original_response(
+                content=None,
+                embed=embed,
+                view=OwnerChannelMoveActionView(channel.id),
+            )
+
+        except Exception as e:
+            detail = f"{type(e).__name__}: {e}"[:1200]
+            embed = discord.Embed(
+                title="❌ CHANNEL MOVE TEST — INTERNAL ERROR",
+                description=f"```{detail}```",
+                color=discord.Color.red(),
+            )
+            await interaction.edit_original_response(
+                content=None,
+                embed=embed,
+                view=OwnerChannelMoveActionView(channel.id),
+            )
+
+    @discord.ui.button(
+        label="Move Up 1",
+        emoji="⬆️",
+        style=discord.ButtonStyle.primary,
+        row=0,
+    )
+    async def move_up(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._run_test(interaction, -1)
+
+    @discord.ui.button(
+        label="Move Down 1",
+        emoji="⬇️",
+        style=discord.ButtonStyle.primary,
+        row=0,
+    )
+    async def move_down(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._run_test(interaction, 1)
+
+    @discord.ui.button(
+        label="اختار Channel أخرى",
+        emoji="🔁",
+        style=discord.ButtonStyle.secondary,
+        row=1,
+    )
+    async def choose_again(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            content="🧪 اختار Channel أخرى للاختبار:",
+            embed=None,
+            view=OwnerChannelMoveSelectView(),
+        )
+
+
 class OwnerControlCenterView(OwnerOnlyView):
     def __init__(self):
         super().__init__(timeout=None)
@@ -12266,6 +12509,18 @@ class OwnerControlCenterView(OwnerOnlyView):
         await interaction.response.send_message(
             "🔊 اختار Voice Channel باش نصاوب ليها Room Mute Panel فهاد الشانيل:",
             view=OwnerVoiceSelectView(),
+            ephemeral=True,
+        )
+
+    @discord.ui.button(
+        label="Test Channel Move", emoji="🧪", style=discord.ButtonStyle.danger,
+        custom_id="ggmw9:owner:channel_move_test", row=1
+    )
+    async def channel_move_test(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(
+            "🧪 اختار Channel عادية نجربو عليها الحركة عبر Discord API مباشرة.\n"
+            "⚠️ الاختبار كيحركها Position وحدة فقط.",
+            view=OwnerChannelMoveSelectView(),
             ephemeral=True,
         )
 
