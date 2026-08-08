@@ -129,12 +129,14 @@ MOD_LOGS_CHANNEL_ID = 1526470164235681832
 VERIFY_CHANNEL_ID = 1526481352264781854
 RULES_CHANNEL_ID = 1526474691789721700
 BLACKLIST_CHANNEL_ID = 1526858911477661786  # ← حط هنا ID ديال channel "Blacklist things"
-REPORTS_CHANNEL_ID = 1526884019105431562    # ← حط هنا ID ديال channel البلاغات (فين كتوصل البلاغات ديال /report)
+REPORTS_CHANNEL_ID = 1526884019105431562    # 🔒 backend staff reports — ماشي واجهة للأعضاء
 
-# ═══════ نظام Tickets (بدل/جنب /report — channels خاصة بكل مشكل) ═══════
-TICKETS_PANEL_CHANNEL_ID = 1532144216958959839   # ← channel فين غادي تبان رسالة "🎫 دير Ticket" بالزر
-TICKETS_CATEGORY_ID = 1532144108754440355        # ← ID ديال Category (فولدر) "Tickets" فين كيتخلقو الـ channels الخاصة
-TICKET_LOGS_CHANNEL_ID = 1532144316611428352     # ← channel فين كيتبعث ملخص/transcript الـ ticket ملي يتسد (إلا خليتها 0 غايستعمل MOD_LOGS_CHANNEL_ID)
+# ═══════ Support Center موحد قدام الأعضاء ═══════
+SUPPORT_CENTER_CHANNEL_ID = 1535652036324892763
+LEGACY_TICKETS_PANEL_CHANNEL_ID = 1532144216958959839  # غير باش نمسحو Panel القديمة ديال البوت
+TICKETS_PANEL_CHANNEL_ID = 0  # تعطلت الواجهة القديمة؛ Support Center هي الواجهة الوحيدة
+TICKETS_CATEGORY_ID = 1532144108754440355        # backend: فين كيتخلقو ticket channels الخاصة
+TICKET_LOGS_CHANNEL_ID = 1532144316611428352     # backend: transcripts/logs ديال tickets
 
 # ═══════ نظام Applications (طلبات الانضمام لفريق الإدارة/Staff) ═══════
 APPLICATIONS_PANEL_CHANNEL_ID = 1532910298585890927     # ← حط هنا ID ديال channel فين غادي تبان رسالة "📋 قدم طلب" بالزر
@@ -4027,7 +4029,7 @@ async def setup_blacklist_message(guild: discord.Guild):
 
         if REPORTS_CHANNEL_ID:
             embed_en.add_field(
-                name="🚨 How to report a violation (/report)",
+                name="🚨 How to report a violation",
                 value=(
                     "If you see a violation and the bot doesn't step in automatically, you have two options:\n\n"
                     "**1) Report a specific member:**\n"
@@ -4161,142 +4163,559 @@ class TicketControlView(discord.ui.View):
             print(f"[TICKETS] خطأ فـ حذف الـ channel: {e}")
 
 
-class TicketPanelView(discord.ui.View):
-    """زر واحد "🎫 دير Ticket" — كيخلق channel خاص للعضو ملي يضغط عليه.
-    Persistent (timeout=None) باش يبقى خدام حتى بعد ريستارت البوت."""
+
+# ═══════════════════════════════════════════════════════
+# ║   🆘 Unified Support Center — Reports + Tickets     ║
+# ═══════════════════════════════════════════════════════
+
+_support_report_cooldowns = {}
+
+
+def _support_report_cooldown_remaining(user_id: int, seconds: int = 60) -> int:
+    now = datetime.now().timestamp()
+    last = float(_support_report_cooldowns.get(int(user_id), 0) or 0)
+    remaining = int(seconds - (now - last))
+    return max(0, remaining)
+
+
+def _mark_support_report(user_id: int):
+    _support_report_cooldowns[int(user_id)] = datetime.now().timestamp()
+
+
+async def send_support_report(
+    guild: discord.Guild,
+    reporter: discord.Member,
+    *,
+    target: Optional[discord.Member] = None,
+    details: str,
+    context_link: str = "",
+) -> tuple:
+    """كيبعث Report للـStaff backend بلا حتى رسالة عامة."""
+    if not REPORTS_CHANNEL_ID:
+        return False, "❌ Reports backend ماشي مكوّن."
+
+    reports_channel = guild.get_channel(REPORTS_CHANNEL_ID) or bot.get_channel(REPORTS_CHANNEL_ID)
+    if not reports_channel:
+        return False, "❌ ما قدرتش نلقى Reports Channel ديال الإدارة."
+
+    remaining = _support_report_cooldown_remaining(reporter.id)
+    if remaining > 0:
+        return False, f"⏳ صبر **{remaining}ث** قبل ما تبعث بلاغ آخر."
+
+    details = (details or "").strip()
+    if not details:
+        return False, "❌ خاصك تشرح شنو وقع."
+
+    _mark_support_report(reporter.id)
+
+    embed = discord.Embed(
+        title="🚨 بلاغ جديد — Support Center",
+        color=discord.Color.orange(),
+        timestamp=datetime.now(),
+    )
+    embed.add_field(
+        name="👤 المبلّغ",
+        value=f"{reporter.mention} ({reporter})\nID: `{reporter.id}`",
+        inline=False,
+    )
+    if target:
+        embed.add_field(
+            name="🎯 العضو المبلَّغ عنه",
+            value=f"{target.mention} ({target})\nID: `{target.id}`",
+            inline=False,
+        )
+    else:
+        embed.add_field(name="⚠️ نوع البلاغ", value="بلاغ عام / بلا عضو محدد", inline=False)
+
+    embed.add_field(name="📝 التفاصيل", value=details[:1024], inline=False)
+
+    if context_link.strip():
+        embed.add_field(
+            name="🔗 Channel / Message Link",
+            value=context_link.strip()[:1000],
+            inline=False,
+        )
+
+    embed.add_field(
+        name="📍 من Support Center",
+        value=f"<#{SUPPORT_CENTER_CHANNEL_ID}>",
+        inline=False,
+    )
+    embed.set_footer(text="GGMW9 | Private Report System")
+
+    mention_roles = " ".join(f"<@&{rid}>" for rid in EXEMPT_ROLE_IDS)
+    try:
+        await reports_channel.send(
+            content=mention_roles or None,
+            embed=embed,
+            allowed_mentions=discord.AllowedMentions(roles=True, users=False, everyone=False),
+        )
+    except (discord.Forbidden, discord.HTTPException) as e:
+        return False, f"❌ ما قدرتش نوصل البلاغ للإدارة: {e}"
+
+    # Owner DM — نفس السلوك القديم
+    if OWNER_ID:
+        try:
+            owner = guild.get_member(OWNER_ID) or await bot.fetch_user(OWNER_ID)
+            if owner:
+                await owner.send(embed=embed)
+        except Exception:
+            pass
+
+    return True, "✅ توصل البلاغ للإدارة **بشكل خاص**. شكراً على التبليغ."
+
+
+async def create_support_ticket(
+    interaction: discord.Interaction,
+    *,
+    ticket_kind: str = "دعم عام",
+    initial_details: str = "",
+):
+    """Source of truth واحد لإنشاء Ticket من Support Center أو fallback القديم."""
+    member = interaction.user
+    guild = interaction.guild
+
+    if not guild or not isinstance(member, discord.Member):
+        if not interaction.response.is_done():
+            await interaction.response.send_message("❌ وقع مشكل، عاود من جديد.", ephemeral=True)
+        return
+
+    if not interaction.response.is_done():
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+    if not TICKETS_CATEGORY_ID:
+        await interaction.followup.send(
+            "❌ نظام Tickets ماشي مكوّن دابا. بلغ الإدارة.",
+            ephemeral=True,
+        )
+        return
+
+    category = guild.get_channel(TICKETS_CATEGORY_ID)
+    if not category or not isinstance(category, discord.CategoryChannel):
+        await interaction.followup.send(
+            "❌ ما لقيتش Category ديال Tickets. بلغ الإدارة.",
+            ephemeral=True,
+        )
+        return
+
+    existing_channel_id, _existing_record = get_open_ticket_for_user(member.id)
+    if existing_channel_id:
+        existing_channel = guild.get_channel(int(existing_channel_id))
+        if existing_channel:
+            await interaction.followup.send(
+                f"⚠️ عندك ديجا Ticket مفتوح: {existing_channel.mention}",
+                ephemeral=True,
+            )
+            return
+        else:
+            tickets_db.get("open", {}).pop(existing_channel_id, None)
+            save_tickets()
+
+    ticket_id = int(tickets_db.get("next_id", 1) or 1)
+    tickets_db["next_id"] = ticket_id + 1
+
+    overwrites = {
+        guild.default_role: discord.PermissionOverwrite(view_channel=False),
+        member: discord.PermissionOverwrite(
+            view_channel=True,
+            send_messages=True,
+            read_message_history=True,
+            attach_files=True,
+        ),
+        guild.me: discord.PermissionOverwrite(
+            view_channel=True,
+            send_messages=True,
+            manage_channels=True,
+            read_message_history=True,
+        ),
+    }
+    for rid in EXEMPT_ROLE_IDS:
+        role = guild.get_role(rid)
+        if role:
+            overwrites[role] = discord.PermissionOverwrite(
+                view_channel=True,
+                send_messages=True,
+                read_message_history=True,
+            )
+
+    safe_name = re.sub(
+        r"[^a-z0-9\-]",
+        "",
+        member.name.lower().replace(" ", "-"),
+    ) or "user"
+    channel_name = f"ticket-{ticket_id}-{safe_name}"[:90]
+
+    try:
+        new_channel = await guild.create_text_channel(
+            name=channel_name,
+            category=category,
+            overwrites=overwrites,
+            reason=f"Ticket #{ticket_id} ({ticket_kind}) فتحو {member}",
+        )
+    except discord.Forbidden:
+        await interaction.followup.send(
+            "❌ البوت خاصو **Manage Channels** باش يفتح Ticket.",
+            ephemeral=True,
+        )
+        return
+    except Exception as e:
+        await interaction.followup.send(
+            f"❌ خطأ فـخلق Ticket: {e}",
+            ephemeral=True,
+        )
+        return
+
+    tickets_db.setdefault("open", {})[str(new_channel.id)] = {
+        "id": ticket_id,
+        "opener_id": member.id,
+        "opened_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "claimed_by": None,
+        "kind": ticket_kind,
+        "source": "support_center",
+    }
+    save_tickets()
+
+    staff_mentions = " ".join(f"<@&{rid}>" for rid in EXEMPT_ROLE_IDS)
+    embed = discord.Embed(
+        title=f"🎫 Ticket #{ticket_id} — {ticket_kind}",
+        description=(
+            f"مرحبا {member.mention}! هادي محادثة خاصة بينك وبين الإدارة.\n\n"
+            "🙋 الإدارة تقدر تدير **Claim**.\n"
+            "🔒 ملي تسالي، نتا ولا الإدارة يقدرو يسدو Ticket، "
+            "والـTranscript كيمشي للـLogs."
+        ),
+        color=discord.Color.blurple(),
+        timestamp=datetime.now(),
+    )
+    if initial_details.strip():
+        embed.add_field(
+            name="📝 التفاصيل اللي عطيتينا",
+            value=initial_details.strip()[:1024],
+            inline=False,
+        )
+    embed.set_footer(text=f"{SERVER_NAME} | Ticket #{ticket_id}")
+
+    await new_channel.send(
+        content=f"{member.mention} {staff_mentions}".strip(),
+        embed=embed,
+        view=TicketControlView(),
+        allowed_mentions=discord.AllowedMentions(users=True, roles=True, everyone=False),
+    )
+    await interaction.followup.send(
+        f"✅ تحل Ticket ديالك: {new_channel.mention}",
+        ephemeral=True,
+    )
+
+
+class SupportReportMemberModal(discord.ui.Modal, title="🚨 بلغ على عضو"):
+    def __init__(self, target: discord.Member):
+        super().__init__()
+        self.target = target
+        self.details = discord.ui.TextInput(
+            label="شنو وقع؟",
+            placeholder="شرح المخالفة بالتفصيل...",
+            style=discord.TextStyle.paragraph,
+            required=True,
+            max_length=1000,
+        )
+        self.context_link = discord.ui.TextInput(
+            label="Link ديال الرسالة/القناة (اختياري)",
+            placeholder="Copy Message Link إلا كان متوفر",
+            required=False,
+            max_length=500,
+        )
+        self.add_item(self.details)
+        self.add_item(self.context_link)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        reporter = interaction.user
+        if not isinstance(reporter, discord.Member):
+            await interaction.response.send_message("❌ وقع مشكل.", ephemeral=True)
+            return
+
+        ok, msg = await send_support_report(
+            interaction.guild,
+            reporter,
+            target=self.target,
+            details=str(self.details.value),
+            context_link=str(self.context_link.value),
+        )
+        await interaction.response.send_message(msg, ephemeral=True)
+
+
+class SupportGeneralReportModal(discord.ui.Modal, title="⚠️ بلاغ عام"):
+    details = discord.ui.TextInput(
+        label="شرح البلاغ",
+        placeholder="شنو المشكل اللي بغيتي توصل للإدارة؟",
+        style=discord.TextStyle.paragraph,
+        required=True,
+        max_length=1000,
+    )
+    context_link = discord.ui.TextInput(
+        label="Link ديال الرسالة/القناة (اختياري)",
+        placeholder="Copy Message Link إلا كان متوفر",
+        required=False,
+        max_length=500,
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        reporter = interaction.user
+        if not isinstance(reporter, discord.Member):
+            await interaction.response.send_message("❌ وقع مشكل.", ephemeral=True)
+            return
+
+        ok, msg = await send_support_report(
+            interaction.guild,
+            reporter,
+            target=None,
+            details=str(self.details.value),
+            context_link=str(self.context_link.value),
+        )
+        await interaction.response.send_message(msg, ephemeral=True)
+
+
+class SupportHelpTicketModal(discord.ui.Modal, title="❓ طلب مساعدة"):
+    subject = discord.ui.TextInput(
+        label="الموضوع",
+        placeholder="مثال: عندي مشكل فالرول / الحساب / السيرفر",
+        required=True,
+        max_length=100,
+    )
+    details = discord.ui.TextInput(
+        label="شرح المشكل",
+        placeholder="شرح لينا باش الإدارة تلقى السياق ملي يتحل Ticket...",
+        style=discord.TextStyle.paragraph,
+        required=True,
+        max_length=1000,
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        kind = f"مساعدة — {str(self.subject.value).strip()[:60]}"
+        await create_support_ticket(
+            interaction,
+            ticket_kind=kind,
+            initial_details=str(self.details.value),
+        )
+
+
+class SupportReportMemberSelect(discord.ui.UserSelect):
+    def __init__(self):
+        super().__init__(
+            placeholder="👤 اختار العضو (كتب سميتو فالبحث إلا ما بانش)",
+            min_values=1,
+            max_values=1,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        selected = self.values[0]
+        member = interaction.guild.get_member(selected.id)
+        if not member:
+            try:
+                member = await interaction.guild.fetch_member(selected.id)
+            except Exception:
+                member = None
+
+        if not member:
+            await interaction.response.edit_message(
+                content="❌ ما قدرتش نجيب هاد العضو.",
+                view=None,
+            )
+            return
+
+        if member.bot:
+            await interaction.response.edit_message(
+                content="❌ اختار عضو بشري، ماشي Bot.",
+                view=None,
+            )
+            return
+
+        if member.id == interaction.user.id:
+            await interaction.response.edit_message(
+                content="❌ ما تقدرش تبلغ على راسك.",
+                view=None,
+            )
+            return
+
+        await interaction.response.send_modal(SupportReportMemberModal(member))
+
+
+class SupportReportMemberSelectView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=120)
+        self.add_item(SupportReportMemberSelect())
+
+
+class SupportCenterView(discord.ui.View):
+    """الواجهة العامة الوحيدة ديال Reports + Tickets."""
 
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="🎫 دير Ticket", style=discord.ButtonStyle.success, custom_id="open_ticket_button")
-    async def open_ticket_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        member = interaction.user
-        guild = interaction.guild
-        if not guild or not isinstance(member, discord.Member):
-            await interaction.response.send_message("❌ وقع مشكل، عاود من جديد.", ephemeral=True)
-            return
-
-        if not TICKETS_CATEGORY_ID:
-            await interaction.response.send_message(
-                "❌ نظام الـ Tickets ماعادش معطي (`TICKETS_CATEGORY_ID` فارغة)، بلغ الإدارة.",
-                ephemeral=True
-            )
-            return
-
-        category = guild.get_channel(TICKETS_CATEGORY_ID)
-        if not category or not isinstance(category, discord.CategoryChannel):
-            await interaction.response.send_message(
-                "❌ ما لقيتش Category ديال الـ Tickets، بلغ الإدارة (`TICKETS_CATEGORY_ID`).",
-                ephemeral=True
-            )
-            return
-
-        existing_channel_id, existing_record = get_open_ticket_for_user(member.id)
-        if existing_channel_id:
-            existing_channel = guild.get_channel(int(existing_channel_id))
-            if existing_channel:
-                await interaction.response.send_message(
-                    f"⚠️ عندك ديجا ticket مفتوح: {existing_channel.mention}",
-                    ephemeral=True
-                )
-                return
-            else:
-                # الـ channel تحذاف بطريقة أخرى، نمسحو من السجل ونكملو
-                del tickets_db["open"][existing_channel_id]
-                save_tickets()
-
-        await interaction.response.send_message("⏳ كنخلق الـ ticket ديالك...", ephemeral=True)
-
-        ticket_id = tickets_db.get("next_id", 1)
-        tickets_db["next_id"] = ticket_id + 1
-
-        overwrites = {
-            guild.default_role: discord.PermissionOverwrite(view_channel=False),
-            member: discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True, attach_files=True),
-            guild.me: discord.PermissionOverwrite(view_channel=True, send_messages=True, manage_channels=True),
-        }
-        for rid in EXEMPT_ROLE_IDS:
-            role = guild.get_role(rid)
-            if role:
-                overwrites[role] = discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True)
-
-        safe_name = re.sub(r"[^a-z0-9\-]", "", member.name.lower().replace(" ", "-")) or "user"
-        channel_name = f"ticket-{ticket_id}-{safe_name}"[:90]
-
-        try:
-            new_channel = await guild.create_text_channel(
-                name=channel_name,
-                category=category,
-                overwrites=overwrites,
-                reason=f"Ticket #{ticket_id} فتحو {member}"
-            )
-        except discord.Forbidden:
-            await interaction.followup.send("❌ ما عنديش الصلاحية باش نخلق channel (Manage Channels)، بلغ الإدارة.", ephemeral=True)
-            return
-        except Exception as e:
-            await interaction.followup.send(f"❌ خطأ فـ خلق الـ ticket: {e}", ephemeral=True)
-            return
-
-        tickets_db.setdefault("open", {})[str(new_channel.id)] = {
-            "id": ticket_id,
-            "opener_id": member.id,
-            "opened_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "claimed_by": None,
-        }
-        save_tickets()
-
-        staff_mentions = " ".join(f"<@&{rid}>" for rid in EXEMPT_ROLE_IDS)
-        embed = discord.Embed(
-            title=f"🎫 Ticket #{ticket_id}",
-            description=(
-                f"مرحبا {member.mention}! شرح المشكل ولا السؤال ديالك هنا بالتفصيل، "
-                f"وواحد من الإدارة غادي يجاوبك فأقرب وقت.\n\n"
-                f"🙋 الإدارة تقدر تدير **Claim** باش تعرفك شكون كيتكلف بيك.\n"
-                f"🔒 ملي تخلص المشكل، اضغط **سد الـ Ticket** (نتا ولا الإدارة)."
-            ),
-            color=discord.Color.blurple(),
-            timestamp=datetime.now()
+    @discord.ui.button(
+        label="بلغ على عضو",
+        emoji="🚨",
+        style=discord.ButtonStyle.danger,
+        custom_id="ggmw9:support:report_member",
+        row=0,
+    )
+    async def report_member(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(
+            "👤 اختار العضو اللي بغيتي تبلغ عليه.\n"
+            "💡 إلا ما بانش فاللائحة، كتب سميتو فـSearch.",
+            view=SupportReportMemberSelectView(),
+            ephemeral=True,
         )
-        embed.set_footer(text=f"{SERVER_NAME} | Ticket #{ticket_id}")
-        await new_channel.send(content=f"{member.mention} {staff_mentions}", embed=embed, view=TicketControlView())
 
-        await interaction.followup.send(f"✅ تحلق الـ ticket ديالك: {new_channel.mention}", ephemeral=True)
+    @discord.ui.button(
+        label="بلاغ عام",
+        emoji="⚠️",
+        style=discord.ButtonStyle.secondary,
+        custom_id="ggmw9:support:general_report",
+        row=0,
+    )
+    async def general_report(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(SupportGeneralReportModal())
+
+    @discord.ui.button(
+        label="فتح Ticket",
+        emoji="🎫",
+        style=discord.ButtonStyle.success,
+        custom_id="ggmw9:support:ticket",
+        row=0,
+    )
+    async def open_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await create_support_ticket(
+            interaction,
+            ticket_kind="دعم عام",
+        )
+
+    @discord.ui.button(
+        label="طلب مساعدة",
+        emoji="❓",
+        style=discord.ButtonStyle.primary,
+        custom_id="ggmw9:support:help",
+        row=0,
+    )
+    async def help_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(SupportHelpTicketModal())
 
 
-async def setup_tickets_panel(guild: discord.Guild):
-    if not TICKETS_PANEL_CHANNEL_ID:
+class TicketPanelView(discord.ui.View):
+    """Legacy compatibility فقط. الواجهة العامة الجديدة هي SupportCenterView."""
+
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="🎫 دير Ticket",
+        style=discord.ButtonStyle.success,
+        custom_id="open_ticket_button",
+    )
+    async def open_ticket_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await create_support_ticket(interaction, ticket_kind="دعم عام")
+
+
+async def cleanup_legacy_ticket_panel(guild: discord.Guild):
+    """كيمسح غير Panel القديمة ديال البوت، ما كيمسش channel ولا رسائل الناس."""
+    if not LEGACY_TICKETS_PANEL_CHANNEL_ID:
         return
-    channel = bot.get_channel(TICKETS_PANEL_CHANNEL_ID)
-    if not channel:
+    if LEGACY_TICKETS_PANEL_CHANNEL_ID == SUPPORT_CENTER_CHANNEL_ID:
         return
-    async for message in channel.history(limit=10):
-        if message.author == bot.user and message.components:
-            return
+
+    channel = guild.get_channel(LEGACY_TICKETS_PANEL_CHANNEL_ID)
+    if not isinstance(channel, discord.TextChannel):
+        return
+
+    try:
+        async for message in channel.history(limit=30):
+            if message.author != bot.user:
+                continue
+            title = ""
+            if message.embeds and message.embeds[0].title:
+                title = message.embeds[0].title
+            if "الدعم / Support" in title or "Ticket" in title:
+                try:
+                    await message.delete()
+                except (discord.Forbidden, discord.HTTPException):
+                    pass
+    except discord.Forbidden:
+        pass
+
+
+async def setup_support_center(guild: discord.Guild):
+    if not SUPPORT_CENTER_CHANNEL_ID:
+        return
+
+    channel = guild.get_channel(SUPPORT_CENTER_CHANNEL_ID)
+    if not isinstance(channel, discord.TextChannel):
+        print(f"[SUPPORT] ❌ Support Center channel {SUPPORT_CENTER_CHANNEL_ID} ما لقيتهاش.")
+        return
+
+    await cleanup_legacy_ticket_panel(guild)
+
+    existing = None
+    try:
+        async for message in channel.history(limit=30):
+            if (
+                message.author == bot.user
+                and message.embeds
+                and message.embeds[0].title
+                and "Support Center" in message.embeds[0].title
+            ):
+                existing = message
+                break
+    except discord.Forbidden:
+        return
+
     embed = discord.Embed(
-        title="🎫 الدعم / Support",
+        title="🆘 GGMW9 Support Center",
         description=(
-            "عندك مشكل، سؤال، ولا بغيتي تبلغ عن شي حاجة بطريقة خاصة؟\n"
-            "اضغط على الزر تحت وغادي يتحلق ليك channel خاص بيك وبالإدارة غير حتى."
+            "كلشي ديال الدعم والتبليغ مجموع هنا باش السيرفر يبقى منظم.\n\n"
+            "🚨 **بلغ على عضو** — مخالفة مرتبطة بشخص؛ كتختارو وكتشرح شنو وقع.\n"
+            "⚠️ **بلاغ عام** — مشكل ما مرتبطش بعضو محدد.\n"
+            "🎫 **فتح Ticket** — إلا خاصك محادثة خاصة مع الإدارة.\n"
+            "❓ **طلب مساعدة** — كتب الموضوع والمشكل، والبوت كيفتح Ticket بالتفاصيل.\n\n"
+            "🔒 **البلاغات ما كيبانوش للناس:** كيمشيو مباشرة لقناة الإدارة.\n"
+            "💬 **Tickets خاصة:** غير نتا والإدارة كتشوفوها.\n"
+            "📎 إلا عندك دليل، دير **Copy Message Link** وحطو فالبلاغ، "
+            "أو زيد الصور داخل Ticket."
         ),
         color=discord.Color.blurple(),
-        timestamp=datetime.now()
+        timestamp=datetime.now(),
     )
-    embed.set_footer(text=f"{SERVER_NAME} | Ticket System")
-    await channel.send(embed=embed, view=TicketPanelView())
+    embed.add_field(
+        name="💡 شنو نختار؟",
+        value=(
+            "**Report** للحالات اللي الإدارة تقدر تراجعها بلا نقاش طويل.\n"
+            "**Ticket** للأسئلة، المشاكل الخاصة، Appeals، أو الحالات اللي خاص فيها حوار."
+        ),
+        inline=False,
+    )
+    embed.set_footer(text=f"{SERVER_NAME} | Support • Reports • Tickets")
+
+    try:
+        if existing:
+            await existing.edit(embed=embed, view=SupportCenterView())
+        else:
+            await channel.send(embed=embed, view=SupportCenterView())
+    except (discord.Forbidden, discord.HTTPException) as e:
+        print(f"[SUPPORT] ❌ ما قدرتش نصاوب/نحدث Support Center: {e}")
 
 
-@bot.hybrid_command(name="setuptickets")
-@app_commands.default_permissions(administrator=True)
+# Compatibility wrapper — ما كيتستعملش كواجهة مستقلة.
+async def setup_tickets_panel(guild: discord.Guild):
+    await setup_support_center(guild)
+
+
+# Hidden fallback فقط؛ ما بقاش Slash Command.
+@bot.command(name="setuptickets", hidden=True)
 @owner_only()
 async def setuptickets_cmd(ctx):
-    """كيصاوب/يعاود يصاوب رسالة اللوحة ديال Tickets فـ TICKETS_PANEL_CHANNEL_ID (Admin)"""
-    if not TICKETS_PANEL_CHANNEL_ID:
-        await ctx.send("❌ حط `TICKETS_PANEL_CHANNEL_ID` فالـ CONFIG أولاً.", delete_after=8)
-        return
-    if not TICKETS_CATEGORY_ID:
-        await ctx.send("⚠️ `TICKETS_CATEGORY_ID` فارغة — الزر غايبان ولكن ما غاديش يخدم حتى تحطها.", delete_after=10)
-    await setup_tickets_panel(ctx.guild)
-    await ctx.send("✅ رسالة اللوحة ديال Tickets تصاوبات (ولا كانت ديجا موجودة).", delete_after=8)
+    await setup_support_center(ctx.guild)
+    try:
+        await ctx.author.send(f"✅ Support Center تحدثات فـ <#{SUPPORT_CENTER_CHANNEL_ID}>.")
+    except discord.HTTPException:
+        pass
 
 
 # ═══════════════════════════════════════════════════════
@@ -8244,61 +8663,45 @@ async def on_message(message):
 
 
 
-@bot.hybrid_command()
+@bot.command(name="report", hidden=True)
 @commands.cooldown(1, 60, commands.BucketType.user)
-async def report(ctx, member: Optional[discord.Member] = None, *, reason: str = "ماكاينش تفاصيل"):
-    """أي عضو يقدر يبلغ عن مخالفة (بحال البوت ما تدخلش أوتوماتيكياً)"""
+async def report(
+    ctx,
+    member: Optional[discord.Member] = None,
+    *,
+    reason: str = "ماكاينش تفاصيل",
+):
+    """Hidden prefix fallback. الواجهة الحقيقية هي #support-center."""
+    if not isinstance(ctx.author, discord.Member):
+        return
+
+    ok, msg = await send_support_report(
+        ctx.guild,
+        ctx.author,
+        target=member,
+        details=reason,
+        context_link="",
+    )
+    try:
+        await ctx.author.send(msg)
+    except discord.HTTPException:
+        pass
+
     try:
         await ctx.message.delete()
     except Exception:
         pass
 
-    if not REPORTS_CHANNEL_ID:
-        await ctx.send("❌ نظام البلاغات ماعادش مفعل، بلغ الإدارة تحط `REPORTS_CHANNEL_ID`.", delete_after=8)
-        return
-
-    reports_channel = bot.get_channel(REPORTS_CHANNEL_ID)
-    if not reports_channel:
-        await ctx.send("❌ ما قدرتش نلقى channel البلاغات.", delete_after=8)
-        return
-
-    embed = discord.Embed(
-        title="🚨 بلاغ جديد",
-        color=discord.Color.orange(),
-        timestamp=datetime.now()
-    )
-    embed.add_field(name="👤 المبلّغ", value=f"{ctx.author.mention} ({ctx.author.name})", inline=False)
-    if member:
-        embed.add_field(name="🎯 العضو المبلَّغ عنه", value=f"{member.mention} ({member.name})", inline=False)
-    embed.add_field(name="📝 السبب / التفاصيل", value=reason[:1000], inline=False)
-    embed.add_field(name="📍 القناة", value=ctx.channel.mention, inline=False)
-    embed.set_footer(text="GGMW9 | Report System")
-
-    # ═══════ منشن للمشرفين/الأدمن ═══════
-    mention_roles = " ".join(f"<@&{rid}>" for rid in EXEMPT_ROLE_IDS)
-    await reports_channel.send(content=mention_roles or None, embed=embed)
-
-    # ═══════ DM لصاحب السيرفر ═══════
-    try:
-        owner = ctx.guild.get_member(OWNER_ID) or await bot.fetch_user(OWNER_ID)
-        if owner:
-            await owner.send(embed=embed)
-    except Exception:
-        pass
-
-    await ctx.send(f"✅ توصل البلاغ ديالك للإدارة، شكراً {ctx.author.mention} 🙏", delete_after=8)
-
 
 @report.error
 async def report_error(ctx, error):
     if isinstance(error, commands.CommandOnCooldown):
-        await ctx.send(f"⏳ صبر شوية ({error.retry_after:.0f}s) قبل ما تبعت بلاغ آخر.", delete_after=5)
-    elif isinstance(error, commands.MemberNotFound):
-        # ممكن يكون ماكاينش mention، نديروه كـ بلاغ عام بلا عضو محدد
-        pass
-
-
-
+        try:
+            await ctx.author.send(
+                f"⏳ صبر شوية ({error.retry_after:.0f}ث) قبل بلاغ آخر."
+            )
+        except discord.HTTPException:
+            pass
 
 
 # ═══════════════════════════════════════════════════════
@@ -11110,7 +11513,7 @@ async def build_admin_list_embed(guild: discord.Guild) -> discord.Embed:
         title="👑 لائحة الإدارة",
         description=(
             "هادي لائحة الـ Owner والـ Admins والـ Moderators ديال السيرفر.\n"
-            "إلا بغيتي تدير report، دير tag لواحد من هادو حسب الحالة ديالك."
+            "إلا بغيتي تدير Report، استعمل <#1535652036324892763> مباشرة."
         ),
         color=discord.Color.gold(),
         timestamp=datetime.now()
@@ -11817,6 +12220,11 @@ class OwnerControlCenterView(OwnerOnlyView):
         except Exception as e:
             errors.append(f"XP: {e}")
 
+        try:
+            await setup_support_center(interaction.guild)
+        except Exception as e:
+            errors.append(f"Support: {e}")
+
         games_cog = bot.get_cog("GamesPanel")
         if games_cog:
             try:
@@ -11846,7 +12254,7 @@ class OwnerControlCenterView(OwnerOnlyView):
             )
         else:
             await interaction.followup.send(
-                "✅ Levels / Leaderboards / Games / Shop / Gambling / Bank كاملين تراجعو.",
+                "✅ Support / Levels / Leaderboards / Games / Shop / Gambling / Bank كاملين تراجعو.",
                 ephemeral=True,
             )
 
@@ -11878,6 +12286,9 @@ class OwnerControlCenterView(OwnerOnlyView):
             title="🧾 Owner — Logs & Security",
             description=(
                 f"🛡️ Mod Logs: <#{MOD_LOGS_CHANNEL_ID}>\n"
+                f"🚨 Reports: <#{REPORTS_CHANNEL_ID}>\n"
+                f"🎫 Ticket Logs: <#{TICKET_LOGS_CHANNEL_ID or MOD_LOGS_CHANNEL_ID}>\n"
+                f"🆘 Support Center: <#{SUPPORT_CENTER_CHANNEL_ID}>\n"
                 + (f"💰 Economy Logs: <#{eco_log_id}>\n" if eco_log_id else "")
                 + f"👑 Owner ID: `{OWNER_ID}`\n"
                 f"🔐 Owner Center: <#{OWNER_CONTROL_CHANNEL_ID}>"
@@ -11940,7 +12351,7 @@ async def on_ready():
     print(f"📊 Stats Channel: {STATS_CHANNEL_ID if STATS_CHANNEL_ID else 'ماشي معطي بعد'} (كل {STATS_UPDATE_MINUTES} د)")
     print(f"🏆 Leaderboard أوتوماتيكي: {LEADERBOARD_CHANNEL_ID if LEADERBOARD_CHANNEL_ID else 'ماشي معطي بعد'} (كل {LEADERBOARD_UPDATE_MINUTES} د)")
     print(f"👑 Administrators Channel: {ADMINISTRATORS_CHANNEL_ID if ADMINISTRATORS_CHANNEL_ID else 'ماشي معطي بعد'} (كل {ADMIN_LIST_UPDATE_MINUTES} د)")
-    print(f"🎫 Tickets: Panel={TICKETS_PANEL_CHANNEL_ID or 'ماشي معطي'} | Category={TICKETS_CATEGORY_ID or 'ماشي معطي'} | Logs={TICKET_LOGS_CHANNEL_ID or 'MOD_LOGS_CHANNEL_ID'}")
+    print(f"🆘 Support: Center={SUPPORT_CENTER_CHANNEL_ID or 'ماشي معطي'} | Reports={REPORTS_CHANNEL_ID or 'ماشي معطي'} | Tickets Category={TICKETS_CATEGORY_ID or 'ماشي معطي'} | Ticket Logs={TICKET_LOGS_CHANNEL_ID or 'MOD_LOGS_CHANNEL_ID'}")
     print(f"📋 Applications: Panel={APPLICATIONS_PANEL_CHANNEL_ID or 'ماشي معطي'} | Review={APPLICATIONS_REVIEW_CHANNEL_ID or 'MOD_LOGS_CHANNEL_ID'} | Cooldown={APPLICATIONS_COOLDOWN_HOURS}h")
     print(f"💡 Suggestions: Channel={SUGGESTIONS_CHANNEL_ID or 'ماشي معطي'}")
     print(f"🎂 Birthdays: Channel={BIRTHDAY_ANNOUNCE_CHANNEL_ID or 'ماشي معطي'} | Role={BIRTHDAY_ROLE_ID or 'بلا رول'} | Hour={BIRTHDAY_ANNOUNCE_HOUR}:00 UTC")
@@ -11986,8 +12397,8 @@ async def on_ready():
 
     bot.add_view(RulesVerifyView())  # باش الأزرار يبقاو خدامين حتى بعد ريستارت البوت
     bot.add_view(RolePickerView())   # باش الـ Dropdown ديال الأدوار يبقى خدام حتى بعد ريستارت البوت
-    bot.add_view(TicketPanelView())    # باش زر "دير Ticket" يبقى خدام حتى بعد ريستارت البوت
-    bot.add_view(TicketControlView())  # باش أزرار Claim/Close يبقاو خدامين فكاع الـ tickets المفتوحة
+    bot.add_view(TicketPanelView())    # Legacy compatibility إلا بقات شي رسالة قديمة قبل migration
+    bot.add_view(TicketControlView())  # Claim/Close ديال Tickets المفتوحة
     bot.add_view(ApplicationPanelView())   # باش زر "قدم طلب Staff" يبقى خدام حتى بعد ريستارت البوت
     bot.add_view(ApplicationReviewView())  # باش أزرار قبول/رفض الطلبات يبقاو خدامين
     bot.add_view(SuggestionReviewView())   # باش أزرار قبول/رفض الاقتراحات يبقاو خدامين
@@ -12029,8 +12440,8 @@ async def on_ready():
         await setup_rules_message(guild)
         if BLACKLIST_CHANNEL_ID:
             await setup_blacklist_message(guild)
-        if TICKETS_PANEL_CHANNEL_ID:
-            await setup_tickets_panel(guild)
+        if SUPPORT_CENTER_CHANNEL_ID:
+            await setup_support_center(guild)
         if APPLICATIONS_PANEL_CHANNEL_ID:
             await setup_applications_panel(guild)
         if LEVELS_INFO_CHANNEL_ID:
@@ -12134,6 +12545,7 @@ async def setup_hook():
     # Persistent public/private control centers.
     bot.add_view(LevelsInfoView())
     bot.add_view(OwnerControlCenterView())
+    bot.add_view(SupportCenterView())
 
     for ext in GAMES_COGS:
         try:
