@@ -12247,6 +12247,28 @@ class OwnerChannelMoveActionView(OwnerOnlyView):
         super().__init__(timeout=180)
         self.channel_id = int(channel_id)
 
+    @staticmethod
+    def _bucket(channel):
+        # Discord كيفصل Voice/Stage على Text-like فالتريب المرئي.
+        if isinstance(channel, (discord.VoiceChannel, discord.StageChannel)):
+            return "voice"
+        return "text"
+
+    def _ordered_siblings(self, guild: discord.Guild, channel):
+        """القنوات المجاورة الحقيقية فنفس Category ونفس sort bucket."""
+        cat_id = getattr(channel, "category_id", None)
+        bucket = self._bucket(channel)
+
+        siblings = [
+            c for c in guild.channels
+            if not isinstance(c, discord.CategoryChannel)
+            and getattr(c, "category_id", None) == cat_id
+            and self._bucket(c) == bucket
+        ]
+        # Discord: same position -> sorted by ID.
+        siblings.sort(key=lambda c: (int(getattr(c, "position", 0) or 0), int(c.id)))
+        return siblings
+
     async def _run_test(self, interaction: discord.Interaction, delta: int):
         if not (OWNER_ID and interaction.user.id == OWNER_ID):
             await interaction.response.send_message("❌ Owner فقط.", ephemeral=True)
@@ -12261,59 +12283,112 @@ class OwnerChannelMoveActionView(OwnerOnlyView):
             )
             return
 
-        old_position = int(getattr(channel, "position", 0) or 0)
-        wanted_position = max(0, old_position + int(delta))
+        siblings = self._ordered_siblings(interaction.guild, channel)
+        try:
+            old_index = next(i for i, c in enumerate(siblings) if c.id == channel.id)
+        except StopIteration:
+            await interaction.response.edit_message(
+                content="❌ ما قدرتش نحدد بلاصة Channel وسط Category.",
+                embed=None,
+                view=None,
+            )
+            return
+
+        target_index = old_index - 1 if delta < 0 else old_index + 1
         direction = "⬆️ لفوق" if delta < 0 else "⬇️ لتحت"
 
-        if wanted_position == old_position:
+        if target_index < 0 or target_index >= len(siblings):
             await interaction.response.edit_message(
-                content=f"ℹ️ {channel.mention} راه أصلاً فـPosition `{old_position}` وما نقدرش نهبط الرقم أكثر.",
+                content=f"ℹ️ {channel.mention} ما عندهاش Channel أخرى {direction} فنفس المجموعة.",
                 embed=None,
                 view=OwnerChannelMoveActionView(channel.id),
             )
             return
 
+        target = siblings[target_index]
+
         await interaction.response.defer(ephemeral=True, thinking=True)
 
         try:
-            # هادي كتضرب Discord Channel Position API مباشرة.
-            await channel.edit(
-                position=wanted_position,
-                reason=f"Owner Channel Move API Test by {interaction.user} ({interaction.user.id})",
-            )
+            # Relative move حقيقي، ماشي position integer خام.
+            if delta < 0:
+                await channel.move(
+                    before=target,
+                    reason=f"Owner Channel Move API Test V2 by {interaction.user} ({interaction.user.id})",
+                )
+            else:
+                await channel.move(
+                    after=target,
+                    reason=f"Owner Channel Move API Test V2 by {interaction.user} ({interaction.user.id})",
+                )
 
-            # Fetch حقيقي من API باش ما نعتمدوش غير على cache.
+            # Fetch حقيقي من Discord API من بعد الحركة.
             fresh_channels = await interaction.guild.fetch_channels()
-            fresh = next((c for c in fresh_channels if c.id == channel.id), None)
-            new_position = (
-                int(getattr(fresh, "position", wanted_position) or wanted_position)
-                if fresh else wanted_position
-            )
+            fresh_channel = next((c for c in fresh_channels if c.id == channel.id), None)
+
+            if fresh_channel:
+                fresh_siblings = [
+                    c for c in fresh_channels
+                    if not isinstance(c, discord.CategoryChannel)
+                    and getattr(c, "category_id", None) == getattr(fresh_channel, "category_id", None)
+                    and self._bucket(c) == self._bucket(fresh_channel)
+                ]
+                fresh_siblings.sort(
+                    key=lambda c: (int(getattr(c, "position", 0) or 0), int(c.id))
+                )
+                new_index = next(
+                    (i for i, c in enumerate(fresh_siblings) if c.id == channel.id),
+                    old_index,
+                )
+                new_position = int(getattr(fresh_channel, "position", 0) or 0)
+            else:
+                fresh_siblings = siblings
+                new_index = old_index
+                new_position = int(getattr(channel, "position", 0) or 0)
+
+            actually_moved = new_index != old_index
+
+            if actually_moved:
+                title = "✅ CHANNEL MOVE API V2 — MOVED"
+                color = discord.Color.green()
+                conclusion = (
+                    "✅ الترتيب تبدل فعلياً فالـDiscord backend. "
+                    "إلا PC Web ما كيبينوش ولا Drag كيتبلوكا، فالمشكل فالClient/UI."
+                )
+            else:
+                title = "⚠️ API ACCEPTED — ORDER DID NOT CHANGE"
+                color = discord.Color.orange()
+                conclusion = (
+                    "⚠️ Discord قبل الطلب ولكن الترتيب الفعلي ما تبدلش حتى بعد Fetch جديد. "
+                    "هاد النتيجة كتدل على state/order issue من Discord، ماشي غير Drag UI."
+                )
 
             embed = discord.Embed(
-                title="✅ CHANNEL MOVE API — SUCCESS",
+                title=title,
                 description=(
-                    f"Discord API **قبلات الحركة**.\n\n"
                     f"**Channel:** <#{channel.id}>\n"
-                    f"**الحركة:** {direction}\n"
-                    f"**Position قبل:** `{old_position}`\n"
-                    f"**Position من API دابا:** `{new_position}`\n\n"
-                    "➡️ **الاستنتاج:** Backend + صلاحية Manage Channels خدامين. "
-                    "إلا Drag & Drop اليدوي باقي كيتبلوكا، فالمشكل من واجهة Discord/Client ماشي من السيرفر."
+                    f"**Target neighbour:** <#{target.id}>\n"
+                    f"**الحركة:** {direction}\n\n"
+                    f"**Index قبل:** `{old_index}`\n"
+                    f"**Index من API دابا:** `{new_index}`\n"
+                    f"**Raw position دابا:** `{new_position}`\n\n"
+                    f"{conclusion}"
                 ),
-                color=discord.Color.green(),
+                color=color,
             )
 
             await log_action(
                 interaction.guild,
-                "🧪 Channel Move API Test — SUCCESS",
+                "🧪 Channel Move API Test V2",
                 (
                     f"**Channel:** <#{channel.id}> (`{channel.id}`)\n"
-                    f"**Position:** {old_position} → {new_position}\n"
+                    f"**Target:** <#{target.id}> (`{target.id}`)\n"
+                    f"**Index:** {old_index} → {new_index}\n"
                     f"**Direction:** {direction}\n"
+                    f"**Actually moved:** {actually_moved}\n"
                     f"**Owner:** {interaction.user.mention}"
                 ),
-                discord.Color.green(),
+                color,
             )
 
             await interaction.edit_original_response(
@@ -12327,13 +12402,11 @@ class OwnerChannelMoveActionView(OwnerOnlyView):
             code = getattr(e, "code", "N/A")
             detail = str(e)[:1200]
             embed = discord.Embed(
-                title="❌ CHANNEL MOVE API — FORBIDDEN",
+                title="❌ CHANNEL MOVE API V2 — FORBIDDEN",
                 description=(
-                    f"Discord API رفضات الحركة بصلاحيات.\n\n"
                     f"**HTTP Status:** `{status}`\n"
                     f"**Discord Code:** `{code}`\n"
-                    f"**Error:**\n```{detail}```\n"
-                    "➡️ هنا خاصنا نراجع صلاحيات البوت / Manage Channels / Discord backend."
+                    f"```{detail}```"
                 ),
                 color=discord.Color.red(),
             )
@@ -12347,15 +12420,12 @@ class OwnerChannelMoveActionView(OwnerOnlyView):
             status = getattr(e, "status", "N/A")
             code = getattr(e, "code", "N/A")
             detail = getattr(e, "text", None) or str(e)
-            detail = str(detail)[:1200]
             embed = discord.Embed(
-                title="⚠️ CHANNEL MOVE API — HTTP ERROR",
+                title="⚠️ CHANNEL MOVE API V2 — HTTP ERROR",
                 description=(
-                    f"Discord API رجعات Error حقيقي.\n\n"
                     f"**HTTP Status:** `{status}`\n"
                     f"**Discord Code:** `{code}`\n"
-                    f"**Response:**\n```{detail}```\n"
-                    "صور ليا هاد الرسالة ونحدد السبب مباشرة."
+                    f"```{str(detail)[:1200]}```"
                 ),
                 color=discord.Color.orange(),
             )
@@ -12366,10 +12436,9 @@ class OwnerChannelMoveActionView(OwnerOnlyView):
             )
 
         except Exception as e:
-            detail = f"{type(e).__name__}: {e}"[:1200]
             embed = discord.Embed(
-                title="❌ CHANNEL MOVE TEST — INTERNAL ERROR",
-                description=f"```{detail}```",
+                title="❌ CHANNEL MOVE TEST V2 — INTERNAL ERROR",
+                description=f"```{type(e).__name__}: {str(e)[:1000]}```",
                 color=discord.Color.red(),
             )
             await interaction.edit_original_response(
