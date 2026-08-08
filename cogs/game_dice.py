@@ -21,6 +21,8 @@ from discord import app_commands
 import random
 import asyncio
 
+RNG = random.SystemRandom()
+
 from storage import JsonStore
 import games_config as cfg
 
@@ -55,10 +57,10 @@ class Dice(commands.Cog):
 
     @commands.command(name="dice", aliases=["نرد"], hidden=True)
     @commands.cooldown(1, cfg.COOLDOWN_DICE, commands.BucketType.user)
-    async def dice_cmd(self, ctx: commands.Context, bet: int):
+    async def dice_cmd(self, ctx: commands.Context, bet: str):
         eco = self.economy()
         if not eco:
-            await ctx.send("❌ نظام الدراهم ماشي محمّل دابا.", ephemeral=True)
+            await ctx.send("❌ نظام الدولار ماشي محمّل دابا.", ephemeral=True)
             return
 
         if not self._check_gambling_channel(ctx):
@@ -67,28 +69,38 @@ class Dice(commands.Cog):
             await ctx.send(f"❌ هاد اللعبة كتخدم غير فـ {hint}.", ephemeral=True)
             return
 
+        bet = cfg.parse_money_input(bet)
+        if bet is None:
+            await ctx.send("❌ دخل Bet بالدولار بحال `5` أو `5.50`.", ephemeral=True)
+            return
+        from cogs.gambling_panel import effective_max_bet, can_start_casino_round
+        allowed, _, _ = can_start_casino_round(self.bot, ctx.guild.id, ctx.author.id)
+        if not allowed:
+            await ctx.send("⏳ وصلتي Session limit ديال Casino. جرب من بعد.", ephemeral=True)
+            return
+
         key = (ctx.guild.id, ctx.author.id)
         if key in self.active:
             await ctx.send("❌ عندك رهان خدّام ديجا — سالّيه أولاً.", ephemeral=True)
             return
 
-        if bet < cfg.DICE_MIN_BET or bet > cfg.DICE_MAX_BET:
+        max_allowed = effective_max_bet(self.bot, ctx.guild.id, ctx.author.id, "dice")
+        if bet < cfg.DICE_MIN_BET or bet > max_allowed:
             await ctx.send(
-                f"❌ الرهان خاصو يكون بين **{cfg.DICE_MIN_BET}** و **{cfg.DICE_MAX_BET}** "
-                f"{cfg.CURRENCY_EMOJI}.", ephemeral=True)
+                f"❌ Bet خاصو يكون بين **{cfg.fmt_money(cfg.DICE_MIN_BET)}** و **{cfg.fmt_money(max_allowed)}**.", ephemeral=True)
             return
 
         balance = eco.get_balance(ctx.guild.id, ctx.author.id)
         if balance < bet:
             await ctx.send(
-                f"❌ ماعندكش الفلوس الكافية — خاصك **{bet - balance:,}** {cfg.CURRENCY_EMOJI} زيادة.",
+                f"❌ ناقصك **{cfg.fmt_money(bet - balance)}** فالWallet.",
                 ephemeral=True)
             return
 
         view = RiskView(self, ctx.author, bet)
         embed = discord.Embed(
             title="🎲 النرد — اختار المخاطرة",
-            description=f"💰 الرهان: **{bet:,}** {cfg.CURRENCY_EMOJI}\n\nكل ما زادت المخاطرة، قلّت الفرصة وزاد المضاعف.",
+            description=f"💵 Bet: **{cfg.fmt_money(bet)}**\n\nFixed odds: كل ما زادت المخاطرة قلّت الفرصة وزاد Payout.",
             color=discord.Color.blurple(),
         )
         for key_name, lvl in DICE_RISK_LEVELS.items():
@@ -112,8 +124,8 @@ class Dice(commands.Cog):
         embed.add_field(name="🏆 فوز", value=f"**{s['wins']}**", inline=True)
         embed.add_field(name="💀 خسارة", value=f"**{s['losses']}**", inline=True)
         embed.add_field(name="📊 النسبة", value=f"**{rate:.1f}%**", inline=True)
-        embed.add_field(name="💰 أكبر ربح", value=f"**{s['biggest_win']:,}**", inline=True)
-        embed.add_field(name="📈 الصافي", value=f"**{net:+,}**", inline=True)
+        embed.add_field(name="💰 أكبر ربح", value=f"**{cfg.fmt_money(s['biggest_win'])}**", inline=True)
+        embed.add_field(name="📈 الصافي", value=f"**{cfg.fmt_money(net, signed=True)}**", inline=True)
         embed.set_thumbnail(url=target.display_avatar.url)
         return embed
 
@@ -129,7 +141,7 @@ class Dice(commands.Cog):
         if not ranked:
             return discord.Embed(
                 title="🎲 النرد — أكبر الرابحين",
-                description="📭 مازال حتى واحد ماراهن. دير `/dice`!",
+                description="📭 مازال حتى واحد ماراهن. دخل من **🎮・ARCADE → 🎰 Casino**!",
                 color=discord.Color.blurple(),
             )
 
@@ -140,7 +152,7 @@ class Dice(commands.Cog):
             name = m.display_name if m else f"عضو خارج ({uid})"
             net = d.get("won", 0) - d.get("wagered", 0)
             prefix = medals[i] if i < 3 else f"`#{i + 1}`"
-            lines.append(f"{prefix} **{name}** — 📈 {net:+,} {cfg.CURRENCY_EMOJI}")
+            lines.append(f"{prefix} **{name}** — 📈 {cfg.fmt_money(net, signed=True)}")
 
         return discord.Embed(
             title="🎲 النرد — أكبر الرابحين",
@@ -193,6 +205,14 @@ class RiskView(discord.ui.View):
                 return
 
             eco = self.cog.economy()
+            from cogs.gambling_panel import can_start_casino_round, effective_max_bet
+            allowed, _, _ = can_start_casino_round(self.cog.bot, interaction.guild.id, self.user.id)
+            if not allowed:
+                await interaction.response.send_message("⏳ Session limit وصل. جرب من بعد.", ephemeral=True)
+                return
+            if self.bet > effective_max_bet(self.cog.bot, interaction.guild.id, self.user.id, "dice"):
+                await interaction.response.send_message("❌ Bet ولات فوق bankroll limit ديالك.", ephemeral=True)
+                return
             # نخصمو الرهان دابا (بعد الضغط على الزر) باش نتجنبو رهانات مزدوجة
             key = (interaction.guild.id, self.user.id)
             if key in self.cog.active:
@@ -226,7 +246,7 @@ async def run_roll(cog: Dice, interaction: discord.Interaction, user: discord.ab
     # ═══ أنيميشن الرمي ═══
     roll_embed = discord.Embed(
         title="🎲 كيتقلب...",
-        description=f"{lvl['label']} — الرهان: **{bet:,}** {cfg.CURRENCY_EMOJI}",
+        description=f"{lvl['label']} — Bet: **{cfg.fmt_money(bet)}**",
         color=discord.Color.blurple(),
     )
     # نفس رسالة الـSession، بلا follow-up جديد.
@@ -244,7 +264,7 @@ async def run_roll(cog: Dice, interaction: discord.Interaction, user: discord.ab
             pass
         await asyncio.sleep(0.5)
 
-    result = random.randint(1, 20)
+    result = RNG.randint(1, 20)
     won = result >= threshold
 
     guild_id, user_id = interaction.guild.id, user.id
@@ -262,21 +282,23 @@ async def run_roll(cog: Dice, interaction: discord.Interaction, user: discord.ab
 
         color = discord.Color.green()
         title = "🎉 ربحتي!"
-        desc_extra = f"\n💰 ربحتي **{granted:,}** {cfg.CURRENCY_EMOJI} (×{multiplier})"
+        desc_extra = f"\n💰 Payout **{cfg.fmt_money(granted)}** (×{multiplier})"
     else:
         s["losses"] += 1
         cog.db.save()
         await eco.route_gambling_loss(interaction.guild, user, bet, "dice")
         color = discord.Color.red()
         title = "💀 خسرتي"
-        desc_extra = f"\n📉 خسرتي **{bet:,}** {cfg.CURRENCY_EMOJI}"
+        desc_extra = f"\n📉 Loss **{cfg.fmt_money(bet)}**"
 
+    from cogs.gambling_panel import record_casino_round
+    record_casino_round(cog.bot, guild_id, user_id, "dice", bet, granted if won else 0)
     new_balance = eco.get_balance(guild_id, user_id)
     final_embed = discord.Embed(
         title=title,
         description=(f"{lvl['label']} — العتبة **{threshold}+**\n"
                      f"🎲 طلع: **{result}**{desc_extra}\n\n"
-                     f"💳 الرصيد الجديد: **{new_balance:,}** {cfg.CURRENCY_EMOJI}"),
+                     f"💳 Wallet: **{cfg.fmt_money(new_balance)}**"),
         color=color,
     )
     cog.active.discard((guild_id, user_id))
@@ -290,40 +312,22 @@ async def run_roll(cog: Dice, interaction: discord.Interaction, user: discord.ab
 
 
 class ReplayView(discord.ui.View):
-    def __init__(self, cog: Dice, user: discord.abc.User, last_bet: int):
+    """Legacy replay compatibility; routes through the fair/session-aware casino hub."""
+    def __init__(self, cog, user: discord.abc.User, last_bet: int):
         super().__init__(timeout=120)
         self.cog = cog
         self.user = user
-        self.last_bet = last_bet
+        self.last_bet = int(last_bet)
 
-    @discord.ui.button(label="🔄 عاود رمي (نفس الرهان)", style=discord.ButtonStyle.success)
+    @discord.ui.button(label="🔄 عاود (نفس الرهان)", style=discord.ButtonStyle.success)
     async def replay(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.user.id:
             await interaction.response.send_message("❌ ماشي ديالك.", ephemeral=True)
             return
-
-        eco = self.cog.economy()
-        balance = eco.get_balance(interaction.guild.id, self.user.id)
-        if balance < self.last_bet:
-            await interaction.response.send_message(
-                f"❌ ماعندكش الفلوس الكافية للرهان ديال **{self.last_bet:,}** {cfg.CURRENCY_EMOJI}.",
-                ephemeral=True)
-            return
-
-        view = RiskView(self.cog, self.user, self.last_bet)
-        embed = discord.Embed(
-            title="🎲 النرد — اختار المخاطرة",
-            description=f"💰 الرهان: **{self.last_bet:,}** {cfg.CURRENCY_EMOJI}",
-            color=discord.Color.blurple(),
+        from cogs.gambling_panel import start_game_with_bet
+        await start_game_with_bet(
+            interaction, self.cog.bot, self.user, "dice", self.last_bet, retry_bet=self.last_bet
         )
-        for key_name, lvl in DICE_RISK_LEVELS.items():
-            chance = round((21 - lvl["threshold"]) / 20 * 100)
-            embed.add_field(
-                name=lvl["label"],
-                value=f"فرصة: **{chance}%**\nمضاعف: **×{lvl['multiplier']}**",
-                inline=True,
-            )
-        await interaction.response.edit_message(embed=embed, view=view)
 
 
 async def setup(bot: commands.Bot):
