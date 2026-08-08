@@ -117,7 +117,7 @@ class GamblingPanelView(discord.ui.View):
         remaining = eco.daily_remaining(interaction.guild.id, interaction.user.id)
         await interaction.response.send_message(
             f"{cfg.CURRENCY_EMOJI} عندك **{balance:,}** {eco.currency_word(balance)}\n"
-            f"📊 باقي ليك **{remaining}** من السقف اليومي",
+            f"📊 باقي ليك **{remaining}** من سقف المكافآت اليومية (ماشي أرباح الرهانات)",
             ephemeral=True,
         )
 
@@ -530,7 +530,8 @@ class GamblingPanel(commands.Cog):
                 f"🎰 Slots: **{cfg.SLOTS_MIN_BET}**-**{cfg.SLOTS_MAX_BET}**\n"
                 f"🎫 Scratch: **{cfg.SCRATCH_MIN_BET}**-**{cfg.SCRATCH_MAX_BET}**\n"
                 f"🎟️ Lottery: **{cfg.LOTTERY_MIN_BET}**-**{cfg.LOTTERY_MAX_BET}**\n"
-                f"📊 السقف اليومي ديال الربح: **{cfg.COINS_DAILY_CAP}** {cap_word}"
+                f"📊 سقف المكافآت اليومية: **{cfg.COINS_DAILY_CAP}** {cap_word}\n"
+                "🎰 **ربح الرهانات ماعندوش Daily Cap** — إلا ربحت، كتشد الـpayout كامل."
             ),
             inline=False,
         )
