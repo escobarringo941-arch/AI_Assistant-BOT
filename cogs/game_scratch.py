@@ -24,6 +24,8 @@ from discord import app_commands
 import random
 import asyncio
 
+RNG = random.SystemRandom()
+
 from storage import JsonStore
 import games_config as cfg
 
@@ -31,34 +33,45 @@ SCRATCH_DELAY = 0.35     # الوقت بين كشط خانة وخانة
 HIDDEN_CELL = "❔"
 
 
-def _fill_grid() -> list:
+def _fill_grid(winning_symbol=None) -> list:
+    """Construct a visual grid AFTER the fixed outcome draw. No accidental wins."""
     symbols = list(cfg.SCRATCH_SYMBOLS.keys())
-    weights = [cfg.SCRATCH_SYMBOLS[s]["weight"] for s in symbols]
-    return random.choices(symbols, weights=weights, k=cfg.SCRATCH_GRID_SIZE)
+    if winning_symbol:
+        fillers = [s for s in symbols if s != winning_symbol]
+        cells = [winning_symbol] * cfg.SCRATCH_MATCH_NEEDED
+        # Fill remaining cells with max 2 of any other symbol.
+        pool = []
+        for sym in fillers:
+            pool.extend([sym, sym])
+        RNG.shuffle(pool)
+        cells.extend(pool[: cfg.SCRATCH_GRID_SIZE - len(cells)])
+    else:
+        # 9 cells, every symbol max twice => mathematically impossible to reach a 3-match.
+        pool = []
+        for sym in symbols:
+            pool.extend([sym, sym])
+        RNG.shuffle(pool)
+        cells = pool[: cfg.SCRATCH_GRID_SIZE]
+    RNG.shuffle(cells)
+    return cells
 
 
 def _resolve(bet: int) -> dict:
-    """كيعمر الشبكة وكيحسب الربح. ماكيمسش الاقتصاد — غير كيحسب."""
-    grid = _fill_grid()
-
-    counts = {}
-    for s in grid:
-        counts[s] = counts.get(s, 0) + 1
-
-    qualifying = [s for s, c in counts.items() if c >= cfg.SCRATCH_MATCH_NEEDED]
-
-    if qualifying:
-        symbol = max(qualifying, key=lambda s: cfg.SCRATCH_SYMBOLS[s]["multiplier"])
-        multiplier = cfg.SCRATCH_SYMBOLS[symbol]["multiplier"]
-        win_type = "match"
-    else:
-        symbol = None
-        multiplier = 0
-        win_type = "none"
-
+    """Fixed transparent outcome table. Theoretical RTP is configured in games_config."""
+    outcomes = list(cfg.SCRATCH_OUTCOMES)
+    outcome = RNG.choices(outcomes, weights=[o["weight"] for o in outcomes], k=1)[0]
+    symbol = outcome.get("symbol")
+    multiplier = float(outcome.get("multiplier", 0) or 0)
+    grid = _fill_grid(symbol)
     payout = int(bet * multiplier) if multiplier else 0
-    return {"grid": grid, "symbol": symbol, "win_type": win_type,
-            "multiplier": multiplier, "payout": payout}
+    return {
+        "grid": grid,
+        "symbol": symbol,
+        "win_type": "match" if symbol else "none",
+        "multiplier": multiplier,
+        "payout": payout,
+        "label": outcome.get("label", ""),
+    }
 
 
 def _grid_text(cells: list) -> str:
@@ -96,10 +109,10 @@ class Scratch(commands.Cog):
     #   @app_commands.describe(bet="شحال بغيتي تراهن")
     @commands.command(name="scratch", aliases=["كشط"])
     @commands.cooldown(1, cfg.COOLDOWN_SCRATCH, commands.BucketType.user)
-    async def scratch_cmd(self, ctx: commands.Context, bet: int):
+    async def scratch_cmd(self, ctx: commands.Context, bet: str):
         eco = self.economy()
         if not eco:
-            await ctx.send("❌ نظام الدراهم ماشي محمّل دابا.", ephemeral=True)
+            await ctx.send("❌ نظام الدولار ماشي محمّل دابا.", ephemeral=True)
             return
 
         if not self._check_gambling_channel(ctx):
@@ -108,15 +121,24 @@ class Scratch(commands.Cog):
             await ctx.send(f"❌ هاد اللعبة كتخدم غير فـ {hint}.", ephemeral=True)
             return
 
+        bet = cfg.parse_money_input(bet)
+        if bet is None:
+            await ctx.send("❌ دخل Bet بالدولار بحال `5` أو `5.50`.", ephemeral=True)
+            return
+        from cogs.gambling_panel import effective_max_bet, can_start_casino_round
+        allowed, _, _ = can_start_casino_round(self.bot, ctx.guild.id, ctx.author.id)
+        if not allowed:
+            await ctx.send("⏳ وصلتي Session limit ديال Casino.", ephemeral=True)
+            return
+
         key = (ctx.guild.id, ctx.author.id)
         if key in self.active:
             await ctx.send("❌ عندك رهان خدّام ديجا — سالّيه أولاً.", ephemeral=True)
             return
 
-        if bet < cfg.SCRATCH_MIN_BET or bet > cfg.SCRATCH_MAX_BET:
-            await ctx.send(
-                f"❌ الرهان خاصو يكون بين **{cfg.SCRATCH_MIN_BET}** و "
-                f"**{cfg.SCRATCH_MAX_BET}** {cfg.CURRENCY_EMOJI}.", ephemeral=True)
+        max_allowed = effective_max_bet(self.bot, ctx.guild.id, ctx.author.id, "scratch")
+        if bet < cfg.SCRATCH_MIN_BET or bet > max_allowed:
+            await ctx.send(f"❌ Bet بين **{cfg.fmt_money(cfg.SCRATCH_MIN_BET)}** و **{cfg.fmt_money(max_allowed)}**.", ephemeral=True)
             return
 
         if not eco.spend(ctx.guild.id, ctx.author.id, bet):
@@ -139,9 +161,9 @@ class Scratch(commands.Cog):
         embed.add_field(name="🏆 فوز", value=f"**{s['wins']}**", inline=True)
         embed.add_field(name="💀 خسارة", value=f"**{s['losses']}**", inline=True)
         embed.add_field(name="📊 النسبة", value=f"**{rate:.1f}%**", inline=True)
-        embed.add_field(name="💰 أكبر ربح", value=f"**{s['biggest_win']:,}**", inline=True)
+        embed.add_field(name="💰 أكبر ربح", value=f"**{cfg.fmt_money(s['biggest_win'])}**", inline=True)
         embed.add_field(name="💰 جاكبوتات", value=f"**{s.get('jackpots', 0)}**", inline=True)
-        embed.add_field(name="📈 الصافي", value=f"**{net:+,}**", inline=True)
+        embed.add_field(name="📈 الصافي", value=f"**{cfg.fmt_money(net, signed=True)}**", inline=True)
         embed.set_thumbnail(url=target.display_avatar.url)
         return embed
 
@@ -157,7 +179,7 @@ class Scratch(commands.Cog):
         if not ranked:
             return discord.Embed(
                 title="🎫 Scratch Card — أكبر الرابحين",
-                description="📭 مازال حتى واحد ماكشط. دير `!scratch`!",
+                description="📭 مازال حتى واحد ماكشط. دخل من **🎮・ARCADE → 🎰 Casino**!",
                 color=discord.Color.blurple(),
             )
 
@@ -168,7 +190,7 @@ class Scratch(commands.Cog):
             name = m.display_name if m else f"عضو خارج ({uid})"
             net = d.get("won", 0) - d.get("wagered", 0)
             prefix = medals[i] if i < 3 else f"`#{i + 1}`"
-            lines.append(f"{prefix} **{name}** — 📈 {net:+,} {cfg.CURRENCY_EMOJI}")
+            lines.append(f"{prefix} **{name}** — 📈 {cfg.fmt_money(net, signed=True)}")
 
         return discord.Embed(
             title="🎫 Scratch Card — أكبر الرابحين",
@@ -182,7 +204,7 @@ class Scratch(commands.Cog):
 def _card_embed(bet: int) -> discord.Embed:
     embed = discord.Embed(
         title="🎫 كتكشط...",
-        description=f"الرهان: **{bet:,}** {cfg.CURRENCY_EMOJI}",
+        description=f"Bet: **{cfg.fmt_money(bet)}**",
         color=discord.Color.blurple(),
     )
     hidden = [HIDDEN_CELL] * cfg.SCRATCH_GRID_SIZE
@@ -200,7 +222,7 @@ async def _play_out(cog: Scratch, msg: discord.Message, guild_id: int,
     # ═══ أنيميشن الكشط — خانة بخانة ═══
     revealed = [HIDDEN_CELL] * cfg.SCRATCH_GRID_SIZE
     order = list(range(cfg.SCRATCH_GRID_SIZE))
-    random.shuffle(order)  # ترتيب الكشط عشوائي باش يبان طبيعي
+    RNG.shuffle(order)  # fair OS-backed shuffle
 
     for idx in order:
         revealed[idx] = grid[idx]
@@ -229,13 +251,16 @@ async def _play_out(cog: Scratch, msg: discord.Message, guild_id: int,
             guild = cog.bot.get_guild(guild_id)
             if guild:
                 jackpot_bonus = await eco.claim_global_jackpot(guild, user, "scratch")
+                if jackpot_bonus:
+                    s["won"] += jackpot_bonus
+                    s["biggest_win"] = max(s["biggest_win"], granted + jackpot_bonus)
         cog.db.save()
 
         color = discord.Color.green()
         title = "🎉 جاكبوت!" if result["symbol"] == "💰" else "🎉 3 متطابقين!"
-        desc_extra = f"\n💰 ربحتي **{granted:,}** {cfg.CURRENCY_EMOJI} (×{result['multiplier']})"
+        desc_extra = f"\n💰 Payout **{cfg.fmt_money(granted)}** (×{result['multiplier']})"
         if jackpot_bonus:
-            desc_extra += f"\n🏆 **Global Jackpot:** +**{jackpot_bonus:,}** {cfg.CURRENCY_EMOJI}"
+            desc_extra += f"\n🏆 **Global Jackpot:** +**{cfg.fmt_money(jackpot_bonus)}**"
     else:
         s["losses"] += 1
         cog.db.save()
@@ -244,13 +269,16 @@ async def _play_out(cog: Scratch, msg: discord.Message, guild_id: int,
             await eco.route_gambling_loss(guild, user, bet, "scratch")
         color = discord.Color.red()
         title = "💀 خسرتي"
-        desc_extra = f"\n📉 خسرتي **{bet:,}** {cfg.CURRENCY_EMOJI}"
+        desc_extra = f"\n📉 Loss **{cfg.fmt_money(bet)}**"
 
+    from cogs.gambling_panel import record_casino_round
+    round_payout = (granted + jackpot_bonus) if result["win_type"] != "none" else 0
+    record_casino_round(cog.bot, guild_id, user_id, "scratch", bet, round_payout)
     new_balance = eco.get_balance(guild_id, user_id)
     final_embed = discord.Embed(
         title=title,
         description=(f"🎫 **الكرت مكشوط**{desc_extra}\n\n"
-                     f"💳 الرصيد الجديد: **{new_balance:,}** {cfg.CURRENCY_EMOJI}"),
+                     f"💳 Wallet: **{cfg.fmt_money(new_balance)}**"),
         color=color,
     )
     final_embed.add_field(name="النتيجة", value=grid_display, inline=False)
@@ -268,33 +296,22 @@ async def _play_out(cog: Scratch, msg: discord.Message, guild_id: int,
 
 
 class ReplayView(discord.ui.View):
-    def __init__(self, cog: Scratch, user: discord.abc.User, last_bet: int):
+    """Legacy replay compatibility; routes through the fair/session-aware casino hub."""
+    def __init__(self, cog, user: discord.abc.User, last_bet: int):
         super().__init__(timeout=120)
         self.cog = cog
         self.user = user
-        self.last_bet = last_bet
+        self.last_bet = int(last_bet)
 
     @discord.ui.button(label="🔄 عاود (نفس الرهان)", style=discord.ButtonStyle.success)
     async def replay(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.user.id:
             await interaction.response.send_message("❌ ماشي ديالك.", ephemeral=True)
             return
-
-        eco = self.cog.economy()
-        key = (interaction.guild.id, self.user.id)
-        if key in self.cog.active:
-            await interaction.response.send_message("❌ عندك رهان خدّام ديجا.", ephemeral=True)
-            return
-        if not eco.spend(interaction.guild.id, self.user.id, self.last_bet):
-            await interaction.response.send_message(
-                f"❌ ماعندكش الفلوس الكافية للرهان ديال **{self.last_bet:,}** {cfg.CURRENCY_EMOJI}.",
-                ephemeral=True)
-            return
-
-        self.cog.active.add(key)
-        await interaction.response.edit_message(embed=_card_embed(self.last_bet), view=None)
-        msg = await interaction.original_response()
-        await _play_out(self.cog, msg, interaction.guild.id, self.user, self.last_bet)
+        from cogs.gambling_panel import start_game_with_bet
+        await start_game_with_bet(
+            interaction, self.cog.bot, self.user, "scratch", self.last_bet, retry_bet=self.last_bet
+        )
 
 
 async def setup(bot: commands.Bot):
