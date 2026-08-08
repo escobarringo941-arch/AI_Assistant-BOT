@@ -227,6 +227,7 @@ async def run_flip(cog: Coinflip, interaction: discord.Interaction, user: discor
     else:
         s["losses"] += 1
         cog.db.save()
+        await eco.route_gambling_loss(interaction.guild, user, bet, "coinflip")
         color = discord.Color.red()
         title = "💀 خسرتي"
         desc_extra = f"\n📉 خسرتي **{bet:,}** {cfg.CURRENCY_EMOJI}"
