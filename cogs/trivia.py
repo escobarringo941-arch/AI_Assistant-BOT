@@ -912,20 +912,17 @@ class Trivia(commands.Cog):
     async def setup_trivia_panel(self, guild: discord.Guild,
                                  channel: Optional[discord.abc.Messageable] = None,
                                  force: bool = False):
-        """كيبعث رسالة الشرح + زر البداية فـ channel اللعبة.
-        إلا ماعطيتيش channel، كيستعمل TRIVIA_CHANNEL_ID."""
+        """Refresh the official Trivia panel in-place; create it only if missing.
+
+        ``force`` is kept for compatibility with the Owner refresh button, but it
+        never means "send a duplicate" anymore.
+        """
         if channel is None:
             if not TRIVIA_CHANNEL_ID:
                 return False
             channel = self.bot.get_channel(TRIVIA_CHANNEL_ID)
         if not channel:
             return False
-
-        if not force:
-            async for message in channel.history(limit=15):
-                if message.author == self.bot.user and message.embeds and message.embeds[0].title \
-                        and "Trivia" in message.embeds[0].title:
-                    return True
 
         embed = discord.Embed(
             title="🧠 مرحبا بيك فـ لعبة Trivia",
@@ -941,16 +938,14 @@ class Trivia(commands.Cog):
                 f"2️⃣ اختار المجال لي بغيتي (من {len(TRIVIA_CATEGORIES)} مجالات)\n"
                 f"3️⃣ جاوب على الأسئلة — عندك {TRIVIA_ANSWER_SECONDS} ثانية لكل سؤال\n"
                 "4️⃣ كل ما جاوبتي صحيح، الأسئلة كتزاد صعوبة والـReward بالدولار كيزيد — حتى تغلط ولا يخلص الوقت!"
-            ),
-            inline=False
+            ), inline=False
         )
         embed.add_field(
             name="🇲🇦 كلشي بالدارجة",
             value=(
                 f"كاع الأسئلة والأجوبة مكتوبين بالدارجة المغربية من الأصل ({count_bank_questions()} سؤال) — "
                 "بلا ترجمة، بلا انتظار، وكيبانو ليك فالحين ملي تختار المجال."
-            ),
-            inline=False
+            ), inline=False
         )
         embed.add_field(
             name="💵 Rewards بالدولار",
@@ -959,15 +954,36 @@ class Trivia(commands.Cog):
                 f"🟡 متوسط: **{fmt_money(get_trivia_coins('medium'))}**\n"
                 f"🔴 صعيب: **{fmt_money(get_trivia_coins('hard'))}**\n"
                 f"(غلطة وحدة كتوقف السلسلة — Daily Mini Games cap هو {fmt_money(COINS_DAILY_CAP)})"
-            ),
-            inline=False
+            ), inline=False
         )
         embed.set_footer(text=f"{guild.name} | Trivia Game")
+
+        matches = []
         try:
-            await channel.send(embed=embed, view=TriviaGamePanelView(self))
+            async for message in channel.history(limit=40):
+                if (
+                    message.author == self.bot.user
+                    and message.embeds
+                    and "Trivia" in (message.embeds[0].title or "")
+                ):
+                    matches.append(message)
+        except discord.Forbidden:
+            return False
+
+        try:
+            if matches:
+                keep = matches[0]
+                await keep.edit(embed=embed, view=TriviaGamePanelView(self))
+                for extra in matches[1:]:
+                    try:
+                        await extra.delete()
+                    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                        pass
+            else:
+                await channel.send(embed=embed, view=TriviaGamePanelView(self))
             return True
         except discord.HTTPException as e:
-            print(f"[TRIVIA] ما قدرتش نبعث panel: {e}")
+            print(f"[TRIVIA] ما قدرتش نحدّث panel: {e}")
             return False
 
     # ═══════════════════════════════════════════════════
