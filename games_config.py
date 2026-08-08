@@ -61,17 +61,22 @@ LOAN_AUTO_COLLECT_MINUTES = 15
 # ═══════ XP / Level → Bank Privileges ═══════
 # Level أعلى = قرض أساسي أكبر + فائدة أقل + مدة أداء أطول.
 LOAN_XP_TIERS = [
-    {"min_level": 0,   "max_level": 9,   "name": "🌱 Rookie",       "base_limit": 300,  "interest": 15, "term_days": 2},
-    {"min_level": 10,  "max_level": 19,  "name": "🥉 Bronze",       "base_limit": 500,  "interest": 14, "term_days": 2},
-    {"min_level": 20,  "max_level": 29,  "name": "🥈 Silver I",     "base_limit": 800,  "interest": 13, "term_days": 3},
-    {"min_level": 30,  "max_level": 39,  "name": "🥈 Silver II",    "base_limit": 1200, "interest": 12, "term_days": 3},
-    {"min_level": 40,  "max_level": 49,  "name": "🥇 Gold I",       "base_limit": 1600, "interest": 11, "term_days": 3},
-    {"min_level": 50,  "max_level": 59,  "name": "🥇 Gold II",      "base_limit": 2200, "interest": 10, "term_days": 4},
-    {"min_level": 60,  "max_level": 69,  "name": "💎 Diamond I",    "base_limit": 3000, "interest": 9,  "term_days": 4},
-    {"min_level": 70,  "max_level": 79,  "name": "💎 Diamond II",   "base_limit": 4000, "interest": 8,  "term_days": 5},
-    {"min_level": 80,  "max_level": 89,  "name": "👑 Elite I",      "base_limit": 5500, "interest": 7,  "term_days": 5},
-    {"min_level": 90,  "max_level": 99,  "name": "👑 Elite II",     "base_limit": 7000, "interest": 6,  "term_days": 6},
-    {"min_level": 100, "max_level": 999, "name": "🔱 Legend",       "base_limit": 9000, "interest": 5,  "term_days": 7},
+    {"min_level": 0,   "max_level": 4,   "name": "👤 Member",       "base_limit": 200,  "interest": 16, "term_days": 2},
+    {"min_level": 5,   "max_level": 9,   "name": "🌱 Starter",      "base_limit": 300,  "interest": 15, "term_days": 2},
+    {"min_level": 10,  "max_level": 14,  "name": "🥉 Bronze I",     "base_limit": 450,  "interest": 14, "term_days": 2},
+    {"min_level": 15,  "max_level": 19,  "name": "🥉 Bronze II",    "base_limit": 600,  "interest": 13, "term_days": 3},
+    {"min_level": 20,  "max_level": 24,  "name": "🥈 Silver I",     "base_limit": 800,  "interest": 12, "term_days": 3},
+    {"min_level": 25,  "max_level": 29,  "name": "🥈 Silver II",    "base_limit": 1000, "interest": 11, "term_days": 3},
+    {"min_level": 30,  "max_level": 34,  "name": "💠 Sapphire I",   "base_limit": 1300, "interest": 10, "term_days": 3},
+    {"min_level": 35,  "max_level": 39,  "name": "💠 Sapphire II",  "base_limit": 1600, "interest": 10, "term_days": 4},
+    {"min_level": 40,  "max_level": 44,  "name": "🥇 Gold I",       "base_limit": 2000, "interest": 9,  "term_days": 4},
+    {"min_level": 45,  "max_level": 49,  "name": "🥇 Gold II",      "base_limit": 2400, "interest": 9,  "term_days": 4},
+    {"min_level": 50,  "max_level": 59,  "name": "💎 Platinum",     "base_limit": 3000, "interest": 8,  "term_days": 5},
+    {"min_level": 60,  "max_level": 69,  "name": "💎 Diamond",      "base_limit": 3800, "interest": 8,  "term_days": 5},
+    {"min_level": 70,  "max_level": 79,  "name": "🌟 Elite",        "base_limit": 4800, "interest": 7,  "term_days": 5},
+    {"min_level": 80,  "max_level": 89,  "name": "👑 Master",       "base_limit": 6000, "interest": 6,  "term_days": 6},
+    {"min_level": 90,  "max_level": 99,  "name": "🔱 Mythic",       "base_limit": 7500, "interest": 5,  "term_days": 6},
+    {"min_level": 100, "max_level": 999, "name": "🏆 Legend",       "base_limit": 9500, "interest": 4,  "term_days": 7},
 ]
 
 # Credit Score = الثقة فالأداء. كيضرب فالحد الأساسي ديال Level.
