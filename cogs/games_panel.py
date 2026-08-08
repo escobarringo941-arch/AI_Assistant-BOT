@@ -29,56 +29,64 @@ import games_config as cfg
 # ═══════════════════════════════════════════════════════
 
 class GamesPanelView(discord.ui.View):
+    """🎮 ARCADE هو الـhub المركزي: mini-games + casino + shop + wallet + tops."""
     def __init__(self, bot: commands.Bot):
-        super().__init__(timeout=None)  # ← ضروري للـ persistence
+        super().__init__(timeout=None)
         self.bot = bot
 
-    @discord.ui.button(
-        label="🎮 اختار لعبة",
-        style=discord.ButtonStyle.success,
-        custom_id="ggmw9:games_panel:open",
-    )
+    @discord.ui.button(label="🕹️ Mini Games", style=discord.ButtonStyle.success, custom_id="ggmw9:games_panel:open", row=0)
     async def open_menu(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("🕹️ اختار Mini Game:", view=GameMenuView(self.bot, interaction.user), ephemeral=True)
+
+    @discord.ui.button(label="🎰 Casino", style=discord.ButtonStyle.danger, custom_id="ggmw9:arcade:casino", row=0)
+    async def casino_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        from cogs.gambling_panel import GamblingMenuView, build_session_menu_embed
         await interaction.response.send_message(
-            "🎮 شنو بغيتي تلعب؟",
-            view=GameMenuView(self.bot, interaction.user),
+            embed=build_session_menu_embed(self.bot, interaction.guild, interaction.user),
+            view=GamblingMenuView(self.bot, interaction.user),
             ephemeral=True,
         )
 
-    @discord.ui.button(
-        label="💰 الرصيد ديالي",
-        style=discord.ButtonStyle.secondary,
-        custom_id="ggmw9:games_panel:balance",
-    )
+    @discord.ui.button(label="🛒 Shop", style=discord.ButtonStyle.primary, custom_id="ggmw9:arcade:shop", row=0)
+    async def shop_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        eco = self.bot.get_cog("Economy")
+        if not eco:
+            await interaction.response.send_message("❌ Economy/Shop ماشي محمّلة.", ephemeral=True)
+            return
+        from cogs.economy import ShopView, build_shop_home_embed
+        await interaction.response.send_message(
+            embed=build_shop_home_embed(eco, interaction.guild, interaction.user),
+            view=ShopView(eco, interaction.user),
+            ephemeral=True,
+        )
+
+    @discord.ui.button(label="🏦 Bank", style=discord.ButtonStyle.primary, custom_id="ggmw9:arcade:bank", row=1)
+    async def bank_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        eco = self.bot.get_cog("Economy")
+        if not eco:
+            await interaction.response.send_message("❌ Bank/Economy ماشي محمّلة.", ephemeral=True)
+            return
+        from cogs.economy import EconomyBankPanelView
+        await interaction.response.send_message(
+            embed=eco.build_bank_panel_embed(interaction.guild),
+            view=EconomyBankPanelView(eco),
+            ephemeral=True,
+        )
+
+    @discord.ui.button(label="💵 Wallet", style=discord.ButtonStyle.secondary, custom_id="ggmw9:games_panel:balance", row=1)
     async def balance_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         eco = self.bot.get_cog("Economy")
         if not eco:
-            await interaction.response.send_message("❌ نظام الدراهم ماشي محمّل.", ephemeral=True)
+            await interaction.response.send_message("❌ Economy ماشي محمّلة.", ephemeral=True)
             return
-
-        balance = eco.get_balance(interaction.guild.id, interaction.user.id)
-        remaining = eco.daily_remaining(interaction.guild.id, interaction.user.id)
         await interaction.response.send_message(
-            f"{cfg.CURRENCY_EMOJI} عندك **{balance:,}** {eco.currency_word(balance)}\n"
-            f"📊 باقي ليك **{remaining}** من السقف اليومي\n"
-            f"🛒 دير `/shop` ولا استعمل بانل المتجر فـ #shop باش تشري",
-            ephemeral=True,
+            embed=eco.build_user_account_embed(interaction.guild, interaction.user), ephemeral=True
         )
 
-    @discord.ui.button(
-        label="🏆 اللوائح",
-        style=discord.ButtonStyle.secondary,
-        custom_id="ggmw9:games_panel:tops",
-    )
+    @discord.ui.button(label="🏆 Leaderboards", style=discord.ButtonStyle.secondary, custom_id="ggmw9:games_panel:tops", row=1)
     async def tops_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        ch = (
-            f"<#{cfg.GAMES_LEADERBOARD_CHANNEL_ID}>"
-            if getattr(cfg, "GAMES_LEADERBOARD_CHANNEL_ID", 0)
-            else "#games-leaderboard"
-        )
         await interaction.response.send_message(
-            f"🏆 كاع اللوائح كاينين فبانل موحّد فـ {ch} — اختار اللعبة من القائمة تما!",
-            ephemeral=True,
+            "🏆 اختار Leaderboard:", view=LeaderboardPanelView(self.bot), ephemeral=True
         )
 
 # ═══════════════════════════════════════════════════════
@@ -225,55 +233,19 @@ class GameMenuView(discord.ui.View):
 # ═══════════════════════════════════════════════════════
 
 class ShopPanelView(discord.ui.View):
-    """بانل المتجر: رسالة وحدة فشانيل #shop، فيها زر كيحل ShopView لكل واحد."""
-
     def __init__(self, bot: commands.Bot):
         super().__init__(timeout=None)
         self.bot = bot
 
-    @discord.ui.button(
-        label="🛒 فتح المتجر",
-        style=discord.ButtonStyle.success,
-        custom_id="ggmw9:shop_panel:open",
-    )
+    @discord.ui.button(label="🛒 فتح Marketplace", style=discord.ButtonStyle.success, custom_id="ggmw9:shop_panel:open")
     async def open_shop(self, interaction: discord.Interaction, button: discord.ui.Button):
         eco = self.bot.get_cog("Economy")
         if not eco:
-            await interaction.response.send_message(
-                "❌ نظام المتجر ماشي محمّل دابا.", ephemeral=True
-            )
+            await interaction.response.send_message("❌ Marketplace ماشي محمّلة.", ephemeral=True)
             return
-
-        from cogs.economy import ShopView
-
-        balance = eco.get_balance(interaction.guild.id, interaction.user.id)
-        discount = eco.get_shop_discount_percent(interaction.guild.id, interaction.user.id)
-        embed = discord.Embed(
-            title="🛒 المتجر",
-            description=(
-                f"الرصيد ديالك: **{balance:,}** {cfg.CURRENCY_EMOJI}"
-                + (f"\n⭐ Level Discount: **-{discount}%**" if discount else "")
-            ),
-            color=discord.Color.blurple(),
-        )
-
-        for item in cfg.SHOP_ITEMS:
-            if item["type"] == "temp_role" and not item.get("role_id"):
-                continue
-            price = eco.get_shop_price(interaction.guild.id, interaction.user.id, item["price"])
-            ok = "✅" if balance >= price else "❌"
-            price_text = (
-                f"~~{item['price']:,}~~ → **{price:,}**"
-                if price != item["price"] else f"**{price:,}**"
-            )
-            embed.add_field(
-                name=f"{item['emoji']} {item['name']} — {price_text} {cfg.CURRENCY_EMOJI} {ok}",
-                value=item["description"],
-                inline=False,
-            )
-
+        from cogs.economy import ShopView, build_shop_home_embed
         await interaction.response.send_message(
-            embed=embed,
+            embed=build_shop_home_embed(eco, interaction.guild, interaction.user),
             view=ShopView(eco, interaction.user),
             ephemeral=True,
         )
@@ -409,150 +381,122 @@ class GamesPanel(commands.Cog):
 
     @commands.Cog.listener()
     async def on_ready(self):
-        """كيصاوب الـ panel أوتوماتيك إلا كان GAMES_PANEL_CHANNEL_ID معمّر."""
-        # بانل الألعاب
+        # 🎮 ARCADE — edit old Mini Games panel in place when possible.
         if cfg.GAMES_PANEL_CHANNEL_ID:
             channel = self.bot.get_channel(cfg.GAMES_PANEL_CHANNEL_ID)
             if channel:
+                found = None
                 try:
-                    async for msg in channel.history(limit=20):
-                        if (
-                            msg.author == self.bot.user
-                            and msg.embeds
-                            and msg.embeds[0].title
-                            and "Mini Games" in msg.embeds[0].title
-                        ):
-                            break
+                    async for msg in channel.history(limit=30):
+                        title = msg.embeds[0].title if msg.author == self.bot.user and msg.embeds else ""
+                        if title and ("Mini Games" in title or "ARCADE" in title):
+                            found = msg; break
+                    embed = self._build_arcade_embed()
+                    if found:
+                        await found.edit(embed=embed, view=GamesPanelView(self.bot))
                     else:
-                        await self._send_panel(channel)
-                except discord.Forbidden:
+                        await channel.send(embed=embed, view=GamesPanelView(self.bot))
+                except (discord.Forbidden, discord.HTTPException):
                     pass
 
-        # بانل المتجر (شانيل خاصة)
+        # Marketplace panel
         if getattr(cfg, "SHOP_PANEL_CHANNEL_ID", 0):
             shop_ch = self.bot.get_channel(cfg.SHOP_PANEL_CHANNEL_ID)
             if shop_ch:
+                found = None
                 try:
-                    async for msg in shop_ch.history(limit=20):
-                        if (
-                            msg.author == self.bot.user
-                            and msg.embeds
-                            and msg.embeds[0].title
-                            and "المتجر" in msg.embeds[0].title
-                        ):
-                            break
+                    async for msg in shop_ch.history(limit=30):
+                        title = msg.embeds[0].title if msg.author == self.bot.user and msg.embeds else ""
+                        if title and ("المتجر" in title or "Marketplace" in title):
+                            found = msg; break
+                    embed = self._build_shop_panel_embed()
+                    if found:
+                        await found.edit(embed=embed, view=ShopPanelView(self.bot))
                     else:
-                        await self._send_shop_panel(shop_ch)
-                except discord.Forbidden:
+                        await shop_ch.send(embed=embed, view=ShopPanelView(self.bot))
+                except (discord.Forbidden, discord.HTTPException):
                     pass
 
-        # بانل الـ Leaderboards (شانيل خاصة)
+        # Leaderboards panel
         if getattr(cfg, "GAMES_LEADERBOARD_CHANNEL_ID", 0):
             lb_ch = self.bot.get_channel(cfg.GAMES_LEADERBOARD_CHANNEL_ID)
             if lb_ch:
+                found = None
                 try:
-                    async for msg in lb_ch.history(limit=20):
-                        if (
-                            msg.author == self.bot.user
-                            and msg.embeds
-                            and msg.embeds[0].title
-                            and "Leaderboards" in msg.embeds[0].title
-                        ):
-                            break
+                    async for msg in lb_ch.history(limit=30):
+                        title = msg.embeds[0].title if msg.author == self.bot.user and msg.embeds else ""
+                        if title and "Leaderboards" in title:
+                            found = msg; break
+                    embed = self._build_leaderboard_embed()
+                    if found:
+                        await found.edit(embed=embed, view=LeaderboardPanelView(self.bot))
                     else:
-                        await self._send_leaderboard_panel(lb_ch)
-                except discord.Forbidden:
+                        await lb_ch.send(embed=embed, view=LeaderboardPanelView(self.bot))
+                except (discord.Forbidden, discord.HTTPException):
                     pass
 
-    async def _send_panel(self, channel: discord.TextChannel):
-        eco = self.bot.get_cog("Economy")
-        cap_word = (
-            eco.currency_word(cfg.COINS_DAILY_CAP)
-            if eco
-            else cfg.CURRENCY_NAME_PLURAL
-        )
-
+    def _build_arcade_embed(self) -> discord.Embed:
         embed = discord.Embed(
-            title="🎮 Mini Games",
+            title="🎮・ARCADE — GGMW9 World",
             description=(
-                "مرحبا بيك فـ قسم الألعاب! العب، ربح "
-                f"**{cfg.CURRENCY_NAME_PLURAL}** {cfg.CURRENCY_EMOJI}، "
-                "وشريهم من المتجر."
+                "**ARCADE هو القلب ديال العالم الاقتصادي.** من هنا كتدخل Mini Games، Casino، Marketplace، Bank، Wallet وLeaderboards.\n\n"
+                "💵 العملة: **USD** • Wallet للعب/الشراء • Savings فـBank • Assets كيدخلو فـNet Worth."
             ),
-            color=discord.Color.blurple(),
-            timestamp=datetime.now(),
+            color=discord.Color.blurple(), timestamp=datetime.now(),
         )
-
         embed.add_field(
-            name="🕹️ الألعاب المتوفرة",
-            value="\n".join(
-                f"{g['emoji']} **{g['label']}** — {g['desc']}"
-                for g in GAMES
-                if g["id"] != "shop"
-            ),
-            inline=False,
-        )
-
-        embed.add_field(
-            name=f"{cfg.CURRENCY_EMOJI} كيفاش تربح {cfg.CURRENCY_NAME_PLURAL}",
+            name="🕹️ Earn — Mini Games",
             value=(
-                f"• `/daily` — **{cfg.COINS_DAILY}** كل نهار (+بونوس streak)\n"
-                f"• Wordle — **{cfg.COINS_WORDLE_WIN}**\n"
-                f"• X/O — **{cfg.COINS_PVP_WIN}**\n"
-                f"• المشنوق — **{cfg.COINS_HANGMAN_WIN}**\n"
-                f"• أسرع ضغطة — **{cfg.COINS_REACTION_WIN}**\n"
-                f"• العدّاد — **{cfg.COINS_COUNTING_MILESTONE}** كل "
-                f"{cfg.COUNTING_MILESTONE_EVERY} رقم"
-            ),
-            inline=False,
+                f"`/daily` {cfg.fmt_money(cfg.COINS_DAILY)} • Wordle {cfg.fmt_money(cfg.COINS_WORDLE_WIN)} • "
+                f"X/O {cfg.fmt_money(cfg.COINS_PVP_WIN)}\n"
+                f"Hangman {cfg.fmt_money(cfg.COINS_HANGMAN_WIN)} • Reaction {cfg.fmt_money(cfg.COINS_REACTION_WIN)} • "
+                f"Counting {cfg.fmt_money(cfg.COINS_COUNTING_MILESTONE)} / milestone\n"
+                f"Non-casino daily reward cap: **{cfg.fmt_money(cfg.COINS_DAILY_CAP)}**"
+            ), inline=False,
         )
-
         embed.add_field(
-            name="⚠️ ملاحظة",
+            name="🎰 Casino — fixed fair odds",
             value=(
-                f"السقف اليومي: **{cfg.COINS_DAILY_CAP}** "
-                f"{cap_word} — باش الكل يبقى عندو الشانص."
-            ),
+                "Dice • Coinflip • Slots • Scratch • Lottery\n"
+                f"Max bet = table limit + bankroll protection ({getattr(cfg,'CASINO_MAX_BET_WALLET_PERCENT',10)}% Wallet). "
+                "Fairness panel كيبين RTP/House Edge."
+            ), inline=False,
+        )
+        embed.add_field(
+            name="🛒 Spend / Build Wealth",
+            value="Boosts • Identity • Banking • Social • Assets • Luxury. الفلوس دابا عندها استعمال وماشي غير رقم كيتجمع.",
             inline=False,
         )
+        embed.set_footer(text="GGMW9 ARCADE • play → earn → save → spend → own assets")
+        return embed
 
-        embed.set_footer(
-            text="الألعاب ماكتعطيش XP — الـ XP كيبقى غير من الشات والفويس"
-        )
-        await channel.send(embed=embed, view=GamesPanelView(self.bot))
-
-    async def _send_shop_panel(self, channel: discord.TextChannel):
-        embed = discord.Embed(
-            title="🛒 المتجر",
+    def _build_shop_panel_embed(self) -> discord.Embed:
+        return discord.Embed(
+            title="🛒 GGMW9 Marketplace",
             description=(
-                "هنا المتجر الرسمي ديال السيرفر.\n"
-                f"جمع {cfg.CURRENCY_NAME_PLURAL} {cfg.CURRENCY_EMOJI} من الألعاب و `/daily`, "
-                "ومن بعد كليكي على الزر تحت باش تشوف العروض وتشرِي."
+                "Marketplace منظم بـCategories: ⚡ Boosts • 🎨 Identity • 🏦 Banking • 📣 Social • 🏠 Assets • 👑 Luxury.\n"
+                "ضغط الزر وشوف الثمن ديالك بعد Level Discount."
             ),
-            color=discord.Color.blurple(),
-            timestamp=datetime.now(),
+            color=discord.Color.blurple(), timestamp=datetime.now(),
         )
-        embed.set_footer(text="متجر GGMW9 | الحوايج الرخيصة والغالية موجودة 😉")
 
-        await channel.send(embed=embed, view=ShopPanelView(self.bot))
-
-    async def _send_leaderboard_panel(self, channel: discord.TextChannel):
+    def _build_leaderboard_embed(self) -> discord.Embed:
         embed = discord.Embed(
             title="🏆 Leaderboards",
-            description=(
-                "هنا كاع اللوائح ديال الألعاب فبلاصة وحدة!\n"
-                "اختار من القائمة تحت باش تشوف الترتيب — النتيجة كتبان ليك نتا بوحدك."
-            ),
-            color=discord.Color.gold(),
-            timestamp=datetime.now(),
+            description="اختار اللوحة من اللائحة؛ النتيجة كتبان ليك Ephemeral.",
+            color=discord.Color.gold(), timestamp=datetime.now(),
         )
-        embed.add_field(
-            name="📋 اللوائح المتوفرة",
-            value="\n".join(f"{lb['emoji']} {lb['label']}" for lb in LEADERBOARDS),
-            inline=False,
-        )
-        embed.set_footer(text="GGMW9 | اختار من القائمة تحت")
-        await channel.send(embed=embed, view=LeaderboardPanelView(self.bot))
+        embed.add_field(name="📋 Available", value="\n".join(f"{lb['emoji']} {lb['label']}" for lb in LEADERBOARDS), inline=False)
+        return embed
+
+    async def _send_panel(self, channel: discord.TextChannel):
+        await channel.send(embed=self._build_arcade_embed(), view=GamesPanelView(self.bot))
+
+    async def _send_shop_panel(self, channel: discord.TextChannel):
+        await channel.send(embed=self._build_shop_panel_embed(), view=ShopPanelView(self.bot))
+
+    async def _send_leaderboard_panel(self, channel: discord.TextChannel):
+        await channel.send(embed=self._build_leaderboard_embed(), view=LeaderboardPanelView(self.bot))
 
 
 async def setup(bot: commands.Bot):
