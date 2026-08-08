@@ -54,12 +54,14 @@ class Economy(commands.Cog):
     async def cog_load(self):
         self.expire_purchases_loop.start()
         self.economy_stats_loop.start()
+        self.loan_collection_loop.start()
         # Persistent View: ما كيزيد حتى Slash Command جديد.
         self.bot.add_view(EconomyBankPanelView(self))
 
     def cog_unload(self):
         self.expire_purchases_loop.cancel()
         self.economy_stats_loop.cancel()
+        self.loan_collection_loop.cancel()
 
     @tasks.loop(minutes=15)
     async def expire_purchases_loop(self):
@@ -143,6 +145,9 @@ class Economy(commands.Cog):
             "total_shop_spent": 0,
             "total_jackpot_paid": 0,
             "bank_accounts": {},
+            "loans": {},
+            "credit_scores": {},
+            "loan_next_id": 1,
             "transactions": [],
             "next_tx_id": 1,
             "stats_message_id": None,
@@ -359,6 +364,402 @@ class Economy(commands.Cog):
         await self.refresh_economy_stats(guild)
         return granted
 
+    # ════════════════════════════════════════════════
+    # Loans / Credit Score
+    # ════════════════════════════════════════════════
+
+    def get_credit_score(self, guild_id: int, user_id: int) -> int:
+        sys = self._system(guild_id)
+        default = int(getattr(cfg, "LOAN_DEFAULT_CREDIT_SCORE", 50) or 50)
+        score = int(sys["credit_scores"].get(str(user_id), default) or default)
+        return max(0, min(100, score))
+
+    def _set_credit_score(self, guild_id: int, user_id: int, score: int):
+        sys = self._system(guild_id)
+        sys["credit_scores"][str(user_id)] = max(0, min(100, int(score)))
+        self.system_db.save()
+
+    def get_loan_limit(self, guild_id: int, user_id: int) -> int:
+        score = self.get_credit_score(guild_id, user_id)
+        tiers = getattr(cfg, "LOAN_LIMIT_TIERS", [(0, 300), (30, 500), (50, 1000), (70, 1500), (85, 2500)])
+        limit = 0
+        for min_score, amount in sorted(tiers, key=lambda x: int(x[0])):
+            if score >= int(min_score):
+                limit = int(amount)
+        return max(int(getattr(cfg, "LOAN_MIN_AMOUNT", 100) or 100), limit)
+
+    def get_active_loan(self, guild_id: int, user_id: int) -> Optional[dict]:
+        loan = self._system(guild_id).get("loans", {}).get(str(user_id))
+        if not loan:
+            return None
+        if int(loan.get("remaining", 0) or 0) <= 0 or loan.get("status") == "paid":
+            return None
+        return loan
+
+    def _loan_is_overdue(self, loan: Optional[dict]) -> bool:
+        if not loan or int(loan.get("remaining", 0) or 0) <= 0:
+            return False
+        try:
+            due = datetime.fromisoformat(loan["due_at"])
+            return datetime.now(timezone.utc) >= due
+        except Exception:
+            return False
+
+    def _loan_due_unix(self, loan: dict) -> int:
+        try:
+            return int(datetime.fromisoformat(loan["due_at"]).timestamp())
+        except Exception:
+            return int(datetime.now(timezone.utc).timestamp())
+
+    def _loan_payment_breakdown(self, loan: dict, amount: int) -> dict:
+        """
+        الأداء كيمشي للفائدة أولاً، من بعد Principal.
+        Burn كيتطبق غير على الجزء ديال الفائدة.
+        """
+        amount = max(0, min(int(amount), int(loan.get("remaining", 0) or 0)))
+        interest_remaining = max(
+            0,
+            int(loan.get("interest_total", 0) or 0) - int(loan.get("interest_paid", 0) or 0),
+        )
+        interest_part = min(amount, interest_remaining)
+        principal_part = amount - interest_part
+
+        burn_pct = int(getattr(cfg, "LOAN_INTEREST_BURN_PERCENT", 33) or 0)
+        interest_burn = interest_part * max(0, min(100, burn_pct)) // 100
+        treasury_gain = principal_part + (interest_part - interest_burn)
+        return {
+            "amount": amount,
+            "interest": interest_part,
+            "principal": principal_part,
+            "burn": interest_burn,
+            "treasury": treasury_gain,
+        }
+
+    async def request_loan(
+        self,
+        guild: discord.Guild,
+        user: discord.abc.User,
+        amount: int,
+    ) -> Tuple[bool, str]:
+        amount = int(amount)
+        min_amount = int(getattr(cfg, "LOAN_MIN_AMOUNT", 100) or 100)
+        if amount < min_amount:
+            return False, f"❌ أقل قرض هو **{min_amount:,}** {cfg.CURRENCY_EMOJI}."
+
+        existing = self.get_active_loan(guild.id, user.id)
+        if existing:
+            due_ts = self._loan_due_unix(existing)
+            state = "⚠️ متأخر" if self._loan_is_overdue(existing) else "🟢 خدام"
+            return False, (
+                f"❌ عندك قرض {state} ديجا: **{int(existing['remaining']):,}** {cfg.CURRENCY_EMOJI} باقي.\n"
+                f"📅 الأجل: <t:{due_ts}:F> (<t:{due_ts}:R>)\n"
+                "خاصك تساليه قبل ما تاخد قرض جديد."
+            )
+
+        score = self.get_credit_score(guild.id, user.id)
+        limit = self.get_loan_limit(guild.id, user.id)
+        if amount > limit:
+            return False, (
+                f"❌ Credit Score ديالك **{score}/100** والحد الأقصى ديالك دابا "
+                f"هو **{limit:,}** {cfg.CURRENCY_EMOJI}."
+            )
+
+        sys = self._system(guild.id)
+        treasury = int(sys.get("treasury", 0) or 0)
+        if treasury < amount:
+            return False, (
+                f"❌ البنك ماعندوش سيولة كافية دابا. Treasury فيها غير "
+                f"**{treasury:,}** {cfg.CURRENCY_EMOJI}."
+            )
+
+        interest_pct = int(getattr(cfg, "LOAN_INTEREST_PERCENT", 10) or 10)
+        interest = max(1, amount * interest_pct // 100) if interest_pct > 0 else 0
+        total_due = amount + interest
+        now = datetime.now(timezone.utc)
+        due_at = now + timedelta(days=int(getattr(cfg, "LOAN_TERM_DAYS", 3) or 3))
+        loan_id = int(sys.get("loan_next_id", 1) or 1)
+        sys["loan_next_id"] = loan_id + 1
+
+        # Treasury -> Wallet: transfer حقيقي، ماشي خلق فلوس.
+        sys["treasury"] -= amount
+        sys["loans"][str(user.id)] = {
+            "id": loan_id,
+            "principal": amount,
+            "interest_total": interest,
+            "interest_paid": 0,
+            "total_due": total_due,
+            "remaining": total_due,
+            "issued_at": now.isoformat(),
+            "due_at": due_at.isoformat(),
+            "status": "active",
+            "overdue_penalty_applied": False,
+            "paid_at": None,
+        }
+        self.system_db.save()
+
+        self.add_coins(
+            guild.id, user.id, amount,
+            source=f"loan:{loan_id}",
+            respect_cap=False,
+            count_as_earned=False,
+        )
+        tx_id = self._record_transaction(
+            guild.id,
+            user_id=user.id,
+            kind="loan_issued",
+            amount=amount,
+            source=f"loan:{loan_id}",
+            description=f"قرض #{loan_id} من Treasury",
+            splits={"interest": interest, "total_due": total_due},
+        )
+
+        await self._economy_log(
+            guild,
+            f"💳 Loan Issued — Loan #{loan_id} / TX #{tx_id}",
+            (
+                f"**العضو:** {user.mention}\n"
+                f"**Principal:** **{amount:,}** {cfg.CURRENCY_EMOJI}\n"
+                f"**الفائدة ({interest_pct}%):** **{interest:,}**\n"
+                f"**المطلوب يرجع:** **{total_due:,}**\n"
+                f"**Credit Score:** **{score}/100**\n"
+                f"**الأجل:** <t:{int(due_at.timestamp())}:F>"
+            ),
+            discord.Color.blurple(),
+        )
+        await self.refresh_economy_stats(guild)
+        return True, (
+            f"✅ تقبل القرض **#{loan_id}**.\n"
+            f"💵 دخل للـWallet: **{amount:,}** {cfg.CURRENCY_EMOJI}\n"
+            f"📈 الفائدة: **{interest:,}** ({interest_pct}%)\n"
+            f"💳 خاصك ترجع: **{total_due:,}**\n"
+            f"📅 قبل: <t:{int(due_at.timestamp())}:F> (<t:{int(due_at.timestamp())}:R>)\n"
+            f"⭐ Credit Score: **{score}/100**"
+        )
+
+    async def _apply_loan_payment(
+        self,
+        guild: discord.Guild,
+        user: discord.abc.User,
+        amount: int,
+        *,
+        reason: str,
+        source_label: str,
+    ) -> Tuple[int, Optional[dict]]:
+        loan = self.get_active_loan(guild.id, user.id)
+        if not loan:
+            return 0, None
+
+        breakdown = self._loan_payment_breakdown(loan, amount)
+        paid = int(breakdown["amount"])
+        if paid <= 0:
+            return 0, loan
+
+        sys = self._system(guild.id)
+        sys["treasury"] += int(breakdown["treasury"])
+        sys["burned"] += int(breakdown["burn"])
+        loan["interest_paid"] = int(loan.get("interest_paid", 0) or 0) + int(breakdown["interest"])
+        loan["remaining"] = max(0, int(loan.get("remaining", 0) or 0) - paid)
+
+        fully_paid = loan["remaining"] <= 0
+        if fully_paid:
+            was_overdue = bool(loan.get("overdue_penalty_applied")) or self._loan_is_overdue(loan)
+            loan["status"] = "paid"
+            loan["remaining"] = 0
+            loan["paid_at"] = datetime.now(timezone.utc).isoformat()
+
+            if not was_overdue:
+                old_score = self.get_credit_score(guild.id, user.id)
+                bonus = int(getattr(cfg, "LOAN_CREDIT_ON_TIME_BONUS", 8) or 8)
+                self._set_credit_score(guild.id, user.id, old_score + bonus)
+
+        self.system_db.save()
+
+        tx_id = self._record_transaction(
+            guild.id,
+            user_id=user.id,
+            kind="loan_paid" if fully_paid else "loan_repayment",
+            amount=paid,
+            source=f"loan:{loan.get('id')}",
+            description=reason,
+            splits={
+                "treasury": int(breakdown["treasury"]),
+                "burned_interest": int(breakdown["burn"]),
+                "interest_paid": int(breakdown["interest"]),
+                "principal_paid": int(breakdown["principal"]),
+                "payment_source": source_label,
+                "remaining": int(loan["remaining"]),
+            },
+        )
+        await self._economy_log(
+            guild,
+            f"{'✅ Loan Paid' if fully_paid else '💸 Loan Repayment'} — Loan #{loan.get('id')} / TX #{tx_id}",
+            (
+                f"**العضو:** {user.mention}\n"
+                f"**الأداء:** **{paid:,}** {cfg.CURRENCY_EMOJI}\n"
+                f"**من:** {source_label}\n"
+                f"🏛️ Treasury: **+{int(breakdown['treasury']):,}**\n"
+                f"🔥 Burn من الفائدة: **{int(breakdown['burn']):,}**\n"
+                f"**الباقي:** **{int(loan['remaining']):,}**"
+            ),
+            discord.Color.green() if fully_paid else discord.Color.orange(),
+        )
+        await self.refresh_economy_stats(guild)
+        return paid, loan
+
+    async def repay_loan(
+        self,
+        guild: discord.Guild,
+        user: discord.abc.User,
+        amount: int,
+    ) -> Tuple[bool, str]:
+        loan = self.get_active_loan(guild.id, user.id)
+        if not loan:
+            return False, "ℹ️ ماعندك حتى قرض خدام دابا."
+
+        remaining = int(loan.get("remaining", 0) or 0)
+        amount = max(0, min(int(amount), remaining))
+        if amount <= 0:
+            return False, "❌ دخل مبلغ صحيح أكبر من 0."
+
+        bank = self.get_bank_balance(guild.id, user.id)
+        wallet = self.get_balance(guild.id, user.id)
+        available = bank + wallet
+        if available <= 0:
+            return False, "❌ ماعندكش فلوس لا فالبنك لا فالـWallet باش تخلص."
+
+        actual = min(amount, available, remaining)
+        from_bank = min(bank, actual)
+        from_wallet = actual - from_bank
+
+        if from_bank:
+            self._set_bank_balance(guild.id, user.id, bank - from_bank)
+        if from_wallet and not self.spend(guild.id, user.id, from_wallet):
+            # حماية احتياطية: رجع Bank إذا وقع race نادر.
+            if from_bank:
+                self._set_bank_balance(guild.id, user.id, bank)
+            return False, "❌ الرصيد تبدل قبل ما يكمل الأداء، عاود المحاولة."
+
+        parts = []
+        if from_bank:
+            parts.append(f"Bank {from_bank:,}")
+        if from_wallet:
+            parts.append(f"Wallet {from_wallet:,}")
+        paid, updated = await self._apply_loan_payment(
+            guild, user, actual,
+            reason="أداء يدوي للقرض",
+            source_label=" + ".join(parts),
+        )
+
+        if not updated:
+            return False, "❌ القرض ماعادش موجود."
+        if int(updated.get("remaining", 0) or 0) <= 0:
+            return True, (
+                f"✅ تسالا القرض **#{updated.get('id')}** كامل! خلصتي **{paid:,}** دابا.\n"
+                f"⭐ Credit Score ديالك دابا: **{self.get_credit_score(guild.id, user.id)}/100**"
+            )
+        return True, (
+            f"✅ تخلص **{paid:,}** {cfg.CURRENCY_EMOJI} من القرض.\n"
+            f"💳 باقي عليك: **{int(updated['remaining']):,}**\n"
+            f"📅 الأجل: <t:{self._loan_due_unix(updated)}:R>"
+        )
+
+    async def _collect_overdue_loan(self, guild: discord.Guild, member: discord.Member, loan: dict):
+        """بعد الأجل: Bank أولاً، من بعد Wallet. إلا بقا الدين كيبقى Overdue."""
+        if not self._loan_is_overdue(loan):
+            return
+
+        if not loan.get("overdue_penalty_applied"):
+            old_score = self.get_credit_score(guild.id, member.id)
+            penalty = int(getattr(cfg, "LOAN_CREDIT_OVERDUE_PENALTY", 15) or 15)
+            self._set_credit_score(guild.id, member.id, old_score - penalty)
+            loan["overdue_penalty_applied"] = True
+            loan["status"] = "overdue"
+            self.system_db.save()
+            await self._economy_log(
+                guild,
+                f"⚠️ Loan Overdue — Loan #{loan.get('id')}",
+                (
+                    f"**العضو:** {member.mention}\n"
+                    f"**الباقي:** **{int(loan.get('remaining', 0)):,}** {cfg.CURRENCY_EMOJI}\n"
+                    f"⭐ Credit Score: **{old_score} → {self.get_credit_score(guild.id, member.id)}**\n"
+                    "البوت غادي يحاول يجمع المتوفر من Bank ثم Wallet."
+                ),
+                discord.Color.red(),
+            )
+
+        remaining = int(loan.get("remaining", 0) or 0)
+        if remaining <= 0:
+            return
+
+        bank = self.get_bank_balance(guild.id, member.id)
+        wallet = self.get_balance(guild.id, member.id)
+        available = bank + wallet
+        if available <= 0:
+            return
+
+        actual = min(remaining, available)
+        from_bank = min(bank, actual)
+        from_wallet = actual - from_bank
+
+        if from_bank:
+            self._set_bank_balance(guild.id, member.id, bank - from_bank)
+        if from_wallet:
+            if not self.spend(guild.id, member.id, from_wallet):
+                if from_bank:
+                    self._set_bank_balance(guild.id, member.id, bank)
+                return
+
+        labels = []
+        if from_bank:
+            labels.append(f"Bank {from_bank:,}")
+        if from_wallet:
+            labels.append(f"Wallet {from_wallet:,}")
+        paid, updated = await self._apply_loan_payment(
+            guild, member, actual,
+            reason="Auto-Collection بعد انتهاء الأجل",
+            source_label=" + ".join(labels),
+        )
+        if paid:
+            try:
+                if updated and int(updated.get("remaining", 0) or 0) <= 0:
+                    await member.send(
+                        f"✅ القرض ديالك **#{updated.get('id')}** تخلص كامل أوتوماتيكياً بعد الأجل."
+                    )
+                else:
+                    await member.send(
+                        f"⚠️ تخلص أوتوماتيكياً **{paid:,}** {cfg.CURRENCY_EMOJI} من القرض المتأخر. "
+                        f"باقي **{int(updated.get('remaining', 0)):,}**."
+                    )
+            except discord.HTTPException:
+                pass
+
+    @tasks.loop(minutes=15)
+    async def loan_collection_loop(self):
+        """كيشيك القروض المتأخرة ويجمع المتوفر أوتوماتيكياً."""
+        for guild in self.bot.guilds:
+            sys = self._system(guild.id)
+            for uid_str, loan in list(sys.get("loans", {}).items()):
+                if not loan or int(loan.get("remaining", 0) or 0) <= 0:
+                    continue
+                if not self._loan_is_overdue(loan):
+                    continue
+                try:
+                    uid = int(uid_str)
+                except (TypeError, ValueError):
+                    continue
+                member = guild.get_member(uid)
+                if not member:
+                    try:
+                        member = await guild.fetch_member(uid)
+                    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                        member = None
+                if member:
+                    await self._collect_overdue_loan(guild, member, loan)
+
+    @loan_collection_loop.before_loop
+    async def before_loan_collection_loop(self):
+        await self.bot.wait_until_ready()
+
     async def bank_deposit(self, guild: discord.Guild, user: discord.abc.User, amount: int) -> Tuple[bool, str]:
         amount = int(amount)
         if amount <= 0:
@@ -366,21 +767,47 @@ class Economy(commands.Cog):
         if not self.spend(guild.id, user.id, amount):
             return False, "❌ الرصيد ديالك فالمحفظة ماكافيش."
 
-        new_bank = self.get_bank_balance(guild.id, user.id) + amount
-        self._set_bank_balance(guild.id, user.id, new_bank)
-        tx_id = self._record_transaction(
-            guild.id, user_id=user.id, kind="bank_deposit", amount=amount,
-            source="bank", description="إيداع من Wallet للبنك"
-        )
-        await self._economy_log(
-            guild, f"🏦 Bank Deposit — TX #{tx_id}",
-            f"**العضو:** {user.mention}\n**إيداع:** **{amount:,}** {cfg.CURRENCY_EMOJI}\n"
-            f"**Bank Balance:** **{new_bank:,}**",
-            discord.Color.green(),
-        )
+        # إلا القرض متأخر، ما نسمحوش بإخفاء الفلوس فالبنك:
+        # الدين كيتخلص أولاً، والباقي فقط كيدخل للBank.
+        loan = self.get_active_loan(guild.id, user.id)
+        debt_paid = 0
+        if loan and self._loan_is_overdue(loan):
+            debt_part = min(amount, int(loan.get("remaining", 0) or 0))
+            debt_paid, loan = await self._apply_loan_payment(
+                guild, user, debt_part,
+                reason="Deposit تحول تلقائياً للقرض المتأخر",
+                source_label="Wallet Deposit",
+            )
+        bank_part = amount - debt_paid
+
+        new_bank = self.get_bank_balance(guild.id, user.id)
+        if bank_part > 0:
+            new_bank += bank_part
+            self._set_bank_balance(guild.id, user.id, new_bank)
+            tx_id = self._record_transaction(
+                guild.id, user_id=user.id, kind="bank_deposit", amount=bank_part,
+                source="bank", description="إيداع من Wallet للبنك"
+            )
+            await self._economy_log(
+                guild, f"🏦 Bank Deposit — TX #{tx_id}",
+                f"**العضو:** {user.mention}\n**إيداع:** **{bank_part:,}** {cfg.CURRENCY_EMOJI}\n"
+                f"**Bank Balance:** **{new_bank:,}**",
+                discord.Color.green(),
+            )
+
+        if debt_paid:
+            extra = (
+                f"\n⚠️ كان عندك قرض متأخر: **{debt_paid:,}** مشاو مباشرة للدين."
+            )
+            if bank_part:
+                extra += f" والباقي **{bank_part:,}** دخل للبنك."
+        else:
+            extra = ""
+
         return True, (
-            f"✅ دخلتي **{amount:,}** {cfg.CURRENCY_EMOJI} للبنك.\n"
-            f"🏦 حساب البنك: **{new_bank:,}** | 💳 Wallet: **{self.get_balance(guild.id, user.id):,}**"
+            f"✅ تمت العملية.{extra}\n"
+            f"🏦 حساب البنك: **{self.get_bank_balance(guild.id, user.id):,}** | "
+            f"💳 Wallet: **{self.get_balance(guild.id, user.id):,}**"
         )
 
     async def bank_withdraw(self, guild: discord.Guild, user: discord.abc.User, amount: int) -> Tuple[bool, str]:
@@ -420,6 +847,7 @@ class Economy(commands.Cog):
                 "باش ما نزيدو حتى Slash Command جديد.\n\n"
                 "💳 **Wallet** = الفلوس اللي كتقدر تلعب وتشري بيها.\n"
                 "🏦 **Bank** = فلوس مخزنة، الألعاب ماكتقدرش تمسها حتى تسحبها.\n"
+                "💳 **Loans** = قرض حقيقي كيخرج من Treasury، بفائدة وCredit Score وأجل للأداء.\n"
                 "🎰 الخسائر الحقيقية كتغذي Treasury وGlobal Jackpot، وجزء كيتحرق ضد التضخم."
             ),
             color=discord.Color.gold(),
@@ -436,6 +864,12 @@ class Economy(commands.Cog):
         guild_data = self.db.guild(guild.id)
         wallets = sum(max(0, int(acc.get("coins", 0) or 0)) for acc in guild_data.values())
         bank_total = sum(max(0, int(v or 0)) for v in sys.get("bank_accounts", {}).values())
+        active_loans = [
+            loan for loan in sys.get("loans", {}).values()
+            if loan and int(loan.get("remaining", 0) or 0) > 0
+        ]
+        loans_outstanding = sum(int(loan.get("remaining", 0) or 0) for loan in active_loans)
+        overdue_loans = sum(1 for loan in active_loans if self._loan_is_overdue(loan))
         live_supply = wallets + bank_total + sys["treasury"] + sys["jackpot"] + sys["events"]
 
         embed = discord.Embed(
@@ -453,6 +887,8 @@ class Economy(commands.Cog):
         embed.add_field(name="📉 خسائر القمار", value=f"**{sys['total_gambling_lost']:,}** {cfg.CURRENCY_EMOJI}", inline=True)
         embed.add_field(name="🛒 مصاريف المتجر", value=f"**{sys['total_shop_spent']:,}** {cfg.CURRENCY_EMOJI}", inline=True)
         embed.add_field(name="🏆 Jackpot تصرف", value=f"**{sys['total_jackpot_paid']:,}** {cfg.CURRENCY_EMOJI}", inline=True)
+        embed.add_field(name="💳 Loans Outstanding", value=f"**{loans_outstanding:,}** {cfg.CURRENCY_EMOJI}", inline=True)
+        embed.add_field(name="⚠️ Overdue Loans", value=f"**{overdue_loans}**", inline=True)
         embed.add_field(name="💹 Money Supply الحالي", value=f"**{live_supply:,}** {cfg.CURRENCY_EMOJI}", inline=False)
         embed.set_footer(text="Wallet + Bank + Treasury + Jackpot + Events | Burn ما داخلش فالـSupply")
         return embed
@@ -467,8 +903,27 @@ class Economy(commands.Cog):
         )
         embed.add_field(name="💳 Wallet", value=f"**{wallet:,}**", inline=True)
         embed.add_field(name="🏦 Bank", value=f"**{bank:,}**", inline=True)
+        score = self.get_credit_score(guild.id, user.id)
+        embed.add_field(
+            name="⭐ Credit Score",
+            value=f"**{score}/100**\nحد القرض: **{self.get_loan_limit(guild.id, user.id):,}**",
+            inline=True,
+        )
+        loan = self.get_active_loan(guild.id, user.id)
+        if loan:
+            state = "⚠️ متأخر" if self._loan_is_overdue(loan) else "🟢 خدام"
+            embed.add_field(
+                name=f"💳 Loan #{loan.get('id')} — {state}",
+                value=(
+                    f"الباقي: **{int(loan.get('remaining', 0)):,}** {cfg.CURRENCY_EMOJI}\n"
+                    f"الأجل: <t:{self._loan_due_unix(loan)}:F> (<t:{self._loan_due_unix(loan)}:R>)"
+                ),
+                inline=False,
+            )
+        else:
+            embed.add_field(name="💳 القرض", value="ما عندك حتى قرض خدام.", inline=False)
         embed.set_thumbnail(url=user.display_avatar.url)
-        embed.set_footer(text="الفلوس فالبنك محمية من الرهان حتى تسحبها للـWallet")
+        embed.set_footer(text="Bank محمي من الرهان | القرض المتأخر كيتجمع من Bank ثم Wallet")
         return embed
 
     def build_user_transactions_embed(self, guild: discord.Guild, user: discord.abc.User) -> discord.Embed:
@@ -485,6 +940,9 @@ class Economy(commands.Cog):
             "jackpot_payout": "🏆",
             "bank_deposit": "🏦",
             "bank_withdraw": "💸",
+            "loan_issued": "💳",
+            "loan_repayment": "💸",
+            "loan_paid": "✅",
             "admin_adjustment": "🛡️",
         }
         lines = []
@@ -990,6 +1448,55 @@ class BankAmountModal(discord.ui.Modal):
         await interaction.response.send_message(msg, ephemeral=True)
 
 
+
+class LoanRequestModal(discord.ui.Modal):
+    def __init__(self, cog: "Economy"):
+        super().__init__(title="💳 طلب قرض من GGMW9 Bank")
+        self.cog = cog
+        self.amount = discord.ui.TextInput(
+            label="شحال بغيتي تسلف؟",
+            placeholder=f"أقل مبلغ {getattr(cfg, 'LOAN_MIN_AMOUNT', 100)}",
+            min_length=1,
+            max_length=12,
+            required=True,
+        )
+        self.add_item(self.amount)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        raw = str(self.amount.value).strip().replace(",", "").replace(" ", "")
+        if not raw.isdigit() or int(raw) <= 0:
+            await interaction.response.send_message("❌ دخل مبلغ صحيح.", ephemeral=True)
+            return
+        ok, msg = await self.cog.request_loan(
+            interaction.guild, interaction.user, int(raw)
+        )
+        await interaction.response.send_message(msg, ephemeral=True)
+
+
+class LoanRepayModal(discord.ui.Modal):
+    def __init__(self, cog: "Economy", loan: dict):
+        super().__init__(title=f"💸 أداء Loan #{loan.get('id')}")
+        self.cog = cog
+        self.amount = discord.ui.TextInput(
+            label="شحال بغيتي تخلص دابا؟",
+            placeholder=f"الباقي {int(loan.get('remaining', 0))}",
+            min_length=1,
+            max_length=12,
+            required=True,
+        )
+        self.add_item(self.amount)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        raw = str(self.amount.value).strip().replace(",", "").replace(" ", "")
+        if not raw.isdigit() or int(raw) <= 0:
+            await interaction.response.send_message("❌ دخل مبلغ صحيح.", ephemeral=True)
+            return
+        ok, msg = await self.cog.repay_loan(
+            interaction.guild, interaction.user, int(raw)
+        )
+        await interaction.response.send_message(msg, ephemeral=True)
+
+
 class EconomyBankPanelView(discord.ui.View):
     """Central Bank Panel دائم — كاع الوظائف هنا Buttons/Modals، بلا حتى Slash جديد."""
 
@@ -1079,6 +1586,44 @@ class EconomyBankPanelView(discord.ui.View):
             embed=self.cog.build_user_transactions_embed(interaction.guild, interaction.user),
             ephemeral=True,
         )
+
+
+    @discord.ui.button(
+        label="💳 طلب قرض", style=discord.ButtonStyle.success,
+        custom_id="ggmw9:economy:loan_request", row=1
+    )
+    async def loan_request_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        loan = self.cog.get_active_loan(interaction.guild.id, interaction.user.id)
+        if loan:
+            state = "⚠️ متأخر" if self.cog._loan_is_overdue(loan) else "🟢 خدام"
+            await interaction.response.send_message(
+                (
+                    f"💳 عندك Loan **#{loan.get('id')}** {state}.\\n"
+                    f"الباقي: **{int(loan.get('remaining', 0)):,}** {cfg.CURRENCY_EMOJI}\\n"
+                    f"الأجل: <t:{self.cog._loan_due_unix(loan)}:F> "
+                    f"(<t:{self.cog._loan_due_unix(loan)}:R>)\\n"
+                    "خاصك تساليه قبل قرض جديد."
+                ),
+                ephemeral=True,
+            )
+            return
+        score = self.cog.get_credit_score(interaction.guild.id, interaction.user.id)
+        limit = self.cog.get_loan_limit(interaction.guild.id, interaction.user.id)
+        treasury = int(self.cog._system(interaction.guild.id).get("treasury", 0) or 0)
+        await interaction.response.send_modal(LoanRequestModal(self.cog))
+
+    @discord.ui.button(
+        label="💸 خلص القرض", style=discord.ButtonStyle.primary,
+        custom_id="ggmw9:economy:loan_repay", row=1
+    )
+    async def loan_repay_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        loan = self.cog.get_active_loan(interaction.guild.id, interaction.user.id)
+        if not loan:
+            await interaction.response.send_message(
+                "ℹ️ ماعندك حتى قرض خدام دابا.", ephemeral=True
+            )
+            return
+        await interaction.response.send_modal(LoanRepayModal(self.cog, loan))
 
 
 class ShopView(discord.ui.View):
