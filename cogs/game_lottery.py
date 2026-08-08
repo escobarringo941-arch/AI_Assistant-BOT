@@ -238,7 +238,12 @@ async def _play_out(cog: Lottery, msg: discord.Message, guild_id: int,
     cog.active.discard((guild_id, user_id))
 
     try:
-        await msg.edit(embed=final_embed, view=ReplayView(cog, user, bet))
+        from cogs.gambling_panel import GamblingRoundControls
+        await msg.edit(
+            content=None,
+            embed=final_embed,
+            view=GamblingRoundControls(cog.bot, user, "lottery", bet),
+        )
     except discord.HTTPException:
         pass
 
