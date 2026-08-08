@@ -151,9 +151,31 @@ class SideView(discord.ui.View):
         self.bet = bet
 
         for side_key, side in SIDES.items():
-            btn = discord.ui.Button(label=side["label"], style=discord.ButtonStyle.primary)
+            btn = discord.ui.Button(
+                label=side["label"], style=discord.ButtonStyle.primary, row=0
+            )
             btn.callback = self._make_callback(side_key)
             self.add_item(btn)
+
+        change_bet = discord.ui.Button(
+            label="💰 زيد/نقص الرهان",
+            style=discord.ButtonStyle.secondary,
+            row=1,
+        )
+        change_bet.callback = self._change_bet
+        self.add_item(change_bet)
+
+        from cogs.gambling_panel import GameSwitchSelect
+        self.add_item(GameSwitchSelect(self.cog.bot, self.user, row=2))
+
+    async def _change_bet(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message("❌ ماشي ديالك.", ephemeral=True)
+            return
+        from cogs.gambling_panel import GameBetModal
+        await interaction.response.send_modal(
+            GameBetModal(self.cog.bot, self.user, "coinflip", current_bet=self.bet)
+        )
 
     def _make_callback(self, side_key: str):
         async def callback(interaction: discord.Interaction):
@@ -194,7 +216,12 @@ async def run_flip(cog: Coinflip, interaction: discord.Interaction, user: discor
         color=discord.Color.blurple(),
     )
     flip_embed.add_field(name="النتيجة", value=FLIP_FRAMES[0], inline=False)
-    msg = await interaction.followup.send(embed=flip_embed, ephemeral=True, wait=True)
+    # نفس رسالة الـSession، بلا follow-up جديد.
+    msg = await interaction.original_response()
+    try:
+        await msg.edit(content=None, embed=flip_embed, view=None)
+    except discord.HTTPException:
+        pass
     for frame in FLIP_FRAMES:
         flip_embed.set_field_at(0, name="النتيجة", value=frame, inline=False)
         try:
@@ -241,7 +268,12 @@ async def run_flip(cog: Coinflip, interaction: discord.Interaction, user: discor
     )
     cog.active.discard((guild_id, user_id))
 
-    await msg.edit(embed=final_embed, view=ReplayView(cog, user, bet))
+    from cogs.gambling_panel import GamblingRoundControls
+    await msg.edit(
+        content=None,
+        embed=final_embed,
+        view=GamblingRoundControls(cog.bot, user, "coinflip", bet),
+    )
 
 
 class ReplayView(discord.ui.View):
