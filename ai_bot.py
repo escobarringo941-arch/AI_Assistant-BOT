@@ -3744,15 +3744,15 @@ def _build_rules_translation_embed(guild: discord.Guild, lang: str = "darija") -
     lang = lang if lang in {"darija", "en", "fr"} else "darija"
     if lang == "en":
         title = "📜 Server Rules — English"
-        note = "This is your private translation. Verification still uses the ✅ Agree / ❌ Refuse buttons on the original public Rules panel."
+        note = "This is your private Rules panel. The ✅ Agree / ❌ Refuse buttons below use the same real verification and kick system as the public panel."
         footer = "Private translation • You can switch language as often as you want"
     elif lang == "fr":
         title = "📜 Règles du serveur — Français"
-        note = "Ceci est ta traduction privée. La vérification utilise toujours les boutons ✅ Accepter / ❌ Refuser sur le panneau public original."
+        note = "Ceci est ton panneau privé. Les boutons ✅ Accepter / ❌ Refuser ci-dessous utilisent exactement le même système réel de vérification et d’expulsion."
         footer = "Traduction privée • Tu peux changer de langue autant de fois que tu veux"
     else:
         title = "📜 قوانين السيرفر — الدارجة"
-        note = "هادي النسخة الخاصة ديالك. التفعيل كيبقى من أزرار ✅ كنوافق / ❌ كنرفض فالرسالة الأصلية ديال Rules."
+        note = "هادي النسخة الخاصة ديالك. أزرار ✅ كنوافق / ❌ كنرفض لتحت خدامين بنفس آلية التفعيل والطرد الحقيقية ديال الرسالة الأصلية."
         footer = "ترجمة خاصة • تقدر تبدل اللغة بلا حد"
     embed = discord.Embed(
         title=title,
@@ -3764,6 +3764,176 @@ def _build_rules_translation_embed(guild: discord.Guild, lang: str = "darija") -
         embed.set_thumbnail(url=guild.icon.url)
     embed.set_footer(text=footer)
     return embed
+
+
+def _rules_lang_text(lang: str, darija: str, en: str, fr: str) -> str:
+    lang = lang if lang in {"darija", "en", "fr"} else "darija"
+    return {"darija": darija, "en": en, "fr": fr}[lang]
+
+
+def _rules_member_is_exempt(member: discord.Member) -> bool:
+    if member.id == OWNER_ID:
+        return True
+    return any(role.id in EXEMPT_ROLE_IDS for role in member.roles)
+
+
+async def _rules_private_status(interaction: discord.Interaction, text: str, color: discord.Color):
+    embed = discord.Embed(description=text, color=color, timestamp=datetime.now())
+    await interaction.response.edit_message(content=None, embed=embed, view=None)
+
+
+async def _handle_rules_agree(interaction: discord.Interaction, lang: str = "darija", *, private_panel: bool = False):
+    """One source of truth for BOTH the public Rules buttons and translated private buttons."""
+    lang = lang if lang in {"darija", "en", "fr"} else "darija"
+    member = interaction.user
+    guild = interaction.guild
+    if not guild or not isinstance(member, discord.Member):
+        msg = _rules_lang_text(lang, "❌ وقع مشكل، عاود من جديد.", "❌ Something went wrong. Please try again.", "❌ Une erreur est survenue. Réessaie.")
+        if private_panel:
+            await _rules_private_status(interaction, msg, discord.Color.red())
+        else:
+            await interaction.response.send_message(msg, ephemeral=True)
+        return
+
+    member_role = guild.get_role(MEMBER_ROLE_ID)
+    unverified_role = guild.get_role(UNVERIFIED_ROLE_ID)
+
+    if member_role and member_role in member.roles:
+        msg = _rules_lang_text(lang, "✅ راك مفعل من قبل، مرحبا بيك!", "✅ You're already verified. Welcome!", "✅ Tu es déjà vérifié(e). Bienvenue !")
+        if private_panel:
+            await _rules_private_status(interaction, msg, discord.Color.green())
+        else:
+            await interaction.response.send_message(msg, ephemeral=True)
+        return
+
+    if unverified_role and unverified_role in member.roles:
+        try:
+            await member.remove_roles(unverified_role, reason="GGMW9 Rules verification accepted")
+        except discord.Forbidden:
+            pass
+
+    if member_role:
+        try:
+            await member.add_roles(member_role, reason="GGMW9 Rules verification accepted")
+        except discord.Forbidden:
+            msg = _rules_lang_text(
+                lang,
+                "❌ ما قدرتش نفعلك. بلغ الإدارة: Role ديال البوت خاصها تكون فوق Role ديال Member.",
+                "❌ I couldn't verify you. Please contact staff: the bot role must be above the Member role.",
+                "❌ Impossible de te vérifier. Contacte le staff : le rôle du bot doit être au-dessus du rôle Member.",
+            )
+            if private_panel:
+                await _rules_private_status(interaction, msg, discord.Color.red())
+            else:
+                await interaction.response.send_message(msg, ephemeral=True)
+            await log_action(
+                guild,
+                "⚠️ فشل التفعيل (صلاحية)",
+                f"**المستخدم:** {member.mention} ({member.name})\n"
+                "**السبب:** bot role ماعندهاش الصلاحية/الترتيب باش تعطي Member role.",
+                discord.Color.orange(),
+            )
+            return
+
+    success = _rules_lang_text(
+        lang,
+        f"✅ تم تفعيلك فـ **{SERVER_NAME}**! مرحبا بيك 🎉",
+        f"✅ You're verified in **{SERVER_NAME}**! Welcome 🎉",
+        f"✅ Tu es vérifié(e) dans **{SERVER_NAME}** ! Bienvenue 🎉",
+    )
+    if private_panel:
+        await _rules_private_status(interaction, success, discord.Color.green())
+    else:
+        await interaction.response.send_message(success, ephemeral=True)
+
+    await log_action(
+        guild,
+        "✅ تفعيل (زر القوانين)",
+        f"**المستخدم:** {member.mention} ({member.name})\n**الحالة:** وافق على القوانين وتفعل",
+        discord.Color.green(),
+    )
+
+    gender_embed = discord.Embed(
+        title=_rules_lang_text(lang, "🚻 واش نتا/نتي ولد ولا بنت؟", "🚻 Are you a boy or a girl?", "🚻 Es-tu un garçon ou une fille ?"),
+        description=_rules_lang_text(lang, "ضغط/ي على الزر المناسب باش نعطيوك الرول الصحيح.", "Choose the correct button to receive the right role.", "Choisis le bon bouton pour recevoir le rôle correspondant."),
+        color=discord.Color.blurple(),
+    )
+    try:
+        await interaction.followup.send(
+            embed=gender_embed,
+            view=GenderSelectView(target_user_id=member.id, guild_id=guild.id),
+            ephemeral=True,
+        )
+    except (discord.HTTPException, discord.NotFound):
+        pass
+
+
+async def _handle_rules_refuse(interaction: discord.Interaction, lang: str = "darija", *, private_panel: bool = False):
+    """Same kick logic whether Refuse is clicked on public or translated private Rules."""
+    lang = lang if lang in {"darija", "en", "fr"} else "darija"
+    member = interaction.user
+    guild = interaction.guild
+    if not guild or not isinstance(member, discord.Member):
+        msg = _rules_lang_text(lang, "❌ وقع مشكل، عاود من جديد.", "❌ Something went wrong. Please try again.", "❌ Une erreur est survenue. Réessaie.")
+        if private_panel:
+            await _rules_private_status(interaction, msg, discord.Color.red())
+        else:
+            await interaction.response.send_message(msg, ephemeral=True)
+        return
+
+    if _rules_member_is_exempt(member):
+        await interaction.response.send_message(
+            _rules_lang_text(
+                lang,
+                "⚠️ راك أدمن/مشرف، ماغاديش نطردك. للأعضاء العاديين هاد الزر = رفض القوانين والطرد.",
+                "⚠️ You're an admin/moderator, so you won't be kicked. For regular members this button rejects the rules and kicks them.",
+                "⚠️ Tu es admin/modérateur, donc tu ne seras pas expulsé(e). Pour un membre normal, ce bouton refuse les règles et l'expulse.",
+            ),
+            ephemeral=True,
+        )
+        return
+
+    reject_msg = _rules_lang_text(
+        lang,
+        "❌ رفضتي القوانين، غادي تتطرد من السيرفر...",
+        "❌ You refused the rules. You will be kicked from the server...",
+        "❌ Tu as refusé les règles. Tu vas être expulsé(e) du serveur...",
+    )
+    try:
+        if private_panel:
+            await _rules_private_status(interaction, reject_msg, discord.Color.red())
+        else:
+            await interaction.response.send_message(reject_msg, ephemeral=True)
+    except Exception:
+        pass
+
+    try:
+        await member.send(
+            _rules_lang_text(
+                lang,
+                f"❌ رفضتي القوانين ديال **{SERVER_NAME}**، تم طردك من السيرفر تلقائياً.",
+                f"❌ You refused the rules of **{SERVER_NAME}** and were automatically kicked.",
+                f"❌ Tu as refusé les règles de **{SERVER_NAME}** et tu as été automatiquement expulsé(e).",
+            )
+        )
+    except Exception:
+        pass
+
+    await log_action(
+        guild,
+        "🚫 رفض القوانين + طرد تلقائي",
+        f"**المستخدم:** {member.mention} ({member.name})\n**ID:** `{member.id}`\n**السبب:** رفض الموافقة على القوانين (زر ❌)",
+        discord.Color.red(),
+    )
+    try:
+        await guild.kick(member, reason="رفض الموافقة على قوانين السيرفر")
+    except discord.Forbidden:
+        await log_action(
+            guild,
+            "⚠️ فشل الطرد",
+            f"ماقدرتش نطرد {member.mention} — البوت ماعندوش صلاحية كافية.",
+            discord.Color.orange(),
+        )
 
 
 class RulesPrivateLanguageSelect(discord.ui.Select):
@@ -3779,6 +3949,7 @@ class RulesPrivateLanguageSelect(discord.ui.Select):
             ],
             min_values=1,
             max_values=1,
+            row=1,
         )
 
     async def callback(self, interaction: discord.Interaction):
@@ -3793,17 +3964,44 @@ class RulesPrivateLanguageSelect(discord.ui.Select):
 
 
 class RulesPrivateLanguageView(discord.ui.View):
+    """Private translated Rules with fully localized verify/refuse buttons."""
     def __init__(self, user_id: int, lang: str = "darija"):
         super().__init__(timeout=1800)
-        self.add_item(RulesPrivateLanguageSelect(user_id, lang))
+        self.user_id = int(user_id)
+        self.lang = lang if lang in {"darija", "en", "fr"} else "darija"
+        labels = {
+            "darija": ("✅ كنوافق", "❌ كنرفض"),
+            "en": ("✅ I Agree", "❌ I Refuse"),
+            "fr": ("✅ J'accepte", "❌ Je refuse"),
+        }[self.lang]
+        agree = discord.ui.Button(label=labels[0], style=discord.ButtonStyle.success, row=0)
+        refuse = discord.ui.Button(label=labels[1], style=discord.ButtonStyle.danger, row=0)
+        agree.callback = self._agree
+        refuse.callback = self._refuse
+        self.add_item(agree)
+        self.add_item(refuse)
+        self.add_item(RulesPrivateLanguageSelect(user_id, self.lang))
+
+    async def _guard(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message(
+                _rules_lang_text(self.lang, "❌ هاد النسخة ماشي ديالك.", "❌ This panel isn't yours.", "❌ Ce panneau ne t'appartient pas."),
+                ephemeral=True,
+            )
+            return False
+        return True
+
+    async def _agree(self, interaction: discord.Interaction):
+        if await self._guard(interaction):
+            await _handle_rules_agree(interaction, self.lang, private_panel=True)
+
+    async def _refuse(self, interaction: discord.Interaction):
+        if await self._guard(interaction):
+            await _handle_rules_refuse(interaction, self.lang, private_panel=True)
 
 
 class RulesLanguageSelect(discord.ui.Select):
-    """Public mini selector. Every use opens a BRAND-NEW private translation.
-
-    We intentionally do not cache the ephemeral message. If the member presses
-    Dismiss, the next selection on the public Rules message works immediately.
-    """
+    """Public mini selector. Every use opens a brand-new private Rules panel."""
     def __init__(self):
         super().__init__(
             placeholder="🌐 ترجمة القوانين / Rules language / Langue",
@@ -3828,153 +4026,20 @@ class RulesLanguageSelect(discord.ui.Select):
 
 
 class RulesVerifyView(discord.ui.View):
+    """Original public Rules mechanics stay unchanged; public buttons are Darija-only."""
     def __init__(self):
-        super().__init__(timeout=None)  # باش يبقى خدام للأبد (persistent view)
+        super().__init__(timeout=None)
         self.add_item(RulesLanguageSelect())
 
-    def _is_exempt(self, member: discord.Member) -> bool:
-        if member.id == OWNER_ID:
-            return True
-        return any(role.id in EXEMPT_ROLE_IDS for role in member.roles)
-
-    @discord.ui.button(label="✅ كنوافق", style=discord.ButtonStyle.success, custom_id="rules_agree_button")
+    @discord.ui.button(label="✅ كنوافق", style=discord.ButtonStyle.success, custom_id="rules_agree_button", row=0)
     async def agree_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        member = interaction.user
-        guild = interaction.guild
-        if not guild or not isinstance(member, discord.Member):
-            await interaction.response.send_message(
-                t(interaction, "❌ وقع مشكل، عاود من جديد.", "❌ Something went wrong, try again.", "❌ Une erreur est survenue, réessayez."),
-                ephemeral=True
-            )
-            return
+        lang = get_panel_language(interaction.guild.id if interaction.guild else 0, interaction.user.id)
+        await _handle_rules_agree(interaction, lang, private_panel=False)
 
-        member_role = guild.get_role(MEMBER_ROLE_ID)
-        unverified_role = guild.get_role(UNVERIFIED_ROLE_ID)
-
-        if member_role and member_role in member.roles:
-            await interaction.response.send_message(
-                t(interaction, "✅ راك مفعل من قبل، مرحبا بيك!", "✅ You're already verified, welcome!", "✅ Vous êtes déjà vérifié(e), bienvenue !"),
-                ephemeral=True
-            )
-            return
-
-        if unverified_role and unverified_role in member.roles:
-            try:
-                await member.remove_roles(unverified_role)
-            except discord.Forbidden:
-                pass
-        if member_role:
-            try:
-                await member.add_roles(member_role)
-            except discord.Forbidden:
-                await interaction.response.send_message(
-                    t(interaction,
-                      "❌ ما قدرتش نفعلك، بلغ الإدارة (البوت ماعندوش صلاحية كافية — "
-                      "غالبا role ديال البوت تحت فـ ترتيب الرولات، خاصو يكون فوق role ديال Member).",
-                      "❌ I couldn't verify you, please contact staff (the bot lacks permission — "
-                      "its role is probably below the Member role in the role order).",
-                      "❌ Impossible de vous vérifier, contactez le staff (le bot n'a pas la permission — "
-                      "son rôle est probablement en dessous du rôle Member)."),
-                    ephemeral=True
-                )
-                await log_action(
-                    guild,
-                    "⚠️ فشل التفعيل (صلاحية)",
-                    f"**المستخدم:** {member.mention} ({member.name})\n"
-                    f"**السبب:** role ديال البوت ماعندوش صلاحية يعطي role ديال Member.\n"
-                    f"**الحل:** استعمل `/checkroles` باش تشوف المشكل بالضبط.",
-                    discord.Color.orange()
-                )
-                return
-
-        await interaction.response.send_message(
-            t(interaction,
-              f"✅ تم تفعيلك فـ **{SERVER_NAME}**! مرحبا بيك، استمتع/ي 🎉",
-              f"✅ You're verified in **{SERVER_NAME}**! Welcome, enjoy 🎉",
-              f"✅ Vous êtes vérifié(e) dans **{SERVER_NAME}** ! Bienvenue, amusez-vous bien 🎉"),
-            ephemeral=True
-        )
-
-        await log_action(
-            guild,
-            "✅ تفعيل (زر القوانين)",
-            f"**المستخدم:** {member.mention} ({member.name})\n"
-            f"**الحالة:** وافق على القوانين وتفعل",
-            discord.Color.green()
-        )
-
-        gender_embed = discord.Embed(
-            title=t(interaction, "🚻 واش نتا/نتي ولد ولا بنت؟", "🚻 Are you a boy or a girl?", "🚻 Êtes-vous un garçon ou une fille ?"),
-            description=t(interaction, "ضغط/ي على الزر المناسب باش نعطيوك الرول الصحيح.",
-                          "Click the right button to get the correct role.",
-                          "Cliquez sur le bon bouton pour recevoir le rôle correspondant."),
-            color=discord.Color.blurple()
-        )
-        await interaction.followup.send(
-            embed=gender_embed,
-            view=GenderSelectView(target_user_id=member.id, guild_id=guild.id),
-            ephemeral=True
-        )
-
-    @discord.ui.button(label="❌ كنرفض", style=discord.ButtonStyle.danger, custom_id="rules_refuse_button")
+    @discord.ui.button(label="❌ كنرفض", style=discord.ButtonStyle.danger, custom_id="rules_refuse_button", row=0)
     async def refuse_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        member = interaction.user
-        guild = interaction.guild
-        if not guild or not isinstance(member, discord.Member):
-            await interaction.response.send_message(
-                t(interaction, "❌ وقع مشكل، عاود من جديد.", "❌ Something went wrong, try again.", "❌ Une erreur est survenue, réessayez."),
-                ephemeral=True
-            )
-            return
-
-        if self._is_exempt(member):
-            await interaction.response.send_message(
-                t(interaction,
-                  "⚠️ راك أدمن/مشرف، ماغاديش نطردك، ولكن هاد الزر معناه رفض القوانين للأعضاء العاديين.",
-                  "⚠️ You're an admin/moderator, so you won't be kicked — but this button means rejecting the rules for regular members.",
-                  "⚠️ Vous êtes admin/modérateur, vous ne serez pas expulsé(e) — mais ce bouton signifie refuser les règles pour les membres normaux."),
-                ephemeral=True
-            )
-            return
-
-        try:
-            await interaction.response.send_message(
-                t(interaction, "❌ رفضتي القوانين، غادي تتطرد من السيرفر...",
-                  "❌ You refused the rules, you will be kicked from the server...",
-                  "❌ Vous avez refusé les règles, vous allez être expulsé(e) du serveur..."),
-                ephemeral=True
-            )
-        except Exception:
-            pass
-
-        try:
-            await member.send(
-                t(interaction,
-                  f"❌ رفضتي القوانين ديال **{SERVER_NAME}**، تم طردك من السيرفر تلقائياً.",
-                  f"❌ You refused the rules of **{SERVER_NAME}**, you were automatically kicked from the server.",
-                  f"❌ Vous avez refusé les règles de **{SERVER_NAME}**, vous avez été automatiquement expulsé(e) du serveur.")
-            )
-        except Exception:
-            pass
-
-        await log_action(
-            guild,
-            "🚫 رفض القوانين + طرد تلقائي",
-            f"**المستخدم:** {member.mention} ({member.name})\n"
-            f"**ID:** `{member.id}`\n"
-            f"**السبب:** رفض الموافقة على القوانين (زر ❌)",
-            discord.Color.red()
-        )
-
-        try:
-            await guild.kick(member, reason="رفض الموافقة على قوانين السيرفر")
-        except discord.Forbidden:
-            await log_action(
-                guild,
-                "⚠️ فشل الطرد",
-                f"ماقدرتش نطرد {member.mention} — البوت ماعندوش صلاحية كافية.",
-                discord.Color.orange()
-            )
+        lang = get_panel_language(interaction.guild.id if interaction.guild else 0, interaction.user.id)
+        await _handle_rules_refuse(interaction, lang, private_panel=False)
 
 
 async def setup_rules_message(guild: discord.Guild):
