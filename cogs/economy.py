@@ -205,6 +205,17 @@ class Economy(commands.Cog):
         self.fx_db = JsonStore("fx_rates.json", default={"base":"USD","rates":{"USD":1.0},"date":None,"source":"Frankfurter"})
 
     async def cog_load(self):
+        supported_shop_types = {
+            "xp_boost","coins_boost","role_color","role_color_perm","custom_role",
+            "legend_tag","title_role","bank_interest_boost","transfer_fee_pass",
+            "collectible_asset","shoutout",
+        }
+        configured_types = {str(i.get("type")) for i in getattr(cfg,"SHOP_ITEMS",[]) if i.get("type")}
+        unknown = sorted(configured_types - supported_shop_types)
+        if unknown:
+            print(f"[SHOP AUDIT] ❌ Product types without real handler: {unknown}")
+        else:
+            print(f"[SHOP AUDIT] ✅ All {len(getattr(cfg,'SHOP_ITEMS',[]))} products map to real handlers.")
         self.expire_purchases_loop.start()
         self.economy_stats_loop.start()
         self.loan_collection_loop.start()
@@ -256,24 +267,47 @@ class Economy(commands.Cog):
                         still_active.append(p)
                         continue
 
-                    # الشراء خلصت مدتو — نحاولو نحيدو الرول بصح
-                    changed = True
-                    if guild is not None:
-                        try:
-                            member = guild.get_member(int(user_id_str)) or await guild.fetch_member(int(user_id_str))
-                        except discord.NotFound:
-                            member = None
-                        except Exception:
-                            member = None
+                    # الشراء خلصت مدتو — خاص التأثير يتحيد بصح.
+                    # إلا Discord رفض العملية، نخلي الـentry باش نعاود المحاولة
+                    # وما نخليوش perk مؤقت يتحول لدائم بالغلط.
+                    if guild is None:
+                        still_active.append(p)
+                        continue
 
-                        role = guild.get_role(p.get("role_id", 0)) if p.get("role_id") else None
-                        if member and role and role in member.roles:
-                            try:
-                                await member.remove_roles(role, reason="انتهت مدة الشراء من المتجر")
-                            except Exception as e:
-                                print(f"[SHOP EXPIRE] ⚠️ ماقدرتش نحيد {role} من {user_id_str}: {e}")
-                    # كنسقطو الـ entry فكل الحالات (حتى لو الرول ماتحيدش) باش
-                    # ما يبقاش يعاود يحاول كل 15 دقيقة لبلاصة
+                    try:
+                        member = guild.get_member(int(user_id_str)) or await guild.fetch_member(int(user_id_str))
+                    except discord.NotFound:
+                        member = None
+                    except Exception:
+                        still_active.append(p)
+                        continue
+
+                    role = guild.get_role(int(p.get("role_id") or 0)) if p.get("role_id") else None
+                    removed_ok = True
+
+                    if member and role and role in member.roles:
+                        try:
+                            await member.remove_roles(role, reason="انتهت مدة الشراء من المتجر")
+                        except Exception as e:
+                            removed_ok = False
+                            print(f"[SHOP EXPIRE] ⚠️ ماقدرتش نحيد {role} من {user_id_str}: {e}")
+
+                    if not removed_ok:
+                        still_active.append(p)
+                        continue
+
+                    # Personal color/custom-role purchases are unique roles.
+                    # Delete them too so the server role list does not fill up.
+                    if role and p.get("delete_role_on_expiry"):
+                        try:
+                            await role.delete(reason="انتهت مدة Role المشتراة من GGMW9 Shop")
+                        except discord.Forbidden:
+                            # The benefit is already removed from the member.
+                            print(f"[SHOP EXPIRE] ⚠️ تحيدات من العضو ولكن ماقدرتش نمسح Role {role.id}")
+                        except discord.HTTPException as e:
+                            print(f"[SHOP EXPIRE] ⚠️ Discord ماقبلش مسح Role {role.id}: {e}")
+
+                    changed = True
 
                 if len(still_active) != len(purchases):
                     acc["purchases"] = still_active
@@ -1980,6 +2014,159 @@ class Economy(commands.Cog):
             await self.ensure_bank_panel(guild)
             await self.ensure_big_win_channel(guild)
             await self.refresh_economy_stats(guild)
+            await self.repair_guild_shop_roles(guild)
+
+    # ════════════════════════════════════════════════
+    # Shop Role Health / Repair
+    # ════════════════════════════════════════════════
+
+    @staticmethod
+    def _parse_shop_expiry(value):
+        if not value:
+            return None
+        try:
+            dt = datetime.fromisoformat(str(value))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.astimezone(timezone.utc)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _shop_purchase_active(entry: dict) -> bool:
+        expires = Economy._parse_shop_expiry(entry.get("expires"))
+        return expires is None or expires > datetime.now(timezone.utc)
+
+    def _find_active_purchase(self, guild_id: int, user_id: int, *, effect_key: str = None, item_ids=None):
+        item_ids = set(item_ids or [])
+        for p in self._acc(guild_id, user_id).get("purchases", []) or []:
+            if effect_key and p.get("effect_key") == effect_key and self._shop_purchase_active(p):
+                return p
+            if item_ids and p.get("item_id") in item_ids and self._shop_purchase_active(p):
+                return p
+        return None
+
+    async def _position_cosmetic_role(self, guild: discord.Guild, role: discord.Role) -> Tuple[bool, str]:
+        """Put a personal cosmetic role at the highest safe position below the bot.
+
+        This makes a purchased personal color actually become the member's
+        effective Discord name color instead of silently sitting below another
+        colored role.
+        """
+        me = guild.me or (guild.get_member(self.bot.user.id) if self.bot.user else None)
+        if not me:
+            return False, "ماقدرتش نحدد Role ديال البوت."
+        if not me.guild_permissions.manage_roles:
+            return False, "البوت خاصو صلاحية **Manage Roles / إدارة الرولات**."
+        if me.top_role.is_default() or me.top_role.position <= 1:
+            return False, "Role ديال البوت خاصها تكون فوق رولات الأعضاء."
+
+        desired = max(1, int(me.top_role.position) - 1)
+        if role.position >= me.top_role.position:
+            return False, "الرول المشتراة فوق Role ديال البوت ومايقدرش يتحكم فيها."
+
+        try:
+            # Position can shift while Discord reorders roles, so only request
+            # the highest position the bot is legally allowed to manage.
+            if role.position != desired:
+                await role.edit(position=desired, reason="GGMW9 Shop — cosmetic role priority")
+            return True, ""
+        except discord.Forbidden:
+            return False, "البوت ماقدرش يطلع الرول. طلّع Role ديال البوت فوق رولات الأعضاء."
+        except discord.HTTPException as exc:
+            return False, f"Discord رفض ترتيب الرول: {exc}"
+
+    @staticmethod
+    def _effective_colored_role(member: discord.Member):
+        colored = [r for r in member.roles if not r.is_default() and int(r.colour.value or 0) != 0]
+        if not colored:
+            return None
+        return max(colored, key=lambda r: (r.position, r.id))
+
+    async def repair_member_shop_roles(self, guild: discord.Guild, member: discord.Member) -> list:
+        """Self-heal active role purchases for one member.
+
+        Especially important for legacy personal-color purchases made before
+        the shop started positioning cosmetic roles automatically.
+        """
+        notes = []
+        purchases = self._acc(guild.id, member.id).get("purchases", []) or []
+
+        # Legacy purchases do not have effect_key yet, so recognize item ids.
+        color_ids = {"color_basic", "color_month", "permanent_color"}
+        color_entries = [
+            p for p in purchases
+            if self._shop_purchase_active(p)
+            and (p.get("effect_key") == "personal_color" or p.get("item_id") in color_ids)
+        ]
+
+        if color_entries:
+            # Prefer newest entry / latest role that still exists.
+            entry = color_entries[-1]
+            role = guild.get_role(int(entry.get("role_id") or 0)) if entry.get("role_id") else None
+
+            # Migration fallback for the old naming scheme.
+            if role is None:
+                legacy_names = {
+                    f"🎨 {member.display_name}",
+                    f"🎨 {member.display_name} • {member.id}",
+                }
+                role = next(
+                    (r for r in guild.roles if r.name in legacy_names and r in member.roles),
+                    None,
+                )
+                if role:
+                    entry["role_id"] = role.id
+                    entry["effect_key"] = "personal_color"
+                    entry.setdefault("delete_role_on_expiry", True)
+                    self.db.save()
+
+            if role:
+                try:
+                    unique_name = f"🎨 {member.display_name[:55]} • {member.id}"[:100]
+                    if role.name != unique_name:
+                        await role.edit(name=unique_name, reason="GGMW9 Shop color migration")
+                    ok, reason = await self._position_cosmetic_role(guild, role)
+                    if not ok:
+                        notes.append(f"⚠️ {reason}")
+                    if role not in member.roles:
+                        await member.add_roles(role, reason="GGMW9 Shop color repair")
+                    fresh = await guild.fetch_member(member.id)
+                    effective = self._effective_colored_role(fresh)
+                    if effective and effective.id == role.id:
+                        notes.append(f"✅ اللون الشخصي خدام: {role.mention}")
+                    elif effective:
+                        notes.append(
+                            f"⚠️ اللون الشخصي موجود ولكن {effective.mention} عندها أولوية أعلى."
+                        )
+                    else:
+                        notes.append(f"⚠️ الرول {role.mention} موجودة ولكن اللون ما بانش.")
+                except Exception as exc:
+                    notes.append(f"⚠️ إصلاح اللون فشل: {type(exc).__name__}: {exc}")
+            else:
+                notes.append("⚠️ شراء اللون مسجل ولكن Role ديالو ما بقاتش موجودة.")
+
+        return notes
+
+    async def repair_guild_shop_roles(self, guild: discord.Guild):
+        """Repair active personal color roles after restart."""
+        guild_data = self.db.guild(guild.id)
+        for uid, acc in list(guild_data.items()):
+            purchases = acc.get("purchases", []) or []
+            if not any(
+                self._shop_purchase_active(p)
+                and (
+                    p.get("effect_key") == "personal_color"
+                    or p.get("item_id") in {"color_basic","color_month","permanent_color"}
+                )
+                for p in purchases
+            ):
+                continue
+            try:
+                member = guild.get_member(int(uid)) or await guild.fetch_member(int(uid))
+            except Exception:
+                continue
+            await self.repair_member_shop_roles(guild, member)
 
     # ════════════════════════════════════════════════
     # API داخلي
@@ -2652,6 +2839,137 @@ class ShopView(discord.ui.View):
         super().__init__(timeout=900); self.cog,self.user,self.lang,self.session_key=cog,user,lang,session_key
         self.add_item(ShopCategorySelect(cog,user,lang,session_key))
         self.add_item(ShopSessionLanguageSelect(cog,user,lang,session_key,row=1))
+        self.add_item(MyPurchasesButton(cog,user,lang,session_key))
+
+
+def _shop_expiry_line(entry: dict, lang: str = "darija") -> str:
+    expires = Economy._parse_shop_expiry(entry.get("expires"))
+    if expires is None:
+        return "♾️ دائم" if lang=="darija" else "♾️ Permanent" if lang=="en" else "♾️ Permanent"
+    unix = int(expires.timestamp())
+    return (
+        f"⏳ حتى <t:{unix}:F> (<t:{unix}:R>)"
+        if lang=="darija"
+        else f"⏳ Until <t:{unix}:F> (<t:{unix}:R>)"
+        if lang=="en"
+        else f"⏳ Jusqu’au <t:{unix}:F> (<t:{unix}:R>)"
+    )
+
+
+def build_my_purchases_embed(cog:"Economy", guild:discord.Guild, user:discord.Member, lang="darija"):
+    lang = lang if lang in {"darija","en","fr"} else "darija"
+    acc = cog._acc(guild.id, user.id)
+    now = datetime.now(timezone.utc)
+    lines = []
+
+    # Role-based purchases
+    for p in acc.get("purchases", []) or []:
+        exp = cog._parse_shop_expiry(p.get("expires"))
+        if exp is not None and exp <= now:
+            continue
+        item = next((i for i in cfg.SHOP_ITEMS if i.get("id")==p.get("item_id")), None)
+        role = guild.get_role(int(p.get("role_id") or 0)) if p.get("role_id") else None
+        name = item.get("name") if item else p.get("item_id","شراء")
+        role_txt = role.mention if role else ("⚠️ Role مفقودة" if lang=="darija" else "⚠️ Missing role")
+        meta = p.get("meta") or {}
+        color_txt = f" • 🎨 **{meta.get('hex')}**" if meta.get("hex") else ""
+        lines.append(f"• **{name}** — {role_txt}{color_txt}\n  {_shop_expiry_line(p,lang)}")
+
+    # Account perks
+    perk_fields = [
+        ("coins_boost_expires", "🎮 تعزيز جوائز الألعاب المصغرة"),
+        ("bank_interest_boost_expires", "📈 تعزيز أرباح الادخار"),
+        ("transfer_fee_pass_expires", "💸 تحويلات بلا رسوم"),
+    ]
+    for key, dz_name in perk_fields:
+        dt = cog._parse_shop_expiry(acc.get(key))
+        if dt and dt > now:
+            unix = int(dt.timestamp())
+            lines.append(f"• **{dz_name}**\n  ⏳ حتى <t:{unix}:F> (<t:{unix}:R>)")
+
+    # XP boost lives in the Leveling store.
+    bridge = getattr(cog.bot, "gg", {}) or {}
+    get_level = bridge.get("get_user_level_data")
+    if get_level:
+        try:
+            data = get_level(guild.id, user.id)
+            raw = data.get("xp_boost_expires")
+            if raw:
+                xp_dt = datetime.fromisoformat(raw)
+                if xp_dt.tzinfo is None:
+                    xp_dt = xp_dt.replace(tzinfo=timezone.utc)
+                if xp_dt > now:
+                    unix = int(xp_dt.timestamp())
+                    mult = data.get("xp_boost_multiplier", 1.0)
+                    lines.append(f"• **⚡ تعزيز XP {mult}x**\n  ⏳ حتى <t:{unix}:F> (<t:{unix}:R>)")
+        except Exception:
+            pass
+
+    # Permanent assets
+    assets = cog.get_owned_assets(guild.id, user.id)
+    if assets:
+        for asset in assets.values():
+            lines.append(
+                f"• **{asset.get('emoji','🏠')} {asset.get('name','ممتلك')}** — ♾️ دائم"
+            )
+
+    if lang=="en":
+        title=f"🧾 {user.display_name}'s Purchases"
+        desc="\n\n".join(lines) if lines else "📭 You don't have any active Shop benefits yet."
+        footer="Real benefits • role purchases are checked and repaired automatically"
+    elif lang=="fr":
+        title=f"🧾 Achats de {user.display_name}"
+        desc="\n\n".join(lines) if lines else "📭 Tu n’as aucun avantage actif de la boutique."
+        footer="Avantages réels • les rôles achetés sont vérifiés et réparés automatiquement"
+    else:
+        title=f"🧾 مشتريات {user.display_name}"
+        desc="\n\n".join(lines) if lines else "📭 ماعندك حتى امتياز خدام من المتجر دابا."
+        footer="كل شراء خاصو يكون عندو تأثير حقيقي • البوت كيفحص ويصلح رولات المتجر أوتوماتيكياً"
+
+    embed=discord.Embed(title=title,description=desc,color=discord.Color.teal(),timestamp=datetime.now())
+    effective = cog._effective_colored_role(user)
+    if lang=="darija":
+        embed.add_field(
+            name="🎨 اللون اللي باين دابا",
+            value=(
+                f"{effective.mention} • **#{int(effective.colour.value):06X}**"
+                if effective else "ماكاين حتى لون من الرولات دابا."
+            ),
+            inline=False,
+        )
+    return embed
+
+
+class ShopPurchasesView(discord.ui.View):
+    def __init__(self,cog,user,lang="darija",session_key="shop"):
+        super().__init__(timeout=900)
+        self.cog,self.user,self.lang,self.session_key=cog,user,lang,session_key
+        self.add_item(ShopBackButton(cog,user,lang,session_key))
+        self.add_item(ShopSessionLanguageSelect(cog,user,lang,session_key,row=2))
+
+
+class MyPurchasesButton(discord.ui.Button):
+    def __init__(self,cog,user,lang="darija",session_key="shop"):
+        label="🧾 مشترياتي" if lang=="darija" else "🧾 My Purchases" if lang=="en" else "🧾 Mes achats"
+        super().__init__(label=label,style=discord.ButtonStyle.primary,row=2)
+        self.cog,self.user,self.lang,self.session_key=cog,user,lang,session_key
+
+    async def callback(self,interaction):
+        if interaction.user.id!=self.user.id:
+            await interaction.response.send_message(_eco_t(self.lang,"not_yours"),ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        notes = await self.cog.repair_member_shop_roles(interaction.guild, interaction.user)
+        fresh = interaction.guild.get_member(interaction.user.id) or interaction.user
+        embed = build_my_purchases_embed(self.cog,interaction.guild,fresh,self.lang)
+        if notes:
+            repair_title="🔧 فحص تلقائي" if self.lang=="darija" else "🔧 Automatic check"
+            embed.add_field(name=repair_title,value="\n".join(notes)[:1024],inline=False)
+        await interaction.edit_original_response(
+            content=None,
+            embed=embed,
+            view=ShopPurchasesView(self.cog,interaction.user,self.lang,self.session_key),
+        )
 
 
 class ShopBackButton(discord.ui.Button):
@@ -2749,47 +3067,176 @@ async def apply_purchase(cog: "Economy", guild: discord.Guild, user: discord.Mem
             return False, "نظام XP ماشي مربوط (bot.gg ناقص)."
         try:
             data = bridge["get_user_level_data"](guild.id, user.id)
+            now = datetime.now()
+            hours = int(item.get("duration_hours", 1))
+            try:
+                current = datetime.fromisoformat(data.get("xp_boost_expires")) if data.get("xp_boost_expires") else now
+            except Exception:
+                current = now
+            start_at = current if current > now else now
             data["xp_boost_multiplier"] = item.get("multiplier", 2.0)
-            data["xp_boost_expires"] = (datetime.now() + timedelta(hours=item.get("duration_hours", 1))).isoformat()
+            data["xp_boost_expires"] = (start_at + timedelta(hours=hours)).isoformat()
             bridge["save_levels"]()
-            return True, f"⚡ تعزيز XP **{item.get('multiplier',2.0)}x** تفعّل لمدة **{item.get('duration_hours',1)} ساعة**."
+            return True, f"⚡ تعزيز XP **{item.get('multiplier',2.0)}x** تفعّل؛ تزادت **{hours} ساعة** للمدة."
         except Exception as exc:
             return False, f"خطأ فتفعيل تعزيز XP: {exc}"
 
     if item_type in {"role_color", "role_color_perm"}:
+        if "color" not in item:
+            return False, "خاصك تختار اللون أولاً."
+
+        desired_color = int(item["color"])
+        acc = cog._acc(guild.id, user.id)
+        color_item_ids = {"color_basic", "color_month", "permanent_color"}
+
+        # Reuse the member's existing personal color role instead of creating
+        # duplicate roles every time the member buys another color/duration.
+        existing_entry = cog._find_active_purchase(
+            guild.id,
+            user.id,
+            effect_key="personal_color",
+            item_ids=color_item_ids,
+        )
+        role = None
+        if existing_entry and existing_entry.get("role_id"):
+            role = guild.get_role(int(existing_entry["role_id"]))
+
+        if role is None:
+            legacy_names = {
+                f"🎨 {user.display_name}",
+                f"🎨 {user.display_name} • {user.id}",
+            }
+            role = next(
+                (r for r in guild.roles if r.name in legacy_names and r in user.roles),
+                None,
+            )
+
+        created = False
+        previous_colour = int(role.colour.value) if role else None
+        unique_name = f"🎨 {user.display_name[:55]} • {user.id}"[:100]
+
         try:
-            if "color" not in item:
-                return False, "خاصك تختار اللون أولاً."
-            role_name = f"🎨 {user.display_name}"
-            role = discord.utils.get(guild.roles, name=role_name)
-            if role:
-                await role.edit(colour=discord.Colour(int(item["color"])))
+            if role is None:
+                role = await guild.create_role(
+                    name=unique_name,
+                    colour=discord.Colour(desired_color),
+                    hoist=False,
+                    mentionable=False,
+                    reason=f"GGMW9 Shop personal color — {user}",
+                )
+                created = True
             else:
-                role = await guild.create_role(name=role_name, colour=discord.Colour(int(item["color"])), reason=f"Shop color — {user}")
-            if cfg.SHOP_COLOR_ROLE_ANCHOR_ID:
-                anchor = guild.get_role(cfg.SHOP_COLOR_ROLE_ANCHOR_ID)
-                if anchor:
-                    await role.edit(position=max(1, anchor.position - 1))
-            await user.add_roles(role, reason="GGMW9 Shop color")
+                await role.edit(
+                    name=unique_name,
+                    colour=discord.Colour(desired_color),
+                    hoist=False,
+                    mentionable=False,
+                    reason=f"GGMW9 Shop color change — {user}",
+                )
+
+            ok, reason = await cog._position_cosmetic_role(guild, role)
+            if not ok:
+                raise RuntimeError(reason)
+
+            if role not in user.roles:
+                await user.add_roles(role, reason="GGMW9 Shop personal color")
+
+            # Verify the visible Discord color, not just that API calls returned 200.
+            fresh = await guild.fetch_member(user.id)
+            effective = cog._effective_colored_role(fresh)
+            if not effective or effective.id != role.id or int(fresh.colour.value or 0) != desired_color:
+                higher = effective.mention if effective else "Role أخرى"
+                raise RuntimeError(
+                    f"اللون ماقدرش يولي هو اللون الفعلي ديال الاسم؛ {higher} عندها أولوية أعلى."
+                )
+
             days = 0 if item_type == "role_color_perm" else int(item.get("duration_days", 7))
-            _record_purchase(cog, guild.id, user.id, item, role.id, days=days)
-            return True, "♾️ اللون الشخصي تفعّل دائم." if days == 0 else f"🎨 اللون تفعّل **{days} أيام**."
+            entry = _record_purchase(
+                cog,
+                guild.id,
+                user.id,
+                item,
+                role.id,
+                days,
+                effect_key="personal_color",
+                delete_role_on_expiry=True,
+                meta={"color": desired_color, "hex": f"#{desired_color:06X}"},
+                extend=True,
+            )
+
+            expires = entry.get("expires")
+            if expires:
+                try:
+                    unix = int(datetime.fromisoformat(expires).timestamp())
+                    duration_txt = f"حتى <t:{unix}:F> (<t:{unix}:R>)"
+                except Exception:
+                    duration_txt = f"لمدة {days} أيام"
+            else:
+                duration_txt = "بشكل دائم"
+
+            return True, (
+                f"🎨 اللون الشخصي تفعّل بصح: {role.mention}\n"
+                f"🎨 اللون: **#{desired_color:06X}** • {duration_txt}\n"
+                "✅ دابا خاص اللون يبان فاسمك فالرسائل ولائحة الأعضاء."
+            )
+
         except discord.Forbidden:
-            return False, "البوت خاصو صلاحية إدارة الرولات والرول ديالو تكون فوق Role اللي كيصاوب."
+            # Roll back a role created for a failed purchase.
+            if created and role:
+                try:
+                    await role.delete(reason="Rollback failed shop color purchase")
+                except Exception:
+                    pass
+            return False, (
+                "البوت ماقدرش يطبق اللون. خاصو **Manage Roles** وRole ديالو "
+                "تكون فوق رولات الأعضاء."
+            )
         except Exception as exc:
-            return False, f"خطأ فالرول: {exc}"
+            # Restore previous state because execute_purchase will refund money.
+            if role:
+                try:
+                    if created:
+                        await role.delete(reason="Rollback failed shop color purchase")
+                    elif previous_colour is not None:
+                        await role.edit(
+                            colour=discord.Colour(previous_colour),
+                            reason="Rollback failed shop color change",
+                        )
+                except Exception:
+                    pass
+            return False, f"ماقدرتش نفعّل اللون بشكل مرئي: {exc}"
 
     if item_type == "custom_role":
         try:
-            role = await guild.create_role(name=item["custom_name"][:32], colour=discord.Colour.random(), reason=f"رول خاص shop — {user}")
+            # Custom Role buys the NAME/identity. Keep it colorless so it does
+            # not override a separately purchased Personal Color.
+            role = await guild.create_role(
+                name=item["custom_name"][:32],
+                colour=discord.Colour.default(),
+                hoist=False,
+                mentionable=False,
+                reason=f"رول خاص من المتجر — {user}",
+            )
             await user.add_roles(role, reason="GGMW9 Shop custom role")
             days = int(item.get("duration_days", 30))
-            _record_purchase(cog, guild.id, user.id, item, role.id, days=days)
-            return True, f"🏷️ Role **{role.name}** تصاوب لمدة **{days} يوم**."
+            entry = _record_purchase(
+                cog, guild.id, user.id, item, role.id, days=days,
+                effect_key=f"custom_role:{role.id}",
+                delete_role_on_expiry=True,
+                meta={"role_name": role.name},
+            )
+            try:
+                unix = int(datetime.fromisoformat(entry["expires"]).timestamp())
+                expiry_txt = f"حتى <t:{unix}:F> (<t:{unix}:R>)"
+            except Exception:
+                expiry_txt = f"لمدة {days} يوم"
+            # Restore personal color priority if the member owns one.
+            await cog.repair_member_shop_roles(guild, user)
+            return True, f"🏷️ الرول الخاصة {role.mention} تصاوبات وتركبات عليك {expiry_txt}."
         except discord.Forbidden:
             return False, "البوت ماعندوش صلاحية إدارة الرولات كافية."
         except Exception as exc:
-            return False, f"خطأ فالرول خاص: {exc}"
+            return False, f"خطأ فالرول الخاصة: {exc}"
 
     if item_type == "legend_tag":
         try:
@@ -2798,8 +3245,14 @@ async def apply_purchase(cog: "Economy", guild: discord.Guild, user: discord.Mem
                 role = await guild.create_role(name="👑 LEGEND", colour=discord.Colour.gold(), mentionable=False, reason="Legend Tag shop")
             await user.add_roles(role, reason="Legend Tag purchase")
             days = int(item.get("duration_days", 7))
-            _record_purchase(cog, guild.id, user.id, item, role.id, days=days)
-            return True, f"👑 LEGEND Tag تفعّل **{days} أيام**."
+            entry = _record_purchase(
+                cog, guild.id, user.id, item, role.id, days=days,
+                effect_key=f"shared_role:{role.id}",
+                delete_role_on_expiry=False,
+                extend=True,
+            )
+            await cog.repair_member_shop_roles(guild, user)
+            return True, f"👑 LEGEND Tag تفعّل **{days} أيام** (والمدة كتتزاد إلا شريتيه مرة أخرى)."
         except discord.Forbidden:
             return False, "البوت ماعندوش صلاحية إدارة الرولات كافية."
         except Exception as exc:
@@ -2818,8 +3271,14 @@ async def apply_purchase(cog: "Economy", guild: discord.Guild, user: discord.Mem
                 )
             await user.add_roles(role, reason="GGMW9 Prestige purchase")
             days = int(item.get("duration_days", 30))
-            _record_purchase(cog, guild.id, user.id, item, role.id, days=days)
-            return True, f"👑 رول الهيبة **{role.name}** تفعّل **{days} يوم**."
+            entry = _record_purchase(
+                cog, guild.id, user.id, item, role.id, days=days,
+                effect_key=f"shared_role:{role.id}",
+                delete_role_on_expiry=False,
+                extend=True,
+            )
+            await cog.repair_member_shop_roles(guild, user)
+            return True, f"👑 رول الهيبة {role.mention} تفعّلات **{days} يوم** (والمدة كتتزاد مع إعادة الشراء)."
         except discord.Forbidden:
             return False, "البوت ماعندوش صلاحية إدارة الرولات كافية."
         except Exception as exc:
@@ -2827,10 +3286,19 @@ async def apply_purchase(cog: "Economy", guild: discord.Guild, user: discord.Mem
 
     if item_type == "coins_boost":
         acc = cog._acc(guild.id, user.id)
+        now = datetime.now(timezone.utc)
+        hours = int(item.get("duration_hours", 2))
+        try:
+            current = datetime.fromisoformat(acc.get("coins_boost_expires")) if acc.get("coins_boost_expires") else now
+            if current.tzinfo is None:
+                current = current.replace(tzinfo=timezone.utc)
+        except Exception:
+            current = now
+        start_at = current if current > now else now
         acc["coins_boost_multiplier"] = item.get("multiplier", 1.25)
-        acc["coins_boost_expires"] = (datetime.now(timezone.utc) + timedelta(hours=item.get("duration_hours", 2))).isoformat()
+        acc["coins_boost_expires"] = (start_at + timedelta(hours=hours)).isoformat()
         cog.db.save()
-        return True, f"🎮 تعزيز جوائز الألعاب المصغرة **{item.get('multiplier',1.25)}x** تفعّل **{item.get('duration_hours',2)} ساعات**. الرهانات ما كتتأثرش."
+        return True, f"🎮 تعزيز جوائز الألعاب المصغرة **{item.get('multiplier',1.25)}x** تفعّل؛ تزادت **{hours} ساعات** للمدة. الرهانات ما كتتأثرش."
 
     if item_type in {"bank_interest_boost", "transfer_fee_pass"}:
         acc = cog._acc(guild.id, user.id)
@@ -2885,19 +3353,80 @@ async def apply_purchase(cog: "Economy", guild: discord.Guild, user: discord.Mem
 
 
 def _record_purchase(
-    cog: "Economy", guild_id: int, user_id: int, item: dict, role_id: int, days: int
+    cog: "Economy",
+    guild_id: int,
+    user_id: int,
+    item: dict,
+    role_id: int,
+    days: int,
+    *,
+    effect_key: str = None,
+    delete_role_on_expiry: bool = False,
+    meta: dict = None,
+    extend: bool = False,
 ):
+    """Record a real active shop benefit.
+
+    effect_key prevents a repeated purchase of the same effect from creating
+    two independent expiry records that would remove the role too early.
+    """
     acc = cog._acc(guild_id, user_id)
-    acc.setdefault("purchases", []).append(
-        {
-            "item_id": item["id"],
-            "role_id": role_id,
-            "expires": None
-            if days <= 0
-            else (datetime.now(timezone.utc) + timedelta(days=days)).isoformat(),
-        }
-    )
+    purchases = acc.setdefault("purchases", [])
+    now = datetime.now(timezone.utc)
+
+    def parse(value):
+        if not value:
+            return None
+        try:
+            dt = datetime.fromisoformat(str(value))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.astimezone(timezone.utc)
+        except Exception:
+            return None
+
+    existing = None
+    if effect_key:
+        for p in reversed(purchases):
+            if p.get("effect_key") == effect_key:
+                exp = parse(p.get("expires"))
+                if p.get("expires") is None or exp is None or exp > now:
+                    existing = p
+                    break
+
+    # Permanent purchase always wins over temporary duration.
+    if days <= 0:
+        expiry = None
+    elif existing and existing.get("expires") is None:
+        expiry = None
+    else:
+        base = now
+        if extend and existing:
+            old_exp = parse(existing.get("expires"))
+            if old_exp and old_exp > now:
+                base = old_exp
+        expiry = (base + timedelta(days=days)).isoformat()
+
+    payload = {
+        "item_id": item["id"],
+        "role_id": int(role_id) if role_id else None,
+        "expires": expiry,
+        "effect_key": effect_key,
+        "delete_role_on_expiry": bool(delete_role_on_expiry),
+        "meta": dict(meta or {}),
+        "updated_at": now.isoformat(),
+    }
+
+    if existing is not None:
+        existing.update(payload)
+        entry = existing
+    else:
+        payload["bought_at"] = now.isoformat()
+        purchases.append(payload)
+        entry = payload
+
     cog.db.save()
+    return entry
 
 
 async def setup(bot: commands.Bot):
