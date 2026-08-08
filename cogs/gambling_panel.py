@@ -58,7 +58,7 @@ def build_session_menu_embed(bot: commands.Bot, guild: discord.Guild, user: disc
         title="🎰 شنو بغيتي تلعب؟",
         description=(
             f"💳 الرصيد ديالك: **{balance:,}** {cfg.CURRENCY_EMOJI}\n"
-            f"💰 أقل رهان فكاع الألعاب: **20** {cfg.CURRENCY_EMOJI}\n\n"
+            f"💰 أقل رهان فكاع الألعاب: **15** {cfg.CURRENCY_EMOJI}\n\n"
             "اختار اللعبة من اللائحة تحت. من بعد كل جولة تقدر تبدل الرهان "
             "**بأي رقم بغيتي** ولا تبدل اللعبة، ونفس الرسالة هي اللي كتتحدث."
         ),
@@ -524,7 +524,7 @@ class GamblingPanel(commands.Cog):
         embed.add_field(
             name="💰 حدود الرهان",
             value=(
-                f"**أقل رهان فكاع الألعاب: 20 {cfg.CURRENCY_EMOJI}**\n"
+                f"**أقل رهان فكاع الألعاب: 15 {cfg.CURRENCY_EMOJI}**\n"
                 f"🎲 النرد: **{cfg.DICE_MIN_BET}**-**{cfg.DICE_MAX_BET}**\n"
                 f"🪙 Coinflip: **{cfg.COINFLIP_MIN_BET}**-**{cfg.COINFLIP_MAX_BET}**\n"
                 f"🎰 Slots: **{cfg.SLOTS_MIN_BET}**-**{cfg.SLOTS_MAX_BET}**\n"
