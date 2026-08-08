@@ -53,9 +53,7 @@ class Dice(commands.Cog):
 
     # ═══════════════════════════════════════════════════
 
-    @commands.hybrid_command(name="dice", aliases=["نرد"],
-                             description="راهن بالدراهم وارمي النرد 🎲")
-    @app_commands.describe(bet="شحال بغيتي تراهن")
+    @commands.command(name="dice", aliases=["نرد"], hidden=True)
     @commands.cooldown(1, cfg.COOLDOWN_DICE, commands.BucketType.user)
     async def dice_cmd(self, ctx: commands.Context, bet: int):
         eco = self.economy()
