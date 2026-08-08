@@ -26,6 +26,26 @@ GAMBLING_CHANNEL_ID = 1534672591422226502
 SHOP_PANEL_CHANNEL_ID = 1534969085862088744  # ← حط هنا ID ديال #shop إلا بغيتي بانل المتجر
 SHOP_SHOUTOUT_CHANNEL_ID = 1535047435779317843  # ← حط هنا ID ديال الشانيل اللي غادي يبان فيها الشوتاوت (بحال #general)
 
+# ═══════ Real Economy / Central Bank (Panel-based — بلا Slash Commands جداد) ═══════
+ECONOMY_CATEGORY_ID = 1535605243583397928
+ECONOMY_BANK_CHANNEL_ID = 1535605452233113710
+ECONOMY_STATS_CHANNEL_ID = 1535605627534057512
+ECONOMY_LOGS_CHANNEL_ID = 1535605776293433404
+
+# أي رهان تخسر فعلاً: 60% للخزينة + 25% للـ Global Jackpot + 15% Burn.
+GAMBLING_LOSS_TREASURY_PERCENT = 60
+GAMBLING_LOSS_JACKPOT_PERCENT = 25
+# Burn كيتحسب بالباقي باش المجموع يبقى 100% حتى مع التقريب.
+
+# أي شراء ناجح من المتجر: 50% للخزينة + 10% لصندوق Events + 40% Burn.
+SHOP_TREASURY_PERCENT = 50
+SHOP_EVENTS_PERCENT = 10
+# Burn كيتحسب بالباقي.
+
+ECONOMY_TRANSACTION_HISTORY_LIMIT = 500
+ECONOMY_STATS_UPDATE_MINUTES = 2
+GLOBAL_JACKPOT_ENABLED = True
+
 MINIGAMES_CATEGORY_ID = 1533697548215128134
 
 # ═══════════════════════════════════════════════════════
