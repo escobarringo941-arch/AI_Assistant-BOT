@@ -427,13 +427,56 @@ class Economy(commands.Cog):
         OWNER_ID = getattr(self.bot, "gg", {}).get("OWNER_ID")
 
         if not OWNER_ID or ctx.author.id != OWNER_ID:
-            await ctx.send(
-                "❌ هاد الأمر خاص غير بـ Owner الحقيقي للسيرفر.", delete_after=6
-            )
+            # ما نخرجو حتى جواب علني: Slash = ephemeral، Prefix fallback = DM.
+            if ctx.interaction:
+                await ctx.send(
+                    "❌ هاد الأمر خاص غير بـ Owner الحقيقي للسيرفر.",
+                    ephemeral=True,
+                )
+            else:
+                try:
+                    await ctx.author.send("❌ هاد الأمر خاص غير بـ Owner الحقيقي للسيرفر.")
+                except discord.HTTPException:
+                    pass
             return
 
-        msg = self.admin_give(ctx.guild, member, amount)
-        await ctx.send(msg)
+        # طبّق التغيير فالفلوس، ولكن بلا حتى رسالة عامة فالسيرفر.
+        self.admin_give(ctx.guild, member, amount)
+        new_balance = self.get_balance(ctx.guild.id, member.id)
+
+        # غير العضو المستفيد كيتوصل بإشعار خاص فـ DM.
+        if amount >= 0:
+            dm_text = (
+                f"💰 وصلك **{amount:,}** {currency_word(amount)} {cfg.CURRENCY_EMOJI}!\n"
+                f"الرصيد ديالك دابا: **{new_balance:,}** {cfg.CURRENCY_EMOJI}"
+            )
+        else:
+            dm_text = (
+                f"💸 تحيدو من رصيدك **{abs(amount):,}** {currency_word(amount)} {cfg.CURRENCY_EMOJI}.\n"
+                f"الرصيد ديالك دابا: **{new_balance:,}** {cfg.CURRENCY_EMOJI}"
+            )
+
+        dm_sent = True
+        try:
+            await member.send(dm_text)
+        except (discord.Forbidden, discord.HTTPException):
+            dm_sent = False
+
+        # تأكيد سري للـ Owner فقط؛ ما كيبان لحتى واحد آخر فالسيرفر.
+        owner_confirmation = (
+            f"✅ تم تعديل رصيد {member.mention} بسرية. "
+            f"الرصيد الجديد: **{new_balance:,}** {cfg.CURRENCY_EMOJI}"
+        )
+        if not dm_sent:
+            owner_confirmation += "\n⚠️ العضو ساد الـ DM، لذلك ما قدرش يتوصل بالإشعار الخاص."
+
+        if ctx.interaction:
+            await ctx.send(owner_confirmation, ephemeral=True)
+        else:
+            try:
+                await ctx.author.send(owner_confirmation)
+            except discord.HTTPException:
+                pass
 
 
 class ShopView(discord.ui.View):
