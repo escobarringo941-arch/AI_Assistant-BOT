@@ -244,15 +244,119 @@ SHOP_ITEMS = [
 
 SHOP_COLOR_ROLE_ANCHOR_ID = 0
 
+SHOP_ROLE_STAFF_PERMISSION_NAMES = (
+    "administrator",
+    "manage_guild",
+    "manage_roles",
+    "kick_members",
+    "ban_members",
+    "moderate_members",
+    "manage_messages",
+)
+
+SHOP_COLOR_PALETTES = {
+    "classic": {
+        "emoji": "🎨",
+        "name": {"darija": "كلاسيكية", "en": "Classic", "fr": "Classiques"},
+        "colors": [
+            {"id":"classic_red","emoji":"🔴","name":{"darija":"أحمر كلاسيكي","en":"Classic Red","fr":"Rouge classique"},"value":0xE74C3C},
+            {"id":"royal_blue","emoji":"🔵","name":{"darija":"أزرق ملكي","en":"Royal Blue","fr":"Bleu royal"},"value":0x3498DB},
+            {"id":"fresh_green","emoji":"🟢","name":{"darija":"أخضر منعش","en":"Fresh Green","fr":"Vert frais"},"value":0x2ECC71},
+            {"id":"sun_yellow","emoji":"🟡","name":{"darija":"أصفر شمسي","en":"Sun Yellow","fr":"Jaune soleil"},"value":0xF1C40F},
+            {"id":"classic_purple","emoji":"🟣","name":{"darija":"موف كلاسيكي","en":"Classic Purple","fr":"Violet classique"},"value":0x9B59B6},
+            {"id":"hot_pink","emoji":"🩷","name":{"darija":"وردي قوي","en":"Hot Pink","fr":"Rose vif"},"value":0xE91E63},
+            {"id":"orange","emoji":"🟠","name":{"darija":"برتقالي","en":"Orange","fr":"Orange"},"value":0xE67E22},
+            {"id":"snow_white","emoji":"⚪","name":{"darija":"أبيض ثلجي","en":"Snow White","fr":"Blanc neige"},"value":0xECF0F1},
+            {"id":"silver","emoji":"🩶","name":{"darija":"فضي","en":"Silver","fr":"Argent"},"value":0xBDC3C7},
+            {"id":"near_black","emoji":"⚫","name":{"darija":"أسود غامق","en":"Near Black","fr":"Noir profond"},"value":0x111827},
+        ],
+    },
+    "pastel": {
+        "emoji": "🌸",
+        "name": {"darija": "باستيل", "en": "Pastel", "fr": "Pastel"},
+        "colors": [
+            {"id":"pastel_lavender","emoji":"💜","name":{"darija":"لافندر فاتح","en":"Pastel Lavender","fr":"Lavande pastel"},"value":0xC4B5FD},
+            {"id":"pastel_pink","emoji":"🌷","name":{"darija":"وردي باستيل","en":"Pastel Pink","fr":"Rose pastel"},"value":0xF9A8D4},
+            {"id":"peach","emoji":"🍑","name":{"darija":"خوخي","en":"Peach","fr":"Pêche"},"value":0xFDBA74},
+            {"id":"mint","emoji":"🌿","name":{"darija":"نعناعي","en":"Mint","fr":"Menthe"},"value":0xA7F3D0},
+            {"id":"baby_blue","emoji":"🩵","name":{"darija":"أزرق سماوي فاتح","en":"Baby Blue","fr":"Bleu ciel pastel"},"value":0x93C5FD},
+            {"id":"soft_lilac","emoji":"🪻","name":{"darija":"ليلكي ناعم","en":"Soft Lilac","fr":"Lilas doux"},"value":0xD8B4FE},
+            {"id":"cream","emoji":"🥛","name":{"darija":"كريمي","en":"Cream","fr":"Crème"},"value":0xFDE68A},
+            {"id":"sage","emoji":"🌱","name":{"darija":"أخضر سيج","en":"Sage","fr":"Vert sauge"},"value":0xA7C7A1},
+            {"id":"rose_mist","emoji":"🌹","name":{"darija":"وردي ضبابي","en":"Rose Mist","fr":"Rose brume"},"value":0xFBCFE8},
+            {"id":"ice_blue","emoji":"🧊","name":{"darija":"أزرق جليدي","en":"Ice Blue","fr":"Bleu glacier"},"value":0xBAE6FD},
+        ],
+    },
+    "neon": {
+        "emoji": "⚡",
+        "name": {"darija": "نيون", "en": "Neon", "fr": "Néon"},
+        "colors": [
+            {"id":"neon_pink","emoji":"💗","name":{"darija":"نيون وردي","en":"Neon Pink","fr":"Rose néon"},"value":0xFF2D95},
+            {"id":"neon_cyan","emoji":"🩵","name":{"darija":"نيون سماوي","en":"Neon Cyan","fr":"Cyan néon"},"value":0x00E5FF},
+            {"id":"neon_lime","emoji":"💚","name":{"darija":"نيون ليموني","en":"Neon Lime","fr":"Vert lime néon"},"value":0xB6FF00},
+            {"id":"electric_blue","emoji":"🔷","name":{"darija":"أزرق كهربائي","en":"Electric Blue","fr":"Bleu électrique"},"value":0x0066FF},
+            {"id":"electric_purple","emoji":"💜","name":{"darija":"موف كهربائي","en":"Electric Purple","fr":"Violet électrique"},"value":0x8B00FF},
+            {"id":"hot_orange","emoji":"🔥","name":{"darija":"برتقالي ناري","en":"Hot Orange","fr":"Orange feu"},"value":0xFF5F1F},
+            {"id":"acid_yellow","emoji":"✨","name":{"darija":"أصفر فوسفوري","en":"Acid Yellow","fr":"Jaune acide"},"value":0xEFFF00},
+            {"id":"aqua","emoji":"🌊","name":{"darija":"أكوا","en":"Aqua","fr":"Aqua"},"value":0x00FFD5},
+            {"id":"magenta","emoji":"💖","name":{"darija":"ماجنتا","en":"Magenta","fr":"Magenta"},"value":0xFF00AA},
+            {"id":"laser_red","emoji":"🚨","name":{"darija":"أحمر ليزر","en":"Laser Red","fr":"Rouge laser"},"value":0xFF1744},
+        ],
+    },
+    "dark": {
+        "emoji": "🌑",
+        "name": {"darija": "غامقة", "en": "Dark", "fr": "Sombres"},
+        "colors": [
+            {"id":"burgundy","emoji":"🍷","name":{"darija":"نبيذي","en":"Burgundy","fr":"Bordeaux"},"value":0x7F1D1D},
+            {"id":"navy","emoji":"🌌","name":{"darija":"كحلي","en":"Navy","fr":"Bleu marine"},"value":0x1E3A8A},
+            {"id":"deep_emerald","emoji":"🌲","name":{"darija":"زمردي غامق","en":"Deep Emerald","fr":"Émeraude sombre"},"value":0x065F46},
+            {"id":"royal_purple","emoji":"👾","name":{"darija":"موف ملكي","en":"Royal Purple","fr":"Violet royal"},"value":0x5B21B6},
+            {"id":"chocolate","emoji":"🍫","name":{"darija":"شوكولا","en":"Chocolate","fr":"Chocolat"},"value":0x78350F},
+            {"id":"charcoal","emoji":"🪨","name":{"darija":"فحمي","en":"Charcoal","fr":"Charbon"},"value":0x374151},
+            {"id":"midnight","emoji":"🌙","name":{"darija":"ليل غامق","en":"Midnight","fr":"Minuit"},"value":0x111827},
+            {"id":"deep_teal","emoji":"🦚","name":{"darija":"تركواز غامق","en":"Deep Teal","fr":"Sarcelle sombre"},"value":0x115E59},
+            {"id":"wine","emoji":"🍇","name":{"darija":"خمري","en":"Wine","fr":"Vin"},"value":0x881337},
+            {"id":"deep_indigo","emoji":"🔮","name":{"darija":"نيلي غامق","en":"Deep Indigo","fr":"Indigo sombre"},"value":0x312E81},
+        ],
+    },
+    "luxury": {
+        "emoji": "💎",
+        "name": {"darija": "فخمة", "en": "Luxury", "fr": "Luxe"},
+        "colors": [
+            {"id":"gold","emoji":"🥇","name":{"darija":"ذهبي","en":"Gold","fr":"Or"},"value":0xFFD700},
+            {"id":"rose_gold","emoji":"🌹","name":{"darija":"روز غولد","en":"Rose Gold","fr":"Or rose"},"value":0xB76E79},
+            {"id":"ruby","emoji":"♦️","name":{"darija":"ياقوتي","en":"Ruby","fr":"Rubis"},"value":0xE0115F},
+            {"id":"sapphire","emoji":"💙","name":{"darija":"سافير","en":"Sapphire","fr":"Saphir"},"value":0x0F52BA},
+            {"id":"amethyst","emoji":"💜","name":{"darija":"أميثيست","en":"Amethyst","fr":"Améthyste"},"value":0x9966CC},
+            {"id":"jade","emoji":"💚","name":{"darija":"جاد","en":"Jade","fr":"Jade"},"value":0x00A86B},
+            {"id":"turquoise","emoji":"🩵","name":{"darija":"تركواز","en":"Turquoise","fr":"Turquoise"},"value":0x40E0D0},
+            {"id":"coral","emoji":"🪸","name":{"darija":"كورال","en":"Coral","fr":"Corail"},"value":0xFF7F50},
+            {"id":"platinum","emoji":"⚙️","name":{"darija":"بلاتيني","en":"Platinum","fr":"Platine"},"value":0xE5E4E2},
+            {"id":"bronze","emoji":"🥉","name":{"darija":"برونزي","en":"Bronze","fr":"Bronze"},"value":0xCD7F32},
+        ],
+    },
+    "nature": {
+        "emoji": "🌿",
+        "name": {"darija": "طبيعية", "en": "Nature", "fr": "Nature"},
+        "colors": [
+            {"id":"olive","emoji":"🫒","name":{"darija":"زيتوني","en":"Olive","fr":"Olive"},"value":0x808000},
+            {"id":"moss","emoji":"🍃","name":{"darija":"طحلبي","en":"Moss","fr":"Mousse"},"value":0x6B8E23},
+            {"id":"forest","emoji":"🌲","name":{"darija":"أخضر غابة","en":"Forest","fr":"Vert forêt"},"value":0x228B22},
+            {"id":"sand","emoji":"🏖️","name":{"darija":"رملي","en":"Sand","fr":"Sable"},"value":0xC2B280},
+            {"id":"terracotta","emoji":"🏺","name":{"darija":"تيراكوتا","en":"Terracotta","fr":"Terre cuite"},"value":0xC65D47},
+            {"id":"copper","emoji":"🪙","name":{"darija":"نحاسي","en":"Copper","fr":"Cuivre"},"value":0xB87333},
+            {"id":"coffee","emoji":"☕","name":{"darija":"قهوي","en":"Coffee","fr":"Café"},"value":0x6F4E37},
+            {"id":"ocean","emoji":"🌊","name":{"darija":"أزرق محيطي","en":"Ocean","fr":"Océan"},"value":0x0077BE},
+            {"id":"steel","emoji":"🔩","name":{"darija":"فولاذي","en":"Steel","fr":"Acier"},"value":0x4682B4},
+            {"id":"slate","emoji":"🪨","name":{"darija":"رمادي سليت","en":"Slate","fr":"Ardoise"},"value":0x708090},
+        ],
+    },
+}
+
 SHOP_COLORS = {
-    "🔴 حمر": 0xE74C3C,
-    "🔵 زرق": 0x3498DB,
-    "🟢 خضر": 0x2ECC71,
-    "🟡 صفر": 0xF1C40F,
-    "🟣 موف": 0x9B59B6,
-    "🩷 روز": 0xE91E63,
-    "🟠 برتقالي": 0xE67E22,
-    "⚪ بيض": 0xECF0F1,
+    color["name"]["darija"]: int(color["value"])
+    for palette in SHOP_COLOR_PALETTES.values()
+    for color in palette["colors"]
 }
 
 # ═══════════════════════════════════════════════════════
