@@ -48,12 +48,18 @@ class Economy(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.db = JsonStore("economy.json", default={})
+        # حسابات النظام المركزي: Treasury / Jackpot / Events / Burn / Bank / Ledger.
+        self.system_db = JsonStore("economy_system.json", default={})
 
     async def cog_load(self):
         self.expire_purchases_loop.start()
+        self.economy_stats_loop.start()
+        # Persistent View: ما كيزيد حتى Slash Command جديد.
+        self.bot.add_view(EconomyBankPanelView(self))
 
     def cog_unload(self):
         self.expire_purchases_loop.cancel()
+        self.economy_stats_loop.cancel()
 
     @tasks.loop(minutes=15)
     async def expire_purchases_loop(self):
@@ -121,6 +127,462 @@ class Economy(commands.Cog):
         await self.bot.wait_until_ready()
 
     # ════════════════════════════════════════════════
+    # Real Economy — Treasury / Jackpot / Bank / Ledger
+    # ════════════════════════════════════════════════
+
+    def _system(self, guild_id: int) -> dict:
+        """الحساب المركزي ديال السيرفر. ماشي فلوس لاعب؛ هادي دفاتر الاقتصاد."""
+        gid = str(guild_id)
+        root = self.system_db.data.setdefault(gid, {})
+        defaults = {
+            "treasury": 0,
+            "jackpot": 0,
+            "events": 0,
+            "burned": 0,
+            "total_gambling_lost": 0,
+            "total_shop_spent": 0,
+            "total_jackpot_paid": 0,
+            "bank_accounts": {},
+            "transactions": [],
+            "next_tx_id": 1,
+            "stats_message_id": None,
+        }
+        for key, value in defaults.items():
+            if key not in root:
+                root[key] = value.copy() if isinstance(value, (dict, list)) else value
+        return root
+
+    def get_bank_balance(self, guild_id: int, user_id: int) -> int:
+        sys = self._system(guild_id)
+        return int(sys["bank_accounts"].get(str(user_id), 0) or 0)
+
+    def _set_bank_balance(self, guild_id: int, user_id: int, amount: int):
+        sys = self._system(guild_id)
+        sys["bank_accounts"][str(user_id)] = max(0, int(amount))
+        self.system_db.save()
+
+    def _record_transaction(
+        self,
+        guild_id: int,
+        *,
+        user_id: Optional[int],
+        kind: str,
+        amount: int,
+        source: str,
+        description: str,
+        splits: Optional[dict] = None,
+    ) -> int:
+        sys = self._system(guild_id)
+        tx_id = int(sys.get("next_tx_id", 1) or 1)
+        sys["next_tx_id"] = tx_id + 1
+        sys["transactions"].append({
+            "id": tx_id,
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "user_id": user_id,
+            "kind": kind,
+            "amount": int(amount),
+            "source": source,
+            "description": description,
+            "splits": splits or {},
+        })
+        limit = int(getattr(cfg, "ECONOMY_TRANSACTION_HISTORY_LIMIT", 500) or 500)
+        if len(sys["transactions"]) > limit:
+            sys["transactions"] = sys["transactions"][-limit:]
+        self.system_db.save()
+        return tx_id
+
+    def get_user_transactions(self, guild_id: int, user_id: int, limit: int = 10) -> list:
+        txs = [
+            tx for tx in self._system(guild_id).get("transactions", [])
+            if int(tx.get("user_id") or 0) == int(user_id)
+        ]
+        return txs[-limit:][::-1]
+
+    async def _economy_log(
+        self,
+        guild: discord.Guild,
+        title: str,
+        description: str,
+        color: discord.Color = discord.Color.blurple(),
+    ):
+        channel_id = int(getattr(cfg, "ECONOMY_LOGS_CHANNEL_ID", 0) or 0)
+        channel = guild.get_channel(channel_id) if channel_id else None
+        if not channel:
+            return
+        embed = discord.Embed(
+            title=title,
+            description=description,
+            color=color,
+            timestamp=datetime.now(),
+        )
+        embed.set_footer(text=f"{guild.name} | Economy Ledger")
+        try:
+            await channel.send(embed=embed)
+        except (discord.Forbidden, discord.HTTPException):
+            pass
+
+    async def route_gambling_loss(
+        self,
+        guild: discord.Guild,
+        user: discord.abc.User,
+        amount: int,
+        game: str,
+    ) -> dict:
+        """الرهان راه تخصم من قبل. هنا غير كنقسمو الخسارة الحقيقية بلا خصم ثاني."""
+        amount = max(0, int(amount))
+        if amount <= 0:
+            return {"treasury": 0, "jackpot": 0, "burned": 0}
+
+        treasury = amount * int(getattr(cfg, "GAMBLING_LOSS_TREASURY_PERCENT", 60)) // 100
+        jackpot = amount * int(getattr(cfg, "GAMBLING_LOSS_JACKPOT_PERCENT", 25)) // 100
+        burned = amount - treasury - jackpot
+
+        sys = self._system(guild.id)
+        sys["treasury"] += treasury
+        sys["jackpot"] += jackpot
+        sys["burned"] += burned
+        sys["total_gambling_lost"] += amount
+        splits = {"treasury": treasury, "jackpot": jackpot, "burned": burned}
+        tx_id = self._record_transaction(
+            guild.id,
+            user_id=user.id,
+            kind="gambling_loss",
+            amount=amount,
+            source=game,
+            description=f"خسارة رهان فـ {game}",
+            splits=splits,
+        )
+
+        await self._economy_log(
+            guild,
+            f"🎰 خسارة رهان — TX #{tx_id}",
+            (
+                f"**العضو:** {user.mention}\n"
+                f"**اللعبة:** `{game}`\n"
+                f"**الخسارة:** **{amount:,}** {cfg.CURRENCY_EMOJI}\n\n"
+                f"🏛️ Treasury: **+{treasury:,}**\n"
+                f"🎰 Global Jackpot: **+{jackpot:,}**\n"
+                f"🔥 Burned: **{burned:,}**"
+            ),
+            discord.Color.red(),
+        )
+        return splits
+
+    async def route_shop_purchase(
+        self,
+        guild: discord.Guild,
+        user: discord.abc.User,
+        amount: int,
+        item: dict,
+    ) -> dict:
+        """الثمن راه تخصم من اللاعب. هنا كنقسموه على Treasury / Events / Burn."""
+        amount = max(0, int(amount))
+        treasury = amount * int(getattr(cfg, "SHOP_TREASURY_PERCENT", 50)) // 100
+        events = amount * int(getattr(cfg, "SHOP_EVENTS_PERCENT", 10)) // 100
+        burned = amount - treasury - events
+
+        sys = self._system(guild.id)
+        sys["treasury"] += treasury
+        sys["events"] += events
+        sys["burned"] += burned
+        sys["total_shop_spent"] += amount
+        splits = {"treasury": treasury, "events": events, "burned": burned}
+        tx_id = self._record_transaction(
+            guild.id,
+            user_id=user.id,
+            kind="shop_purchase",
+            amount=amount,
+            source=item.get("id", "shop"),
+            description=f"شراء: {item.get('name', item.get('id', 'Shop Item'))}",
+            splits=splits,
+        )
+
+        await self._economy_log(
+            guild,
+            f"🛒 شراء من المتجر — TX #{tx_id}",
+            (
+                f"**العضو:** {user.mention}\n"
+                f"**المنتج:** {item.get('emoji', '🛒')} **{item.get('name', item.get('id', 'Item'))}**\n"
+                f"**الثمن:** **{amount:,}** {cfg.CURRENCY_EMOJI}\n\n"
+                f"🏛️ Treasury: **+{treasury:,}**\n"
+                f"🎉 Events Fund: **+{events:,}**\n"
+                f"🔥 Burned: **{burned:,}**"
+            ),
+            discord.Color.gold(),
+        )
+        return splits
+
+    async def claim_global_jackpot(
+        self,
+        guild: discord.Guild,
+        user: discord.abc.User,
+        game: str,
+    ) -> int:
+        """كيحوّل Jackpot Pool كامل للاعب عند Jackpot حقيقي، بلا خلق فلوس جديدة."""
+        if not getattr(cfg, "GLOBAL_JACKPOT_ENABLED", True):
+            return 0
+        sys = self._system(guild.id)
+        prize = max(0, int(sys.get("jackpot", 0) or 0))
+        if prize <= 0:
+            return 0
+
+        # نصفر الـPool قبل أول await: مايمكنش نفس الجاكبوت يتصرف لجوج فنفس اللحظة.
+        sys["jackpot"] = 0
+        sys["total_jackpot_paid"] += prize
+        self.system_db.save()
+        granted = self.add_coins(
+            guild.id, user.id, prize, source=f"global_jackpot:{game}",
+            respect_cap=False, count_as_earned=True
+        )
+        tx_id = self._record_transaction(
+            guild.id,
+            user_id=user.id,
+            kind="jackpot_payout",
+            amount=granted,
+            source=game,
+            description=f"Global Jackpot من {game}",
+        )
+        await self._economy_log(
+            guild,
+            f"🏆 GLOBAL JACKPOT — TX #{tx_id}",
+            (
+                f"# 🎉 {user.mention} ضرب الـGlobal Jackpot!\n"
+                f"**اللعبة:** `{game}`\n"
+                f"**الجائزة من الـPool:** **{granted:,}** {cfg.CURRENCY_EMOJI}\n"
+                f"🎰 الـJackpot Pool رجع دابا لـ **0**."
+            ),
+            discord.Color.gold(),
+        )
+        await self.refresh_economy_stats(guild)
+        return granted
+
+    async def bank_deposit(self, guild: discord.Guild, user: discord.abc.User, amount: int) -> Tuple[bool, str]:
+        amount = int(amount)
+        if amount <= 0:
+            return False, "❌ المبلغ خاصو يكون أكبر من 0."
+        if not self.spend(guild.id, user.id, amount):
+            return False, "❌ الرصيد ديالك فالمحفظة ماكافيش."
+
+        new_bank = self.get_bank_balance(guild.id, user.id) + amount
+        self._set_bank_balance(guild.id, user.id, new_bank)
+        tx_id = self._record_transaction(
+            guild.id, user_id=user.id, kind="bank_deposit", amount=amount,
+            source="bank", description="إيداع من Wallet للبنك"
+        )
+        await self._economy_log(
+            guild, f"🏦 Bank Deposit — TX #{tx_id}",
+            f"**العضو:** {user.mention}\n**إيداع:** **{amount:,}** {cfg.CURRENCY_EMOJI}\n"
+            f"**Bank Balance:** **{new_bank:,}**",
+            discord.Color.green(),
+        )
+        return True, (
+            f"✅ دخلتي **{amount:,}** {cfg.CURRENCY_EMOJI} للبنك.\n"
+            f"🏦 حساب البنك: **{new_bank:,}** | 💳 Wallet: **{self.get_balance(guild.id, user.id):,}**"
+        )
+
+    async def bank_withdraw(self, guild: discord.Guild, user: discord.abc.User, amount: int) -> Tuple[bool, str]:
+        amount = int(amount)
+        if amount <= 0:
+            return False, "❌ المبلغ خاصو يكون أكبر من 0."
+        bank = self.get_bank_balance(guild.id, user.id)
+        if bank < amount:
+            return False, f"❌ ماعندكش هاد المبلغ فالبنك. عندك **{bank:,}**."
+
+        self._set_bank_balance(guild.id, user.id, bank - amount)
+        self.add_coins(
+            guild.id, user.id, amount, source="bank_withdraw",
+            respect_cap=False, count_as_earned=False
+        )
+        tx_id = self._record_transaction(
+            guild.id, user_id=user.id, kind="bank_withdraw", amount=amount,
+            source="bank", description="سحب من البنك للـWallet"
+        )
+        await self._economy_log(
+            guild, f"💸 Bank Withdraw — TX #{tx_id}",
+            f"**العضو:** {user.mention}\n**سحب:** **{amount:,}** {cfg.CURRENCY_EMOJI}\n"
+            f"**Bank Balance:** **{bank - amount:,}**",
+            discord.Color.orange(),
+        )
+        return True, (
+            f"✅ خرجتي **{amount:,}** {cfg.CURRENCY_EMOJI} من البنك.\n"
+            f"🏦 حساب البنك: **{bank - amount:,}** | 💳 Wallet: **{self.get_balance(guild.id, user.id):,}**"
+        )
+
+    def build_bank_panel_embed(self, guild: discord.Guild) -> discord.Embed:
+        sys = self._system(guild.id)
+        embed = discord.Embed(
+            title="🏦 GGMW9 Central Bank",
+            description=(
+                "مرحبا بيك فالنظام الاقتصادي ديال السيرفر. كلشي هنا خدام بـ **Buttons/Modals** "
+                "باش ما نزيدو حتى Slash Command جديد.\n\n"
+                "💳 **Wallet** = الفلوس اللي كتقدر تلعب وتشري بيها.\n"
+                "🏦 **Bank** = فلوس مخزنة، الألعاب ماكتقدرش تمسها حتى تسحبها.\n"
+                "🎰 الخسائر الحقيقية كتغذي Treasury وGlobal Jackpot، وجزء كيتحرق ضد التضخم."
+            ),
+            color=discord.Color.gold(),
+            timestamp=datetime.now(),
+        )
+        embed.add_field(name="🏛️ Treasury", value=f"**{sys['treasury']:,}** {cfg.CURRENCY_EMOJI}", inline=True)
+        embed.add_field(name="🎰 Global Jackpot", value=f"**{sys['jackpot']:,}** {cfg.CURRENCY_EMOJI}", inline=True)
+        embed.add_field(name="🎉 Events Fund", value=f"**{sys['events']:,}** {cfg.CURRENCY_EMOJI}", inline=True)
+        embed.set_footer(text="GGMW9 Economy • اختار من الأزرار تحت")
+        return embed
+
+    def build_global_economy_embed(self, guild: discord.Guild) -> discord.Embed:
+        sys = self._system(guild.id)
+        guild_data = self.db.guild(guild.id)
+        wallets = sum(max(0, int(acc.get("coins", 0) or 0)) for acc in guild_data.values())
+        bank_total = sum(max(0, int(v or 0)) for v in sys.get("bank_accounts", {}).values())
+        live_supply = wallets + bank_total + sys["treasury"] + sys["jackpot"] + sys["events"]
+
+        embed = discord.Embed(
+            title="📊 اقتصاد GGMW9 — Live",
+            description="لوحة عامة بلا معلومات خاصة بالأعضاء. كتتحدث أوتوماتيكياً.",
+            color=discord.Color.blurple(),
+            timestamp=datetime.now(),
+        )
+        embed.add_field(name="💳 Wallets ديال الأعضاء", value=f"**{wallets:,}** {cfg.CURRENCY_EMOJI}", inline=True)
+        embed.add_field(name="🏦 ودائع البنك", value=f"**{bank_total:,}** {cfg.CURRENCY_EMOJI}", inline=True)
+        embed.add_field(name="🏛️ Treasury", value=f"**{sys['treasury']:,}** {cfg.CURRENCY_EMOJI}", inline=True)
+        embed.add_field(name="🎰 Global Jackpot", value=f"**{sys['jackpot']:,}** {cfg.CURRENCY_EMOJI}", inline=True)
+        embed.add_field(name="🎉 Events Fund", value=f"**{sys['events']:,}** {cfg.CURRENCY_EMOJI}", inline=True)
+        embed.add_field(name="🔥 Burned (من البداية)", value=f"**{sys['burned']:,}** {cfg.CURRENCY_EMOJI}", inline=True)
+        embed.add_field(name="📉 خسائر القمار", value=f"**{sys['total_gambling_lost']:,}** {cfg.CURRENCY_EMOJI}", inline=True)
+        embed.add_field(name="🛒 مصاريف المتجر", value=f"**{sys['total_shop_spent']:,}** {cfg.CURRENCY_EMOJI}", inline=True)
+        embed.add_field(name="🏆 Jackpot تصرف", value=f"**{sys['total_jackpot_paid']:,}** {cfg.CURRENCY_EMOJI}", inline=True)
+        embed.add_field(name="💹 Money Supply الحالي", value=f"**{live_supply:,}** {cfg.CURRENCY_EMOJI}", inline=False)
+        embed.set_footer(text="Wallet + Bank + Treasury + Jackpot + Events | Burn ما داخلش فالـSupply")
+        return embed
+
+    def build_user_account_embed(self, guild: discord.Guild, user: discord.abc.User) -> discord.Embed:
+        wallet = self.get_balance(guild.id, user.id)
+        bank = self.get_bank_balance(guild.id, user.id)
+        embed = discord.Embed(
+            title=f"💳 الحساب ديال {user.display_name}",
+            description=f"المجموع ديالك: **{wallet + bank:,}** {cfg.CURRENCY_EMOJI}",
+            color=discord.Color.green(),
+        )
+        embed.add_field(name="💳 Wallet", value=f"**{wallet:,}**", inline=True)
+        embed.add_field(name="🏦 Bank", value=f"**{bank:,}**", inline=True)
+        embed.set_thumbnail(url=user.display_avatar.url)
+        embed.set_footer(text="الفلوس فالبنك محمية من الرهان حتى تسحبها للـWallet")
+        return embed
+
+    def build_user_transactions_embed(self, guild: discord.Guild, user: discord.abc.User) -> discord.Embed:
+        txs = self.get_user_transactions(guild.id, user.id, limit=10)
+        if not txs:
+            return discord.Embed(
+                title="🧾 آخر المعاملات",
+                description="📭 ماكايناش معاملات مسجلة ليك فالنظام الجديد دابا.",
+                color=discord.Color.blurple(),
+            )
+        kind_icons = {
+            "gambling_loss": "🎰",
+            "shop_purchase": "🛒",
+            "jackpot_payout": "🏆",
+            "bank_deposit": "🏦",
+            "bank_withdraw": "💸",
+            "admin_adjustment": "🛡️",
+        }
+        lines = []
+        for tx in txs:
+            icon = kind_icons.get(tx.get("kind"), "💱")
+            ts = tx.get("ts", "")
+            try:
+                unix = int(datetime.fromisoformat(ts).timestamp())
+                when = f"<t:{unix}:R>"
+            except Exception:
+                when = "—"
+            lines.append(
+                f"{icon} **TX #{tx.get('id')}** • {tx.get('description', tx.get('source', 'عملية'))} "
+                f"• **{int(tx.get('amount', 0)):,}** {cfg.CURRENCY_EMOJI} • {when}"
+            )
+        return discord.Embed(
+            title=f"🧾 آخر معاملات {user.display_name}",
+            description="\n".join(lines),
+            color=discord.Color.blurple(),
+        )
+
+    async def ensure_bank_panel(self, guild: discord.Guild):
+        channel_id = int(getattr(cfg, "ECONOMY_BANK_CHANNEL_ID", 0) or 0)
+        channel = guild.get_channel(channel_id) if channel_id else None
+        if not channel:
+            return
+        found = None
+        try:
+            async for msg in channel.history(limit=25):
+                if (
+                    msg.author == self.bot.user and msg.embeds
+                    and (msg.embeds[0].title or "") == "🏦 GGMW9 Central Bank"
+                ):
+                    found = msg
+                    break
+        except discord.Forbidden:
+            return
+        embed = self.build_bank_panel_embed(guild)
+        try:
+            if found:
+                await found.edit(embed=embed, view=EconomyBankPanelView(self))
+            else:
+                await channel.send(embed=embed, view=EconomyBankPanelView(self))
+        except (discord.Forbidden, discord.HTTPException):
+            pass
+
+    async def refresh_economy_stats(self, guild: discord.Guild):
+        channel_id = int(getattr(cfg, "ECONOMY_STATS_CHANNEL_ID", 0) or 0)
+        channel = guild.get_channel(channel_id) if channel_id else None
+        if not channel:
+            return
+
+        sys = self._system(guild.id)
+        msg = None
+        msg_id = sys.get("stats_message_id")
+        if msg_id:
+            try:
+                msg = await channel.fetch_message(int(msg_id))
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException, TypeError, ValueError):
+                msg = None
+
+        if msg is None:
+            try:
+                async for old in channel.history(limit=25):
+                    if (
+                        old.author == self.bot.user and old.embeds
+                        and (old.embeds[0].title or "") == "📊 اقتصاد GGMW9 — Live"
+                    ):
+                        msg = old
+                        break
+            except discord.Forbidden:
+                return
+
+        embed = self.build_global_economy_embed(guild)
+        try:
+            if msg:
+                await msg.edit(embed=embed)
+            else:
+                msg = await channel.send(embed=embed)
+            if sys.get("stats_message_id") != msg.id:
+                sys["stats_message_id"] = msg.id
+                self.system_db.save()
+        except (discord.Forbidden, discord.HTTPException):
+            pass
+
+    @tasks.loop(minutes=2)
+    async def economy_stats_loop(self):
+        for guild in self.bot.guilds:
+            await self.refresh_economy_stats(guild)
+
+    @economy_stats_loop.before_loop
+    async def before_economy_stats_loop(self):
+        await self.bot.wait_until_ready()
+
+    @commands.Cog.listener()
+    async def on_ready(self):
+        for guild in self.bot.guilds:
+            await self.ensure_bank_panel(guild)
+            await self.refresh_economy_stats(guild)
+
+    # ════════════════════════════════════════════════
     # API داخلي
     # ════════════════════════════════════════════════
 
@@ -155,6 +617,7 @@ class Economy(commands.Cog):
         amount: int,
         source: str = "game",
         respect_cap: bool = True,
+        count_as_earned: bool = True,
     ) -> int:
         acc = self._acc(guild_id, user_id)
 
@@ -170,7 +633,8 @@ class Economy(commands.Cog):
 
         acc["coins"] = max(0, acc.get("coins", 0) + granted)
         if granted > 0:
-            acc["total_earned"] = acc.get("total_earned", 0) + granted
+            if count_as_earned:
+                acc["total_earned"] = acc.get("total_earned", 0) + granted
             if respect_cap:
                 acc["earned_today"] = acc.get("earned_today", 0) + granted
 
@@ -462,6 +926,22 @@ class Economy(commands.Cog):
         except (discord.Forbidden, discord.HTTPException):
             dm_sent = False
 
+        tx_id = self._record_transaction(
+            ctx.guild.id,
+            user_id=member.id,
+            kind="admin_adjustment",
+            amount=abs(amount),
+            source="givecoins",
+            description=("إضافة Owner" if amount >= 0 else "خصم Owner"),
+        )
+        await self._economy_log(
+            ctx.guild,
+            f"🛡️ Owner Balance Adjustment — TX #{tx_id}",
+            f"**العضو:** {member.mention}\n**التغيير:** **{amount:+,}** {cfg.CURRENCY_EMOJI}\n"
+            f"**الرصيد الجديد:** **{new_balance:,}**",
+            discord.Color.blurple(),
+        )
+
         # تأكيد سري للـ Owner فقط؛ ما كيبان لحتى واحد آخر فالسيرفر.
         owner_confirmation = (
             f"✅ تم تعديل رصيد {member.mention} بسرية. "
@@ -477,6 +957,125 @@ class Economy(commands.Cog):
                 await ctx.author.send(owner_confirmation)
             except discord.HTTPException:
                 pass
+
+
+class BankAmountModal(discord.ui.Modal):
+    def __init__(self, cog: "Economy", action: str):
+        title = "🏦 إيداع فالبنك" if action == "deposit" else "💸 سحب من البنك"
+        super().__init__(title=title)
+        self.cog = cog
+        self.action = action
+        self.amount = discord.ui.TextInput(
+            label="المبلغ",
+            placeholder="مثلا 500",
+            min_length=1,
+            max_length=12,
+            required=True,
+        )
+        self.add_item(self.amount)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        raw = str(self.amount.value).strip().replace(",", "").replace(" ", "")
+        if not raw.isdigit() or int(raw) <= 0:
+            await interaction.response.send_message("❌ دخل مبلغ صحيح أكبر من 0.", ephemeral=True)
+            return
+        amount = int(raw)
+        if self.action == "deposit":
+            ok, msg = await self.cog.bank_deposit(interaction.guild, interaction.user, amount)
+        else:
+            ok, msg = await self.cog.bank_withdraw(interaction.guild, interaction.user, amount)
+        await interaction.response.send_message(msg, ephemeral=True)
+
+
+class EconomyBankPanelView(discord.ui.View):
+    """Central Bank Panel دائم — كاع الوظائف هنا Buttons/Modals، بلا حتى Slash جديد."""
+
+    def __init__(self, cog: "Economy"):
+        super().__init__(timeout=None)
+        self.cog = cog
+
+    @discord.ui.button(
+        label="💳 حسابي", style=discord.ButtonStyle.primary,
+        custom_id="ggmw9:economy:account", row=0
+    )
+    async def account_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(
+            embed=self.cog.build_user_account_embed(interaction.guild, interaction.user),
+            ephemeral=True,
+        )
+
+    @discord.ui.button(
+        label="🏦 إيداع", style=discord.ButtonStyle.success,
+        custom_id="ggmw9:economy:deposit", row=0
+    )
+    async def deposit_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(BankAmountModal(self.cog, "deposit"))
+
+    @discord.ui.button(
+        label="💸 سحب", style=discord.ButtonStyle.secondary,
+        custom_id="ggmw9:economy:withdraw", row=0
+    )
+    async def withdraw_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(BankAmountModal(self.cog, "withdraw"))
+
+    @discord.ui.button(
+        label="🏛️ الخزينة", style=discord.ButtonStyle.secondary,
+        custom_id="ggmw9:economy:treasury", row=0
+    )
+    async def treasury_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        sys = self.cog._system(interaction.guild.id)
+        embed = discord.Embed(
+            title="🏛️ خزينة السيرفر",
+            description=(
+                f"🏛️ **Treasury:** {sys['treasury']:,} {cfg.CURRENCY_EMOJI}\n"
+                f"🎉 **Events Fund:** {sys['events']:,} {cfg.CURRENCY_EMOJI}\n"
+                f"🔥 **Burned من البداية:** {sys['burned']:,} {cfg.CURRENCY_EMOJI}\n\n"
+                "الخزينة وصندوق Events فلوس حقيقية خارجة من الاقتصاد ديال اللاعبين؛ "
+                "الـBurn هو اللي كيتحيد نهائياً ضد التضخم."
+            ),
+            color=discord.Color.gold(),
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @discord.ui.button(
+        label="🎰 Jackpot", style=discord.ButtonStyle.danger,
+        custom_id="ggmw9:economy:jackpot", row=1
+    )
+    async def jackpot_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        sys = self.cog._system(interaction.guild.id)
+        embed = discord.Embed(
+            title="🎰 Global Jackpot",
+            description=(
+                f"# **{sys['jackpot']:,}** {cfg.CURRENCY_EMOJI}\n\n"
+                "كيكبر من جزء من الرهانات اللي **تخسرو فعلاً**.\n"
+                "🏆 كيتصرف كامل تلقائياً ملي يجي Jackpot حقيقي فـ:\n"
+                "• 🎰 Slots — `7️⃣ | 7️⃣ | 7️⃣`\n"
+                "• 🎫 Scratch — رمز `💰` الفائز\n"
+                "• 🎟️ Lottery — تطابق كامل"
+            ),
+            color=discord.Color.gold(),
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @discord.ui.button(
+        label="📊 الاقتصاد", style=discord.ButtonStyle.primary,
+        custom_id="ggmw9:economy:stats", row=1
+    )
+    async def stats_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(
+            embed=self.cog.build_global_economy_embed(interaction.guild),
+            ephemeral=True,
+        )
+
+    @discord.ui.button(
+        label="🧾 معاملاتي", style=discord.ButtonStyle.secondary,
+        custom_id="ggmw9:economy:transactions", row=1
+    )
+    async def transactions_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(
+            embed=self.cog.build_user_transactions_embed(interaction.guild, interaction.user),
+            ephemeral=True,
+        )
 
 
 class ShopView(discord.ui.View):
@@ -549,7 +1148,12 @@ class ShopSelect(discord.ui.Select):
             self.cog, interaction.guild, interaction.user, item
         )
         if ok:
-            self.cog.spend(interaction.guild.id, interaction.user.id, item["price"])
+            if not self.cog.spend(interaction.guild.id, interaction.user.id, item["price"]):
+                await interaction.followup.send("❌ الرصيد تبدل قبل ما يكمل الشراء.", ephemeral=True)
+                return
+            await self.cog.route_shop_purchase(
+                interaction.guild, interaction.user, item["price"], item
+            )
             new_balance = self.cog.get_balance(
                 interaction.guild.id, interaction.user.id
             )
@@ -591,7 +1195,12 @@ class ColorPickView(discord.ui.View):
             self.cog, interaction.guild, interaction.user, item
         )
         if ok:
-            self.cog.spend(interaction.guild.id, interaction.user.id, item["price"])
+            if not self.cog.spend(interaction.guild.id, interaction.user.id, item["price"]):
+                await interaction.followup.send("❌ الرصيد تبدل قبل ما يكمل الشراء.", ephemeral=True)
+                return
+            await self.cog.route_shop_purchase(
+                interaction.guild, interaction.user, item["price"], item
+            )
             await interaction.followup.send(f"✅ {msg}", ephemeral=True)
         else:
             await interaction.followup.send(f"❌ {msg}", ephemeral=True)
@@ -615,7 +1224,12 @@ class CustomRoleModal(discord.ui.Modal, title="🏷️ الرول المخصص �
             self.cog, interaction.guild, interaction.user, item
         )
         if ok:
-            self.cog.spend(interaction.guild.id, interaction.user.id, item["price"])
+            if not self.cog.spend(interaction.guild.id, interaction.user.id, item["price"]):
+                await interaction.followup.send("❌ الرصيد تبدل قبل ما يكمل الشراء.", ephemeral=True)
+                return
+            await self.cog.route_shop_purchase(
+                interaction.guild, interaction.user, item["price"], item
+            )
             await interaction.followup.send(f"✅ {msg}", ephemeral=True)
         else:
             await interaction.followup.send(f"❌ {msg}", ephemeral=True)
