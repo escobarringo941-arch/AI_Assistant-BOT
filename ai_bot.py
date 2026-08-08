@@ -3464,12 +3464,11 @@ async def auto_unmute(member: discord.Member, duration_minutes: int, guild: disc
 
 
 async def setup_verify_message(guild: discord.Guild):
+    """Refresh the existing verification message in-place; create it only if missing."""
     verify_channel = bot.get_channel(VERIFY_CHANNEL_ID)
     if not verify_channel:
-        return
-    async for message in verify_channel.history(limit=10):
-        if message.author == bot.user and "✅" in message.content:
-            return
+        return False
+
     embed = discord.Embed(
         title="✅ تفعيل العضوية",
         description=(
@@ -3485,8 +3484,39 @@ async def setup_verify_message(guild: discord.Guild):
     )
     embed.set_thumbnail(url=guild.icon.url if guild.icon else None)
     embed.set_footer(text="GGMW9 | Verification System")
-    msg = await verify_channel.send(embed=embed)
-    await msg.add_reaction("✅")
+
+    matches = []
+    try:
+        async for message in verify_channel.history(limit=30):
+            if message.author != bot.user:
+                continue
+            title = message.embeds[0].title if message.embeds else ""
+            if title == "✅ تفعيل العضوية":
+                matches.append(message)
+    except discord.Forbidden:
+        return False
+
+    try:
+        if matches:
+            keep = matches[0]
+            await keep.edit(embed=embed)
+            try:
+                # Keep the classic ✅ reaction verification fresh as well.
+                if not any(str(r.emoji) == "✅" for r in keep.reactions):
+                    await keep.add_reaction("✅")
+            except (discord.Forbidden, discord.HTTPException):
+                pass
+            for extra in matches[1:]:
+                try:
+                    await extra.delete()
+                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                    pass
+        else:
+            keep = await verify_channel.send(embed=embed)
+            await keep.add_reaction("✅")
+        return True
+    except (discord.Forbidden, discord.HTTPException):
+        return False
 
 
 # ═══════════════════════════════════════════════════════
@@ -3835,12 +3865,11 @@ class RulesVerifyView(discord.ui.View):
 
 
 async def setup_rules_message(guild: discord.Guild):
+    """Refresh the one official Rules panel in-place; never require manual deletion."""
     rules_channel = bot.get_channel(RULES_CHANNEL_ID)
     if not rules_channel:
-        return
-    async for message in rules_channel.history(limit=10):
-        if message.author == bot.user and message.components:
-            return
+        return False
+
     embed = discord.Embed(
         title="📜 قوانين السيرفر | Server Rules | Règles du serveur",
         description=(
@@ -3854,7 +3883,32 @@ async def setup_rules_message(guild: discord.Guild):
     )
     embed.set_thumbnail(url=guild.icon.url if guild.icon else None)
     embed.set_footer(text="GGMW9 | Rules & Verification")
-    await rules_channel.send(embed=embed, view=RulesVerifyView())
+
+    matches = []
+    try:
+        async for message in rules_channel.history(limit=30):
+            if message.author != bot.user or not message.embeds:
+                continue
+            title = message.embeds[0].title or ""
+            if "قوانين السيرفر" in title or "Server Rules" in title or "Règles du serveur" in title:
+                matches.append(message)
+    except discord.Forbidden:
+        return False
+
+    try:
+        if matches:
+            keep = matches[0]
+            await keep.edit(embed=embed, view=RulesVerifyView())
+            for extra in matches[1:]:
+                try:
+                    await extra.delete()
+                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                    pass
+        else:
+            await rules_channel.send(embed=embed, view=RulesVerifyView())
+        return True
+    except (discord.Forbidden, discord.HTTPException):
+        return False
 
 
 def _build_blacklist_embed(lang: str = "darija") -> discord.Embed:
@@ -5239,17 +5293,12 @@ async def suggest_cmd(ctx, *, idea: str):
 
 
 async def setup_suggestions_info(guild: discord.Guild):
-    """كيبعث (مرة وحدة، أول مرة) رسالة تشرح لأعضاء channel الاقتراحات
-    شنو يقدرو يقترحو وكيفاش، باش ما يبقاش الناس تايهين."""
+    """Refresh the Suggestions info message in-place; create it only if missing."""
     if not SUGGESTIONS_CHANNEL_ID:
-        return
+        return False
     channel = bot.get_channel(SUGGESTIONS_CHANNEL_ID)
     if not channel:
-        return
-
-    async for message in channel.history(limit=15):
-        if message.author == bot.user and message.embeds and message.embeds[0].title and "الاقتراحات" in message.embeds[0].title:
-            return  # الرسالة موجودة ديجا، ماخاصناش نبعثوها مرة أخرى
+        return False
 
     embed = discord.Embed(
         title="💡 مرحبا بيك فـ channel الاقتراحات",
@@ -5268,31 +5317,47 @@ async def setup_suggestions_info(guild: discord.Guild):
             "• شي فعالية، مسابقة، ولا event تحب تشوفو\n"
             "• تعديل على القوانين ولا التنظيم ديال السيرفر\n"
             "• أي فكرة أخرى تحس بلي غادي تحسن السيرفر"
-        ),
-        inline=False
+        ), inline=False
     )
     embed.add_field(
         name="🚫 شنو ماشي مكانو هنا",
         value=(
             "• مشكل تقني ولا بوغ فالبوت → دير Ticket بدل الاقتراح\n"
-            "• شكاية على عضو معين ولا تبليغ → استعمل `/report`\n"
+            "• شكاية على عضو معين ولا تبليغ → استعمل Support Center\n"
             "• طلب انضمام للإدارة → عندو channel خاص بيه (Applications)"
-        ),
-        inline=False
+        ), inline=False
     )
     embed.add_field(
         name="📝 كيفاش تقترح؟",
         value=(
-            "اكتب الأمر:\n"
-            "`/suggest <الفكرة ديالك بالتفصيل>`\n\n"
-            "مثال: `/suggest نزيدو channel خاص بالميمز`\n\n"
-            "الاقتراح غادي يتبعث هنا أوتوماتيك، والأعضاء غايقدرو يصوتو عليه. "
-            "كون واضح ومباشر باش الإدارة تفهم الفكرة بسرعة!"
-        ),
-        inline=False
+            "استعمل نظام الاقتراحات ديال السيرفر وكتب الفكرة بالتفصيل.\n\n"
+            "كون واضح ومباشر باش الإدارة تفهم الفكرة بسرعة، والأعضاء يقدرو يصوتو عليها."
+        ), inline=False
     )
     embed.set_footer(text=f"{SERVER_NAME} | نظام الاقتراحات")
-    await channel.send(embed=embed)
+
+    matches = []
+    try:
+        async for message in channel.history(limit=30):
+            if message.author == bot.user and message.embeds and "الاقتراحات" in (message.embeds[0].title or ""):
+                matches.append(message)
+    except discord.Forbidden:
+        return False
+
+    try:
+        if matches:
+            keep = matches[0]
+            await keep.edit(embed=embed)
+            for extra in matches[1:]:
+                try:
+                    await extra.delete()
+                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                    pass
+        else:
+            await channel.send(embed=embed)
+        return True
+    except (discord.Forbidden, discord.HTTPException):
+        return False
 
 
 @bot.hybrid_command(name="setupsuggestions")
@@ -11842,7 +11907,7 @@ def _owner_control_embed(guild: discord.Guild) -> discord.Embed:
             "📊 **XP & Levels** — Settings / Adjust XP / Set Level / Audit / Sync Roles\n"
             "💵 **Economy** — Give/Remove USD / Member Account / Economy Stats / Bank Refresh\n"
             "⚙️ **Bot Settings** — Anti-Raid / Warns / Auto-Info / Features / XP Settings\n"
-            "🖥️ **Refresh Panels** — Levels / Leaderboard / Games / Shop / Gambling / Bank\n"
+            "🔄 **Refresh All Panels** — يجدّد كاع الواجهات الرسمية بلا حذف Messages وبلا Redeploy\n"
             "🔊 **Voice Tools** — صاوب Room Mute Panel باختيار Voice Channel\n\n"
             "🔒 كل Interaction كتتأكد من **OWNER_ID** حتى إلا شاف شي حد الرسالة بالغلط."
         ),
@@ -12603,6 +12668,119 @@ class OwnerChannelMoveActionView(OwnerOnlyView):
         )
 
 
+async def refresh_all_server_panels(guild: discord.Guild) -> dict:
+    """Owner maintenance: refresh every fixed/public GGMW9 panel in-place.
+
+    Existing Discord messages are edited whenever possible; a new message is only
+    created when the official panel message is actually missing.
+    """
+    report = {"ok": [], "skip": [], "errors": []}
+
+    async def run(label, func):
+        try:
+            result = await func()
+            if result is False:
+                report["skip"].append(label)
+            else:
+                report["ok"].append(label)
+        except Exception as exc:
+            report["errors"].append(f"{label}: {type(exc).__name__}: {exc}")
+
+    # Core public/server panels in ai_bot.py
+    if RULES_CHANNEL_ID:
+        await run("📜 Rules", lambda: setup_rules_message(guild))
+    if VERIFY_CHANNEL_ID:
+        await run("✅ Verify", lambda: setup_verify_message(guild))
+    if BLACKLIST_CHANNEL_ID:
+        await run("🚫 Blacklist", lambda: setup_blacklist_message(guild))
+    if SUPPORT_CENTER_CHANNEL_ID:
+        await run("🆘 Support Center", lambda: setup_support_center(guild))
+    if APPLICATIONS_PANEL_CHANNEL_ID:
+        await run("📋 Applications", lambda: setup_applications_panel(guild))
+    if SUGGESTIONS_CHANNEL_ID:
+        await run("💡 Suggestions", lambda: setup_suggestions_info(guild))
+    if LEVELS_INFO_CHANNEL_ID:
+        await run("⭐ Levels Info", lambda: setup_levels_info_message(guild))
+    if LEADERBOARD_CHANNEL_ID:
+        await run("🏆 XP Leaderboard", refresh_xp_leaderboard_now)
+
+    # ARCADE + Shop + game leaderboards
+    games_cog = bot.get_cog("GamesPanel")
+    if games_cog:
+        await run("🎮 ARCADE / Shop / Game Leaderboards", games_cog.on_ready)
+    else:
+        report["skip"].append("🎮 GamesPanel Cog")
+
+    # Casino
+    gambling_cog = bot.get_cog("GamblingPanel")
+    if gambling_cog:
+        await run("🎰 Casino", gambling_cog.on_ready)
+    else:
+        report["skip"].append("🎰 GamblingPanel Cog")
+
+    # Bank + live economy stats
+    eco_cog = bot.get_cog("Economy")
+    if eco_cog:
+        await run("🏦 Bank", lambda: eco_cog.ensure_bank_panel(guild))
+        await run("📊 Economy Stats", lambda: eco_cog.refresh_economy_stats(guild))
+    else:
+        report["skip"].append("🏦 Economy Cog")
+
+    # Trivia dedicated panel
+    trivia_cog = bot.get_cog("Trivia")
+    if trivia_cog:
+        await run("🧠 Trivia", lambda: trivia_cog.setup_trivia_panel(guild, force=True))
+    else:
+        report["skip"].append("🧠 Trivia Cog")
+
+    # Active temporary voice room control panels
+    refreshed_temp = 0
+    for cid in list(temp_voice_channels.keys()):
+        try:
+            ch = guild.get_channel(int(cid))
+        except (TypeError, ValueError):
+            ch = None
+        if isinstance(ch, discord.VoiceChannel):
+            try:
+                msg = await refresh_temp_voice_control_panel(ch, create_if_missing=False)
+                if msg:
+                    refreshed_temp += 1
+            except Exception as exc:
+                report["errors"].append(f"🔊 Temp Voice {cid}: {type(exc).__name__}: {exc}")
+    if refreshed_temp:
+        report["ok"].append(f"🔊 Temp Voice ×{refreshed_temp}")
+
+    # Refresh the Owner Control Center last so even this maintenance button gets a fresh View.
+    if OWNER_CONTROL_CHANNEL_ID:
+        await run("🔐 Owner Control", lambda: setup_owner_control_panel(guild))
+
+    return report
+
+
+def _refresh_panels_report_embed(report: dict) -> discord.Embed:
+    errors = report.get("errors", [])
+    color = discord.Color.orange() if errors else discord.Color.green()
+    embed = discord.Embed(
+        title="🔄 GGMW9 — All Panels Refreshed" if not errors else "⚠️ GGMW9 — Panel Refresh Completed",
+        description=(
+            "البوت حاول يجدّد **نفس رسائل البانلز الموجودة**: Embed + Buttons/Selects/View. "
+            "كيخلق Message جديدة غير إلا Panel الرسمية ما كانتش موجودة أصلاً."
+        ),
+        color=color,
+        timestamp=datetime.now(),
+    )
+    ok = report.get("ok", [])
+    skipped = report.get("skip", [])
+    if ok:
+        embed.add_field(name=f"✅ Refreshed ({len(ok)})", value="\n".join(ok)[:1024], inline=False)
+    if skipped:
+        embed.add_field(name=f"⏭️ Skipped ({len(skipped)})", value="\n".join(skipped)[:1024], inline=False)
+    if errors:
+        embed.add_field(name=f"❌ Errors ({len(errors)})", value="\n".join(f"• {e}" for e in errors)[:1024], inline=False)
+    embed.set_footer(text="Owner Maintenance • ما محتاجش تمسح Panel ولا تعاود Deploy باش غير تجدّد الواجهات")
+    return embed
+
+
 class OwnerControlCenterView(OwnerOnlyView):
     def __init__(self):
         super().__init__(timeout=None)
@@ -12643,56 +12821,13 @@ class OwnerControlCenterView(OwnerOnlyView):
         )
 
     @discord.ui.button(
-        label="Refresh Panels", emoji="🖥️", style=discord.ButtonStyle.secondary,
+        label="Refresh All Panels", emoji="🔄", style=discord.ButtonStyle.secondary,
         custom_id="ggmw9:owner:refresh_panels", row=0
     )
     async def refresh_panels(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=True, thinking=True)
-        errors = []
-
-        try:
-            await setup_levels_info_message(interaction.guild)
-            await refresh_xp_leaderboard_now()
-        except Exception as e:
-            errors.append(f"XP: {e}")
-
-        try:
-            await setup_support_center(interaction.guild)
-        except Exception as e:
-            errors.append(f"Support: {e}")
-
-        games_cog = bot.get_cog("GamesPanel")
-        if games_cog:
-            try:
-                await games_cog.on_ready()
-            except Exception as e:
-                errors.append(f"Games: {e}")
-
-        gambling_cog = bot.get_cog("GamblingPanel")
-        if gambling_cog:
-            try:
-                await gambling_cog.on_ready()
-            except Exception as e:
-                errors.append(f"Gambling: {e}")
-
-        eco_cog = bot.get_cog("Economy")
-        if eco_cog:
-            try:
-                await eco_cog.ensure_bank_panel(interaction.guild)
-                await eco_cog.refresh_economy_stats(interaction.guild)
-            except Exception as e:
-                errors.append(f"Economy: {e}")
-
-        if errors:
-            await interaction.followup.send(
-                "⚠️ Refresh كمل ولكن لقيت:\n" + "\n".join(f"• {x}" for x in errors),
-                ephemeral=True,
-            )
-        else:
-            await interaction.followup.send(
-                "✅ Support / Levels / Leaderboards / Games / Shop / Gambling / Bank كاملين تراجعو.",
-                ephemeral=True,
-            )
+        report = await refresh_all_server_panels(interaction.guild)
+        await interaction.followup.send(embed=_refresh_panels_report_embed(report), ephemeral=True)
 
     @discord.ui.button(
         label="Voice Tools", emoji="🔊", style=discord.ButtonStyle.secondary,
