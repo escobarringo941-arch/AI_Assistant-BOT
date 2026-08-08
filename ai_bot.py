@@ -10180,13 +10180,10 @@ async def xpadjust_cmd(ctx, member: discord.Member, amount: int, *, reason: str 
     embed.add_field(name="السبب", value=reason, inline=False)
     embed.set_footer(text=f"من طرف {ctx.author.display_name}")
     await ctx.send(embed=embed)
-
-    await log_action(
-        ctx.guild, "🛠️ XP Adjustment (Owner)",
-        f"**العضو:** {member.mention}\n**التغيير:** {'+' if amount > 0 else ''}{amount} XP\n"
-        f"**المستوى:** {result['old_level']} → {result['new_level']}\n"
-        f"**السبب:** {reason}\n**من طرف:** {ctx.author.mention}",
-        discord.Color.gold() if amount > 0 else discord.Color.orange()
+    await _owner_private_dm(
+        member,
+        f"⭐ إدارة GGMW9 بدلات XP ديالك بشكل خاص: {amount:+,} XP • "
+        f"Level {result['old_level']} → {result['new_level']}."
     )
 
 
@@ -11418,6 +11415,10 @@ async def setlevel_cmd(ctx, member: discord.Member, level: int):
     if roles_removed:
         msg += f"\n🗑️ تحيدو: {', '.join(roles_removed)}"
     await ctx.send(msg)
+    await _owner_private_dm(
+        member,
+        f"🎚️ إدارة GGMW9 بدلات المستوى ديالك بشكل خاص: Level {data['level']}."
+    )
 
 
 @bot.hybrid_command()
@@ -12455,19 +12456,39 @@ class OwnerOnlyView(discord.ui.View):
         return True
 
 
+def _parse_owner_integer(value):
+    """Owner-only integer parser. No game/economy cap is applied."""
+    raw = str(value).strip().replace(",", "").replace(" ", "")
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except (ValueError, TypeError):
+        return None
+
+
+async def _owner_private_dm(member: discord.Member, message: str) -> bool:
+    """Recipient-only notification. Never posts in a server log/channel."""
+    try:
+        await member.send(message)
+        return True
+    except (discord.Forbidden, discord.HTTPException):
+        return False
+
+
 class OwnerXPAdjustModal(discord.ui.Modal, title="🛠️ تعديل XP"):
     def __init__(self, member: discord.Member):
         super().__init__()
         self.member = member
         self.amount = discord.ui.TextInput(
             label="XP (+ زيادة / - نقصان)",
-            placeholder="مثال: 500 أو -300",
+            placeholder="مثال: 100000 أو -25000",
             required=True,
-            max_length=12,
+            max_length=32,
         )
         self.reason = discord.ui.TextInput(
-            label="السبب",
-            placeholder="اختياري",
+            label="ملاحظة خاصة (اختيارية)",
+            placeholder="كتبان غير للـOwner والمستلم فالـDM",
             required=False,
             max_length=150,
         )
@@ -12478,54 +12499,60 @@ class OwnerXPAdjustModal(discord.ui.Modal, title="🛠️ تعديل XP"):
         if not (OWNER_ID and interaction.user.id == OWNER_ID):
             await interaction.response.send_message("❌ Owner فقط.", ephemeral=True)
             return
-        amount = cfg.parse_money_input(self.amount.value, allow_negative=True)
-        if amount is None:
+
+        amount = _parse_owner_integer(self.amount.value)
+        if amount is None or amount == 0:
             await interaction.response.send_message(
-                "❌ دخل مبلغ دولار صحيح، مثال `$100` أو `-50.50`.", ephemeral=True
+                "❌ دخل XP صحيح غير صفر. مثال: `100000` أو `-25000`.",
+                ephemeral=True,
             )
             return
 
         result = await adjust_user_xp(self.member, interaction.guild, amount)
-        reason = str(self.reason.value).strip() or "Owner Control Center"
+        reason = str(self.reason.value).strip()
 
-        verb = "زدت" if amount > 0 else "نقصت"
+        verb = "تزادو" if amount > 0 else "تحيدو"
         level_change = (
             "➡️" if result["old_level"] == result["new_level"]
             else ("⬆️" if result["new_level"] > result["old_level"] else "⬇️")
         )
+
+        dm = (
+            f"⭐ إدارة GGMW9 بدلات XP ديالك بشكل خاص.\n"
+            f"**{verb}: {abs(amount):,} XP**\n"
+            f"المستوى: **{result['old_level']} → {result['new_level']}**\n"
+            f"مجموع XP: **{result['old_total']:,} → {result['new_total']:,}**"
+        )
+        if reason:
+            dm += f"\n📝 ملاحظة: {reason}"
+        dm_sent = await _owner_private_dm(self.member, dm)
+
         embed = discord.Embed(
-            title="🛠️ تعديل XP تم",
-            description=f"{verb} **{abs(amount):,} XP** لـ {self.member.mention}",
+            title="✅ تعديل XP تم بشكل خاص",
+            description=(
+                f"**العضو:** {self.member.mention}\n"
+                f"**التغيير:** {amount:+,} XP\n"
+                "🔒 ما تبعث حتى Log من البوت لهاد العملية."
+            ),
             color=discord.Color.gold() if amount > 0 else discord.Color.orange(),
         )
         embed.add_field(
-            name="Level",
+            name="المستوى",
             value=f"{result['old_level']} {level_change} **{result['new_level']}**",
             inline=True,
         )
         embed.add_field(
-            name="Total XP",
+            name="مجموع XP",
             value=f"{result['old_total']:,} → **{result['new_total']:,}**",
             inline=True,
         )
         if result["roles_added"]:
-            embed.add_field(name="🎖️ Role جديدة", value=", ".join(result["roles_added"]), inline=False)
+            embed.add_field(name="🎖️ رول تزادت", value=", ".join(result["roles_added"]), inline=False)
         if result["roles_removed"]:
-            embed.add_field(name="🗑️ Roles تحيدو", value=", ".join(result["roles_removed"]), inline=False)
-        embed.add_field(name="السبب", value=reason, inline=False)
+            embed.add_field(name="🗑️ رول تحيدات", value=", ".join(result["roles_removed"]), inline=False)
+        if not dm_sent:
+            embed.add_field(name="⚠️ DM", value="المستلم ساد الرسائل الخاصة.", inline=False)
 
-        await log_action(
-            interaction.guild,
-            "🛠️ XP Adjustment — Owner Panel",
-            (
-                f"**العضو:** {self.member.mention}\n"
-                f"**التغيير:** {amount:+,} XP\n"
-                f"**Level:** {result['old_level']} → {result['new_level']}\n"
-                f"**السبب:** {reason}\n"
-                f"**Owner:** {interaction.user.mention}"
-            ),
-            discord.Color.gold() if amount > 0 else discord.Color.orange(),
-        )
         await refresh_xp_leaderboard_now()
         await interaction.response.edit_message(embed=embed, content=None, view=OwnerXPView())
 
@@ -12535,10 +12562,10 @@ class OwnerSetLevelModal(discord.ui.Modal, title="🎚️ Set Level"):
         super().__init__()
         self.member = member
         self.level_input = discord.ui.TextInput(
-            label="Level الجديد (0 - 100)",
-            placeholder="مثال: 50",
+            label="Level الجديد (أي رقم غير سالب)",
+            placeholder="مثال: 100 أو 250 أو 1000",
             required=True,
-            max_length=3,
+            max_length=32,
         )
         self.add_item(self.level_input)
 
@@ -12546,45 +12573,47 @@ class OwnerSetLevelModal(discord.ui.Modal, title="🎚️ Set Level"):
         if not (OWNER_ID and interaction.user.id == OWNER_ID):
             await interaction.response.send_message("❌ Owner فقط.", ephemeral=True)
             return
-        try:
-            level = int(str(self.level_input.value).strip())
-        except ValueError:
-            await interaction.response.send_message("❌ دخل Level صحيح.", ephemeral=True)
-            return
-        if not 0 <= level <= 100:
-            await interaction.response.send_message("❌ Level خاصها تكون بين 0 و100.", ephemeral=True)
+
+        level = _parse_owner_integer(self.level_input.value)
+        if level is None or level < 0:
+            await interaction.response.send_message("❌ دخل Level صحيح غير سالب.", ephemeral=True)
             return
 
         data = get_user_level_data(interaction.guild.id, self.member.id)
         old_level = int(data.get("level", 0) or 0)
-        data["level"] = level
+        data["level"] = int(level)
         data["xp"] = 0
         save_levels()
+
         roles_added, roles_removed = await sync_level_roles(
-            self.member, interaction.guild, level
+            self.member, interaction.guild, int(level)
         )
         await refresh_xp_leaderboard_now()
 
+        dm_sent = await _owner_private_dm(
+            self.member,
+            (
+                "🎚️ إدارة GGMW9 بدلات المستوى ديالك بشكل خاص.\n"
+                f"**Level {old_level} → {level}**\n"
+                "إلا المستوى فات أعلى Role مبرمجة، كيبقى عندك أعلى Level Role متوفرة."
+            ),
+        )
+
         embed = discord.Embed(
-            title="🎚️ Set Level تم",
-            description=f"{self.member.mention}: **Level {old_level} → {level}**",
+            title="✅ Set Level تم بشكل خاص",
+            description=(
+                f"{self.member.mention}: **Level {old_level} → {level}**\n"
+                "🔒 ما تبعث حتى Log من البوت لهاد العملية."
+            ),
             color=discord.Color.blurple(),
         )
         if roles_added:
-            embed.add_field(name="🎖️ Role جديدة", value=", ".join(roles_added), inline=False)
+            embed.add_field(name="🎖️ رول تزادت", value=", ".join(roles_added), inline=False)
         if roles_removed:
-            embed.add_field(name="🗑️ Roles تحيدو", value=", ".join(roles_removed), inline=False)
+            embed.add_field(name="🗑️ رول تحيدات", value=", ".join(roles_removed), inline=False)
+        if not dm_sent:
+            embed.add_field(name="⚠️ DM", value="المستلم ساد الرسائل الخاصة.", inline=False)
 
-        await log_action(
-            interaction.guild,
-            "🎚️ Set Level — Owner Panel",
-            (
-                f"**العضو:** {self.member.mention}\n"
-                f"**Level:** {old_level} → {level}\n"
-                f"**Owner:** {interaction.user.mention}"
-            ),
-            discord.Color.blurple(),
-        )
         await interaction.response.edit_message(embed=embed, content=None, view=OwnerXPView())
 
 
@@ -12593,10 +12622,10 @@ class OwnerCoinsAdjustModal(discord.ui.Modal, title="💰 تعديل الرصي�
         super().__init__()
         self.member = member
         self.amount = discord.ui.TextInput(
-            label="+ باش تزيد / - باش تحيد",
-            placeholder="مثال: $100 أو -$50.50",
+            label="USD (+ زيادة / - نقصان)",
+            placeholder="مثال: 100 = $100.00 | -50.25",
             required=True,
-            max_length=14,
+            max_length=32,
         )
         self.add_item(self.amount)
 
@@ -12604,39 +12633,42 @@ class OwnerCoinsAdjustModal(discord.ui.Modal, title="💰 تعديل الرصي�
         if not (OWNER_ID and interaction.user.id == OWNER_ID):
             await interaction.response.send_message("❌ Owner فقط.", ephemeral=True)
             return
-        raw = str(self.amount.value).strip().replace(",", "").replace(" ", "")
-        try:
-            amount = int(raw)
-        except ValueError:
-            await interaction.response.send_message("❌ دخل رقم صحيح.", ephemeral=True)
-            return
-        if amount == 0:
-            await interaction.response.send_message("❌ المبلغ ما يكونش 0.", ephemeral=True)
+
+        amount = cfg.parse_money_input(self.amount.value, allow_negative=True)
+        if amount is None or amount == 0:
+            await interaction.response.send_message(
+                "❌ دخل مبلغ USD صحيح. `100` = **$100.00** و `100.50` = **$100.50**.",
+                ephemeral=True,
+            )
             return
 
         eco_cog = bot.get_cog("Economy")
         if not eco_cog:
             await interaction.response.send_message("❌ Economy Cog ماشي محمّل.", ephemeral=True)
             return
+
         result = await eco_cog.owner_adjust_balance(
             interaction.guild,
             self.member,
             amount,
             actor=interaction.user,
         )
-        color = discord.Color.green() if result["applied"] >= 0 else discord.Color.orange()
+
         embed = discord.Embed(
-            title="💰 Owner Balance Adjustment",
+            title="✅ تعديل الرصيد تم بشكل خاص",
             description=(
                 f"**العضو:** {self.member.mention}\n"
+                f"**الرقم اللي طلبتي:** {cfg.fmt_money(amount, signed=True)}\n"
                 f"**التغيير الفعلي:** {cfg.fmt_money(result['applied'], signed=True)}\n"
                 f"**قبل:** {cfg.fmt_money(result['before'])}\n"
-                f"**دابا:** **{cfg.fmt_money(result['after'])}**"
+                f"**دابا:** **{cfg.fmt_money(result['after'])}**\n\n"
+                "🔒 بلا Economy Log وبلا Transaction Log ديال Owner."
             ),
-            color=color,
+            color=discord.Color.green() if result["applied"] >= 0 else discord.Color.orange(),
         )
         if not result["dm_sent"]:
-            embed.add_field(name="⚠️ DM", value="العضو ساد الـDM.", inline=False)
+            embed.add_field(name="⚠️ DM", value="المستلم ساد الرسائل الخاصة.", inline=False)
+
         await interaction.response.edit_message(embed=embed, content=None, view=OwnerEconomyView())
 
 
@@ -12856,16 +12888,7 @@ class OwnerVoiceChannelSelect(discord.ui.ChannelSelect):
         room_mute_db.setdefault("panels", {})[str(msg.id)] = channel.id
         save_room_mute()
 
-        await log_action(
-            interaction.guild,
-            "🎛️ Room Mute Panel — Owner Center",
-            (
-                f"**الروم:** {channel.mention}\n"
-                f"**Panel:** {msg.jump_url}\n"
-                f"**Owner:** {interaction.user.mention}"
-            ),
-            discord.Color.blue(),
-        )
+        # Owner stealth: no server log entry.
         await interaction.response.edit_message(
             content=f"✅ Room Mute Panel تصاوبات لـ {channel.mention}.",
             view=None,
@@ -13088,19 +13111,7 @@ class OwnerChannelMoveActionView(OwnerOnlyView):
                 color=color,
             )
 
-            await log_action(
-                interaction.guild,
-                "🧪 Channel Move API Test V2",
-                (
-                    f"**Channel:** <#{channel.id}> (`{channel.id}`)\n"
-                    f"**Target:** <#{target.id}> (`{target.id}`)\n"
-                    f"**Index:** {old_index} → {new_index}\n"
-                    f"**Direction:** {direction}\n"
-                    f"**Actually moved:** {actually_moved}\n"
-                    f"**Owner:** {interaction.user.mention}"
-                ),
-                color,
-            )
+            # Owner stealth: no server log entry.
 
             await interaction.edit_original_response(
                 content=None,
