@@ -17,6 +17,8 @@ from discord import app_commands
 import random
 import asyncio
 
+RNG = random.SystemRandom()
+
 from storage import JsonStore
 import games_config as cfg
 
@@ -51,10 +53,10 @@ class Coinflip(commands.Cog):
 
     @commands.command(name="coinflip", aliases=["قمرة"], hidden=True)
     @commands.cooldown(1, cfg.COOLDOWN_COINFLIP, commands.BucketType.user)
-    async def coinflip_cmd(self, ctx: commands.Context, bet: int):
+    async def coinflip_cmd(self, ctx: commands.Context, bet: str):
         eco = self.economy()
         if not eco:
-            await ctx.send("❌ نظام الدراهم ماشي محمّل دابا.", ephemeral=True)
+            await ctx.send("❌ نظام الدولار ماشي محمّل دابا.", ephemeral=True)
             return
 
         if not self._check_gambling_channel(ctx):
@@ -63,28 +65,37 @@ class Coinflip(commands.Cog):
             await ctx.send(f"❌ هاد اللعبة كتخدم غير فـ {hint}.", ephemeral=True)
             return
 
+        bet = cfg.parse_money_input(bet)
+        if bet is None:
+            await ctx.send("❌ دخل Bet بالدولار بحال `5` أو `5.50`.", ephemeral=True)
+            return
+        from cogs.gambling_panel import effective_max_bet, can_start_casino_round
+        allowed, _, _ = can_start_casino_round(self.bot, ctx.guild.id, ctx.author.id)
+        if not allowed:
+            await ctx.send("⏳ وصلتي Session limit ديال Casino.", ephemeral=True)
+            return
+
         key = (ctx.guild.id, ctx.author.id)
         if key in self.active:
             await ctx.send("❌ عندك رهان خدّام ديجا — سالّيه أولاً.", ephemeral=True)
             return
 
-        if bet < cfg.COINFLIP_MIN_BET or bet > cfg.COINFLIP_MAX_BET:
-            await ctx.send(
-                f"❌ الرهان خاصو يكون بين **{cfg.COINFLIP_MIN_BET}** و "
-                f"**{cfg.COINFLIP_MAX_BET}** {cfg.CURRENCY_EMOJI}.", ephemeral=True)
+        max_allowed = effective_max_bet(self.bot, ctx.guild.id, ctx.author.id, "coinflip")
+        if bet < cfg.COINFLIP_MIN_BET or bet > max_allowed:
+            await ctx.send(f"❌ Bet بين **{cfg.fmt_money(cfg.COINFLIP_MIN_BET)}** و **{cfg.fmt_money(max_allowed)}**.", ephemeral=True)
             return
 
         balance = eco.get_balance(ctx.guild.id, ctx.author.id)
         if balance < bet:
             await ctx.send(
-                f"❌ ماعندكش الفلوس الكافية — خاصك **{bet - balance:,}** {cfg.CURRENCY_EMOJI} زيادة.",
+                f"❌ ناقصك **{cfg.fmt_money(bet-balance)}** فالWallet.",
                 ephemeral=True)
             return
 
         view = SideView(self, ctx.author, bet)
         embed = discord.Embed(
             title="🪙 Coinflip — اختار وجهك",
-            description=(f"💰 الرهان: **{bet:,}** {cfg.CURRENCY_EMOJI}\n"
+            description=(f"💵 Bet: **{cfg.fmt_money(bet)}**\n"
                          f"🎯 فرصة: **50%** — مضاعف: **×{cfg.COINFLIP_PAYOUT_MULTIPLIER}**"),
             color=discord.Color.blurple(),
         )
@@ -102,8 +113,8 @@ class Coinflip(commands.Cog):
         embed.add_field(name="🏆 فوز", value=f"**{s['wins']}**", inline=True)
         embed.add_field(name="💀 خسارة", value=f"**{s['losses']}**", inline=True)
         embed.add_field(name="📊 النسبة", value=f"**{rate:.1f}%**", inline=True)
-        embed.add_field(name="💰 أكبر ربح", value=f"**{s['biggest_win']:,}**", inline=True)
-        embed.add_field(name="📈 الصافي", value=f"**{net:+,}**", inline=True)
+        embed.add_field(name="💰 أكبر ربح", value=f"**{cfg.fmt_money(s['biggest_win'])}**", inline=True)
+        embed.add_field(name="📈 الصافي", value=f"**{cfg.fmt_money(net, signed=True)}**", inline=True)
         embed.set_thumbnail(url=target.display_avatar.url)
         return embed
 
@@ -119,7 +130,7 @@ class Coinflip(commands.Cog):
         if not ranked:
             return discord.Embed(
                 title="🪙 Coinflip — أكبر الرابحين",
-                description="📭 مازال حتى واحد ماراهن. دير `/coinflip`!",
+                description="📭 مازال حتى واحد ماراهن. دخل من **🎮・ARCADE → 🎰 Casino**!",
                 color=discord.Color.blurple(),
             )
 
@@ -130,7 +141,7 @@ class Coinflip(commands.Cog):
             name = m.display_name if m else f"عضو خارج ({uid})"
             net = d.get("won", 0) - d.get("wagered", 0)
             prefix = medals[i] if i < 3 else f"`#{i + 1}`"
-            lines.append(f"{prefix} **{name}** — 📈 {net:+,} {cfg.CURRENCY_EMOJI}")
+            lines.append(f"{prefix} **{name}** — 📈 {cfg.fmt_money(net, signed=True)}")
 
         return discord.Embed(
             title="🪙 Coinflip — أكبر الرابحين",
@@ -182,6 +193,14 @@ class SideView(discord.ui.View):
                 return
 
             eco = self.cog.economy()
+            from cogs.gambling_panel import can_start_casino_round, effective_max_bet
+            allowed, _, _ = can_start_casino_round(self.cog.bot, interaction.guild.id, self.user.id)
+            if not allowed:
+                await interaction.response.send_message("⏳ Session limit وصل. جرب من بعد.", ephemeral=True)
+                return
+            if self.bet > effective_max_bet(self.cog.bot, interaction.guild.id, self.user.id, "coinflip"):
+                await interaction.response.send_message("❌ Bet ولات فوق bankroll limit ديالك.", ephemeral=True)
+                return
             key = (interaction.guild.id, self.user.id)
             if key in self.cog.active:
                 await interaction.response.send_message("❌ عندك رهان خدّام ديجا.", ephemeral=True)
@@ -210,7 +229,7 @@ async def run_flip(cog: Coinflip, interaction: discord.Interaction, user: discor
     # ═══ أنيميشن القلب ═══
     flip_embed = discord.Embed(
         title="🪙 كتقلب...",
-        description=f"اخترتي {SIDES[chosen_side]['label']} — الرهان: **{bet:,}** {cfg.CURRENCY_EMOJI}",
+        description=f"اخترتي {SIDES[chosen_side]['label']} — Bet: **{cfg.fmt_money(bet)}**",
         color=discord.Color.blurple(),
     )
     flip_embed.add_field(name="النتيجة", value=FLIP_FRAMES[0], inline=False)
@@ -228,7 +247,7 @@ async def run_flip(cog: Coinflip, interaction: discord.Interaction, user: discor
             pass
         await asyncio.sleep(0.4)
 
-    result_side = random.choice(list(SIDES.keys()))
+    result_side = RNG.choice(list(SIDES.keys()))
     won = result_side == chosen_side
 
     guild_id, user_id = interaction.guild.id, user.id
@@ -246,20 +265,22 @@ async def run_flip(cog: Coinflip, interaction: discord.Interaction, user: discor
 
         color = discord.Color.green()
         title = "🎉 ربحتي!"
-        desc_extra = f"\n💰 ربحتي **{granted:,}** {cfg.CURRENCY_EMOJI} (×{cfg.COINFLIP_PAYOUT_MULTIPLIER})"
+        desc_extra = f"\n💰 Payout **{cfg.fmt_money(granted)}** (×{cfg.COINFLIP_PAYOUT_MULTIPLIER})"
     else:
         s["losses"] += 1
         cog.db.save()
         await eco.route_gambling_loss(interaction.guild, user, bet, "coinflip")
         color = discord.Color.red()
         title = "💀 خسرتي"
-        desc_extra = f"\n📉 خسرتي **{bet:,}** {cfg.CURRENCY_EMOJI}"
+        desc_extra = f"\n📉 Loss **{cfg.fmt_money(bet)}**"
 
+    from cogs.gambling_panel import record_casino_round
+    record_casino_round(cog.bot, guild_id, user_id, "coinflip", bet, granted if won else 0)
     new_balance = eco.get_balance(guild_id, user_id)
     final_embed = discord.Embed(
         title=title,
         description=(f"طلعت **{SIDES[result_side]['label']}**{desc_extra}\n\n"
-                     f"💳 الرصيد الجديد: **{new_balance:,}** {cfg.CURRENCY_EMOJI}"),
+                     f"💳 Wallet: **{cfg.fmt_money(new_balance)}**"),
         color=color,
     )
     cog.active.discard((guild_id, user_id))
@@ -273,34 +294,22 @@ async def run_flip(cog: Coinflip, interaction: discord.Interaction, user: discor
 
 
 class ReplayView(discord.ui.View):
-    def __init__(self, cog: Coinflip, user: discord.abc.User, last_bet: int):
+    """Legacy replay compatibility; routes through the fair/session-aware casino hub."""
+    def __init__(self, cog, user: discord.abc.User, last_bet: int):
         super().__init__(timeout=120)
         self.cog = cog
         self.user = user
-        self.last_bet = last_bet
+        self.last_bet = int(last_bet)
 
     @discord.ui.button(label="🔄 عاود (نفس الرهان)", style=discord.ButtonStyle.success)
     async def replay(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.user.id:
             await interaction.response.send_message("❌ ماشي ديالك.", ephemeral=True)
             return
-
-        eco = self.cog.economy()
-        balance = eco.get_balance(interaction.guild.id, self.user.id)
-        if balance < self.last_bet:
-            await interaction.response.send_message(
-                f"❌ ماعندكش الفلوس الكافية للرهان ديال **{self.last_bet:,}** {cfg.CURRENCY_EMOJI}.",
-                ephemeral=True)
-            return
-
-        view = SideView(self.cog, self.user, self.last_bet)
-        embed = discord.Embed(
-            title="🪙 Coinflip — اختار وجهك",
-            description=(f"💰 الرهان: **{self.last_bet:,}** {cfg.CURRENCY_EMOJI}\n"
-                         f"🎯 فرصة: **50%** — مضاعف: **×{cfg.COINFLIP_PAYOUT_MULTIPLIER}**"),
-            color=discord.Color.blurple(),
+        from cogs.gambling_panel import start_game_with_bet
+        await start_game_with_bet(
+            interaction, self.cog.bot, self.user, "coinflip", self.last_bet, retry_bet=self.last_bet
         )
-        await interaction.response.edit_message(embed=embed, view=view)
 
 
 async def setup(bot: commands.Bot):
