@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
 """
 ═══════════════════════════════════════════════════════
-║   cogs/trivia.py — 🧠 لعبة Trivia (الربح بالدراهم 💲)    ║
+║   cogs/trivia.py — 🧠 Trivia (rewards in GGMW9 USD)       ║
 ═══════════════════════════════════════════════════════
 منقولة من ai_bot.py بتبديل واحد كبير:
-❌ ماكاينش XP هنا — ✅ الربح ولا بالدراهم (العملة ديال السيرفر)،
+❌ ماكاينش XP هنا — ✅ الربح بالدولار GGMW9 (USD)،
    مع احترام السقف اليومي COINS_DAILY_CAP ديال الألعاب.
 
 الاعتماديات:
-  • cogs/economy.py  → 💲 الدراهم كيتعطاو عبر bot.get_cog("Economy").add_coins()
+  • cogs/economy.py  → 💵 USD rewards كتتعطى عبر bot.get_cog("Economy").add_coins()
        (نفس الطريقة ديال باقي الألعاب — سقف يومي واحد وعداد واحد للجميع)
   • games_config.py  → CONFIG ديال Trivia + العملة
   • storage.py       → JsonStore (نفس النظام ديال باقي الـ cogs)
@@ -17,7 +17,7 @@
        (اختيارية — إلا ماكانتش، اللعبة كتخدم غير بالبنك المحلي)
 
 الملفات فالـ Volume (DATA_DIR):
-  • trivia_stats.json        → إحصائيات اللعبة (صحيح/جولات/أحسن سلسلة/دراهم مجموعة)
+  • trivia_stats.json        → إحصائيات اللعبة (صحيح/جولات/أحسن سلسلة/USD مجموع)
        ⤷ أول مرة كيتحمّل، كيهاجر التاريخ القديم من trivia_scores.json
          و trivia_xp_totals.json أوتوماتيك (بلا ما يمسحهم)
   • trivia_darija_cache.json → نفس كاش الترجمة القديم (كيتعاود استعمالو كيف ما هو)
@@ -40,7 +40,7 @@ from discord.ext import commands, tasks
 from storage import JsonStore
 from games_config import (
     DATA_DIR,
-    CURRENCY_NAME, CURRENCY_NAME_PLURAL, CURRENCY_EMOJI, COINS_DAILY_CAP,
+    CURRENCY_NAME, CURRENCY_NAME_PLURAL, CURRENCY_EMOJI, COINS_DAILY_CAP, fmt_money,
     TRIVIA_ENABLED, TRIVIA_CHANNEL_ID, TRIVIA_AUTO_CHANNEL_IDS,
     TRIVIA_AUTO_INTERVAL_MINUTES, TRIVIA_ANSWER_SECONDS,
     TRIVIA_ROUNDS_PER_DIFFICULTY, TRIVIA_COINS, TRIVIA_SINGLE_COINS,
@@ -57,7 +57,7 @@ TRIVIA_DIFFICULTY_LABELS = {
 
 
 def get_trivia_coins(difficulty: str) -> int:
-    """شحال من درهم كيعطي سؤال بهاد الصعوبة."""
+    """Reward بالسنت؛ العرض للمستخدم كيدوز من fmt_money()."""
     return int(TRIVIA_COINS.get(difficulty, TRIVIA_COINS.get("easy", 4)))
 
 
@@ -187,7 +187,7 @@ async def fetch_trivia_question(category: str = None, difficulty: str = None) ->
 # ═══════════════════════════════════════════════════════
 
 class TriviaView(discord.ui.View):
-    """أزرار الأجوبة ديال سؤال Trivia العام. أول واحد يكليكي على الجواب الصحيح كيربح الدراهم.
+    """أزرار الأجوبة ديال سؤال Trivia العام. أول واحد يكليكي على الجواب الصحيح كيربح USD من اقتصاد GGMW9.
     ماشي Persistent (timeout محدد) حيت كل سؤال مرتبط بمثيل واحد ديال هاد الـ View."""
 
     def __init__(self, cog: "Trivia", correct_answer: str, options: list, reward: int, timeout_seconds: int):
@@ -233,18 +233,18 @@ class TriviaView(discord.ui.View):
                 )
                 return
 
-            # ═══ 💲 هنا كنعطيو الدراهم (بلاصة XP القديمة) ═══
+            # ═══ 💵 هنا كنعطيو USD (بلاصة XP القديمة) ═══
             real = self.cog.award_coins(interaction.guild.id, interaction.user.id, self.reward, source="trivia")
             self.cog.bump_stats(interaction.guild.id, interaction.user.id, coins=real, correct=1)
             balance = self.cog.get_balance(interaction.guild.id, interaction.user.id)
 
             cap_note = ""
             if real < self.reward:
-                cap_note = f"\n🧢 وصلتي للسقف اليومي ديال الألعاب ({COINS_DAILY_CAP} {CURRENCY_EMOJI}) — داخل ليك غير **{real}**."
+                cap_note = f"\n🧢 وصلتي للسقف اليومي ديال Mini Games (**{fmt_money(COINS_DAILY_CAP)}**) — دخل ليك غير **{fmt_money(real)}**."
             await interaction.followup.send(
                 f"🎉 {interaction.user.mention} جاوب صحيح! الجواب هو **{self.correct_answer}** "
-                f"(+{real} {CURRENCY_EMOJI}){cap_note}\n"
-                f"💼 الرصيد ديالك دابا: **{balance}** {CURRENCY_EMOJI}"
+                f"(+{fmt_money(real)}){cap_note}\n"
+                f"💼 الرصيد ديالك دابا: **{fmt_money(balance)}**"
             )
 
         return callback
@@ -290,7 +290,7 @@ def build_trivia_session_embed(question_text: str, options: list, category_label
     bar = "🟩" * filled + "⬛" * (6 - filled)
     warn = " ⚠️" if remaining <= 10 else ""
     embed.add_field(name="⏱️ الوقت", value=f"{bar}\nباقي **{remaining}** ثانية{warn}", inline=True)
-    embed.set_footer(text=f"جاوب صحيح تربح +{reward} {CURRENCY_NAME}")
+    embed.set_footer(text=f"جاوب صحيح تربح +{fmt_money(reward)}")
     return embed
 
 
@@ -315,7 +315,7 @@ class TriviaReplayView(discord.ui.View):
 
 class TriviaSessionView(discord.ui.View):
     """جلسة لعب فردية (ephemeral، غير صاحبها كيشوفها): كل ما جاوب صحيح، كيجي سؤال جديد
-    أصعب وبدراهم أكثر، حتى يغلط ولا يخلص الوقت.
+    أصعب وReward USD أكبر، حتى يغلط ولا يخلص الوقت.
 
     🇲🇦 الأسئلة كيجيو من البنك المحلي بالدارجة، وإلا سالا المجال كيتكمل من OpenTDB
     مع ترجمة أوتوماتيكية (شوف Trivia.get_darija_question).
@@ -343,7 +343,7 @@ class TriviaSessionView(discord.ui.View):
         self.ended = False
         self.prefix = ""   # السطر الفوقاني (✅ صحيح! +X...) — كيتحفظ باش يبقى بايـن مع تحديثات العدّاد
 
-        # ═══ تتبع الربح ديال هاد الجولة (باش نوريوه ملي يخسر) ═══
+        # ═══ تتبع الربح USD ديال هاد الجولة (باش نوريوه ملي يخسر) ═══
         self.session_coins = session_coins
         self.correct_by_difficulty = correct_by_difficulty or {"easy": 0, "medium": 0, "hard": 0}
         self.hit_cap = hit_cap   # واش وصل للسقف اليومي فهاد الجولة
@@ -370,7 +370,7 @@ class TriviaSessionView(discord.ui.View):
 
     def build_summary(self, title: str, top_text: str, color: discord.Color,
                       guild: Optional[discord.Guild]) -> discord.Embed:
-        """ملخص نهاية الجولة — كيبين شحال جمع من دراهم فهاد اللعبة، التفصيل حسب الصعوبة،
+        """ملخص نهاية الجولة — كيبين شحال جمع من USD فهاد اللعبة، التفصيل حسب الصعوبة،
         والمجموع الدائم ديالو من Trivia كامل + الرصيد الحالي."""
         embed = discord.Embed(title=title, description=top_text, color=color)
 
@@ -380,12 +380,12 @@ class TriviaSessionView(discord.ui.View):
             n = self.correct_by_difficulty.get(diff, 0)
             if n:
                 breakdown.append(f"{TRIVIA_DIFFICULTY_LABELS[diff]} × {n}")
-        cap_line = f"\n🧢 وصلتي للسقف اليومي ({COINS_DAILY_CAP} {CURRENCY_EMOJI})" if self.hit_cap else ""
+        cap_line = f"\n🧢 وصلتي للسقف اليومي (**{fmt_money(COINS_DAILY_CAP)}**)" if self.hit_cap else ""
 
         embed.add_field(
             name="💰 ربحتي فهاد الجولة",
             value=(
-                f"**+{self.session_coins}** {CURRENCY_EMOJI}\n"
+                f"**+{fmt_money(self.session_coins)}**\n"
                 + ("\n".join(breakdown) if breakdown else "*ماجاوبتي على حتى سؤال صحيح*")
                 + cap_line
             ),
@@ -406,11 +406,11 @@ class TriviaSessionView(discord.ui.View):
             embed.add_field(
                 name="🏆 المجموع ديالك من Trivia",
                 value=(
-                    f"{CURRENCY_EMOJI} **{stats['coins']}** {CURRENCY_NAME_PLURAL} مجموعين من اللعبة\n"
+                    f"💵 **{fmt_money(stats['coins'])}** مجموعين من Trivia\n"
                     f"✅ **{stats['correct']}** جواب صحيح\n"
                     f"🎮 **{stats['games']}** جولة تلعبات"
                     f"{record_line}\n"
-                    f"💼 الرصيد ديالك دابا: **{balance}** {CURRENCY_EMOJI}"
+                    f"💼 الرصيد ديالك دابا: **{fmt_money(balance)}**"
                 ),
                 inline=False
             )
@@ -498,7 +498,7 @@ class TriviaSessionView(discord.ui.View):
                 await interaction.edit_original_response(embed=embed, view=TriviaReplayView(self.cog, self.user))
                 return
 
-            # ═══ جواب صحيح → 💲 دراهم (بلاصة XP القديمة) ═══
+            # ═══ جواب صحيح → 💵 USD (بلاصة XP القديمة) ═══
             reward = get_trivia_coins(self.difficulty)
             real = reward
             if interaction.guild:
@@ -529,7 +529,7 @@ class TriviaSessionView(discord.ui.View):
                 await interaction.edit_original_response(embed=embed, view=TriviaReplayView(self.cog, self.user))
                 return
 
-            gained_txt = f"✅ صحيح! (+{real} {CURRENCY_EMOJI})"
+            gained_txt = f"✅ صحيح! (+{fmt_money(real)})"
             if real < reward:
                 gained_txt += " — 🧢 السقف اليومي"
             new_view = TriviaSessionView(
@@ -540,7 +540,7 @@ class TriviaSessionView(discord.ui.View):
             )
             await interaction.edit_original_response(
                 embed=new_view.build_embed(
-                    prefix=f"{gained_txt} — مجموعك فهاد الجولة: **{self.session_coins}** {CURRENCY_EMOJI}\n\n"
+                    prefix=f"{gained_txt} — مجموعك فهاد الجولة: **{fmt_money(self.session_coins)}**\n\n"
                 ),
                 view=new_view
             )
@@ -635,7 +635,7 @@ class TriviaGamePanelView(discord.ui.View):
 # ═══════════════════════════════════════════════════════
 
 class Trivia(commands.Cog):
-    """🧠 لعبة Trivia بالدارجة — الربح بالدراهم 💲"""
+    """🧠 لعبة Trivia بالدارجة — Rewards بالدولار GGMW9 💵"""
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -663,7 +663,7 @@ class Trivia(commands.Cog):
     def _migrate_old_stats(self):
         """أول مرة كيخدم الـ cog: كيجيب التاريخ من trivia_scores.json (الأجوبة الصحيحة)
         و trivia_xp_totals.json (الجولات + أحسن سلسلة) وكيحطهم فـ trivia_stats.json.
-        ⚠️ الـ XP القديم ماكيتهاجرش — الدراهم كيبداو من 0 (نظام جديد).
+        ⚠️ الـ XP القديم ماكيتهاجرش — Stats ديال USD rewards كيبداو من 0 (نظام جديد).
         الملفات القديمة ماكيتمسحوش (باقيين فالـ Volume إلا حتاجيتيهم)."""
         if self.stats.data:
             return   # ديجا كاينين إحصائيات — الترحيل داز ولا اللعبة جديدة
@@ -695,7 +695,7 @@ class Trivia(commands.Cog):
                 entry = g_totals.get(uid, {})
                 self.stats.data.setdefault(gid, {})[uid] = {
                     "correct": int(g_scores.get(uid, 0)),
-                    "coins": 0,   # الدراهم نظام جديد — كيبدا من الصفر
+                    "coins": 0,   # USD reward stats جديدة — كتبدأ من الصفر
                     "games": int(entry.get("games", 0)),
                     "best_streak": int(entry.get("best_streak", 0)),
                 }
@@ -706,9 +706,9 @@ class Trivia(commands.Cog):
             print(f"✅ [TRIVIA] تهاجرو الإحصائيات ديال {migrated_users} عضو من النظام القديم")
 
     # ═══════════════════════════════════════════════════
-    # ║   💲 العملة — النقطة الوحيدة ديال الربط مع الاقتصاد   ║
+    # ║   💵 USD — النقطة الوحيدة ديال الربط مع الاقتصاد      ║
     # ═══════════════════════════════════════════════════
-    # الدراهم كيتعطاو عبر الـ API الرسمي ديال cogs/economy.py — نفس الطريقة
+    # USD rewards كيتعطاو عبر الـ API الرسمي ديال cogs/economy.py — نفس الطريقة
     # ديال باقي الألعاب (X/O، Wordle...). هو اللي كيتكلف بالسقف اليومي
     # (COINS_DAILY_CAP عبر earned_today) والحفظ فـ economy.json.
     # هاد الـ cog عمرو ماكيقيس economy.json مباشرة — باش ما يكونش تضارب
@@ -719,11 +719,11 @@ class Trivia(commands.Cog):
 
     def award_coins(self, guild_id: int, user_id: int, amount: int,
                     source: str = "trivia") -> int:
-        """كيزيد الدراهم عبر Economy.add_coins() مع احترام السقف اليومي.
+        """كيزيد USD cents عبر Economy.add_coins() مع احترام السقف اليومي.
         كيرجع شحال دخل **فعليا** (ممكن أقل من amount إلا وصل للسقف)."""
         eco = self._economy()
         if eco is None:
-            print("[TRIVIA] ⚠️ cog Economy ماشي محمّل — ماقدرتش نعطي الدراهم "
+            print("[TRIVIA] ⚠️ cog Economy ماشي محمّل — ماقدرتش نعطي USD "
                   "(تأكد بلي cogs.economy قبل cogs.trivia فـ GAMES_COGS)")
             return 0
         return eco.add_coins(guild_id, user_id, amount, source=source, respect_cap=True)
@@ -897,7 +897,7 @@ class Trivia(commands.Cog):
         embed.add_field(name="📚 المجال", value=q["category"], inline=True)
         embed.add_field(name="🎯 الصعوبة", value=TRIVIA_DIFFICULTY_LABELS.get(q["difficulty"], q["difficulty"]), inline=True)
         embed.set_footer(
-            text=f"عندك {TRIVIA_ANSWER_SECONDS} ثانية — أول واحد يجاوب صحيح ياخد +{TRIVIA_SINGLE_COINS} {CURRENCY_NAME}"
+            text=f"عندك {TRIVIA_ANSWER_SECONDS} ثانية — أول واحد يجاوب صحيح ياخد +{fmt_money(TRIVIA_SINGLE_COINS)}"
         )
 
         view = TriviaView(self, q["correct"], q["options"], TRIVIA_SINGLE_COINS, TRIVIA_ANSWER_SECONDS)
@@ -929,7 +929,7 @@ class Trivia(commands.Cog):
 
         embed = discord.Embed(
             title="🧠 مرحبا بيك فـ لعبة Trivia",
-            description=f"اختبر معلوماتك وربح {CURRENCY_NAME_PLURAL} {CURRENCY_EMOJI}! "
+            description=f"اختبر معلوماتك وربح **USD** {CURRENCY_EMOJI}! "
                         "كليكي على الزر تحت، اختار المجال لي بغيتي، وابدا تجاوب على الأسئلة.",
             color=discord.Color.teal(),
             timestamp=datetime.now()
@@ -940,7 +940,7 @@ class Trivia(commands.Cog):
                 "1️⃣ كليكي **🎮 ابدأ اللعب** تحت\n"
                 f"2️⃣ اختار المجال لي بغيتي (من {len(TRIVIA_CATEGORIES)} مجالات)\n"
                 f"3️⃣ جاوب على الأسئلة — عندك {TRIVIA_ANSWER_SECONDS} ثانية لكل سؤال\n"
-                "4️⃣ كل ما جاوبتي صحيح، الأسئلة كتزاد صعوبة والدراهم كتزاد معاها — حتى تغلط ولا يخلص الوقت!"
+                "4️⃣ كل ما جاوبتي صحيح، الأسئلة كتزاد صعوبة والـReward بالدولار كيزيد — حتى تغلط ولا يخلص الوقت!"
             ),
             inline=False
         )
@@ -953,12 +953,12 @@ class Trivia(commands.Cog):
             inline=False
         )
         embed.add_field(
-            name=f"💰 شحال كتربح من {CURRENCY_NAME_PLURAL}",
+            name="💵 Rewards بالدولار",
             value=(
-                f"🟢 سهل: **{get_trivia_coins('easy')}** {CURRENCY_EMOJI}\n"
-                f"🟡 متوسط: **{get_trivia_coins('medium')}** {CURRENCY_EMOJI}\n"
-                f"🔴 صعيب: **{get_trivia_coins('hard')}** {CURRENCY_EMOJI}\n"
-                f"(غلطة وحدة كتوقف السلسلة — والسقف اليومي ديال الألعاب هو {COINS_DAILY_CAP} {CURRENCY_EMOJI})"
+                f"🟢 سهل: **{fmt_money(get_trivia_coins('easy'))}**\n"
+                f"🟡 متوسط: **{fmt_money(get_trivia_coins('medium'))}**\n"
+                f"🔴 صعيب: **{fmt_money(get_trivia_coins('hard'))}**\n"
+                f"(غلطة وحدة كتوقف السلسلة — Daily Mini Games cap هو {fmt_money(COINS_DAILY_CAP)})"
             ),
             inline=False
         )
@@ -990,7 +990,7 @@ class Trivia(commands.Cog):
         else:
             await ctx.send("❌ ما قدرتش نصاوب الـ panel — شوف الصلاحيات ديال البوت فهاد الـ channel.", delete_after=10)
 
-    @commands.hybrid_command(name="trivia", description="لعبة أسئلة ثقافة عامة — جاوب صحيح وربح دراهم!")
+    @commands.hybrid_command(name="trivia", description="لعبة أسئلة ثقافة عامة — جاوب صحيح وربح USD!")
     @app_commands.describe(category="اختياري: فئة السؤال")
     @app_commands.choices(category=[
         app_commands.Choice(name="🌍 ثقافة عامة", value="general"),
@@ -1012,7 +1012,7 @@ class Trivia(commands.Cog):
             await ctx.send("❌ ما قدرتش نجيب سؤال دابا، جرب مرة أخرى بعد شوية.", delete_after=8)
 
     @commands.hybrid_command(name="triviatop", aliases=["trivialb"],
-                             description="أفضل 10 أعضاء فـ Trivia (الأكثر دراهم مجموعة)")
+                             description="أفضل 10 أعضاء فـ Trivia (الأكثر USD rewards)")
     async def triviatop_cmd(self, ctx: commands.Context):
         if not ctx.guild:
             return
@@ -1021,7 +1021,7 @@ class Trivia(commands.Cog):
             await ctx.send("ماكاين حتى عضو جاوب صحيح فـ Trivia دابا — كون أول واحد بـ `/trivia`!")
             return
 
-        # كنرتبو بالدراهم المجموعة (وإلا تعادلو، بعدد الأجوبة الصحيحة)
+        # كنرتبو بـUSD rewards المجموعة (وإلا تعادلو، بعدد الأجوبة الصحيحة)
         ranked = sorted(
             guild_stats.items(),
             key=lambda kv: (int(kv[1].get("coins", 0)), int(kv[1].get("correct", 0))),
@@ -1036,7 +1036,7 @@ class Trivia(commands.Cog):
             prefix = medals[i] if i < 3 else f"#{i + 1}"
             best = int(st.get("best_streak", 0))
             lines.append(
-                f"{prefix} **{name}** — {CURRENCY_EMOJI} {int(st.get('coins', 0))} • ✅ {int(st.get('correct', 0))} صحيح"
+                f"{prefix} **{name}** — 💵 {fmt_money(int(st.get('coins', 0)))} • ✅ {int(st.get('correct', 0))} صحيح"
                 + (f" • 🔥 أحسن سلسلة {best}" if best else "")
             )
 
@@ -1052,7 +1052,7 @@ class Trivia(commands.Cog):
             embed.add_field(
                 name="👤 أنت",
                 value=(
-                    f"{CURRENCY_EMOJI} **{int(me.get('coins', 0))}** • ✅ **{int(me.get('correct', 0))}** صحيح • "
+                    f"💵 **{fmt_money(int(me.get('coins', 0)))}** • ✅ **{int(me.get('correct', 0))}** صحيح • "
                     f"🎮 **{int(me.get('games', 0))}** جولة • 🔥 أحسن سلسلة **{int(me.get('best_streak', 0))}**"
                 ),
                 inline=False

@@ -276,6 +276,11 @@ async def run_flip(cog: Coinflip, interaction: discord.Interaction, user: discor
 
     from cogs.gambling_panel import record_casino_round
     record_casino_round(cog.bot, guild_id, user_id, "coinflip", bet, granted if won else 0)
+    if won:
+        await eco.record_gambling_win(
+            interaction.guild, user, bet, granted, "coinflip",
+            details=f"Result: {SIDES[result_side]['label']} • choice: {SIDES[chosen_side]['label']}",
+        )
     new_balance = eco.get_balance(guild_id, user_id)
     final_embed = discord.Embed(
         title=title,

@@ -20,6 +20,7 @@ from discord import app_commands
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Tuple
 import random
+import aiohttp
 
 from storage import JsonStore
 import games_config as cfg
@@ -38,6 +39,117 @@ def fmt_coins(amount: int) -> str:
     return cfg.fmt_money(amount)
 
 
+def _panel_lang(bot: commands.Bot, guild_id: int, user_id: int) -> str:
+    bridge = getattr(bot, "gg", {}) or {}
+    getter = bridge.get("get_panel_language")
+    if getter:
+        try:
+            return getter(guild_id, user_id)
+        except Exception:
+            pass
+    return "darija"
+
+
+def _set_panel_lang(bot: commands.Bot, guild_id: int, user_id: int, lang: str) -> str:
+    bridge = getattr(bot, "gg", {}) or {}
+    setter = bridge.get("set_panel_language")
+    if setter:
+        try:
+            return setter(guild_id, user_id, lang)
+        except Exception:
+            pass
+    return lang if lang in {"darija", "en", "fr"} else "darija"
+
+
+async def _upsert_panel(bot: commands.Bot, interaction: discord.Interaction, key: str, **kwargs):
+    helper = (getattr(bot, "gg", {}) or {}).get("upsert_ephemeral_panel")
+    if helper:
+        return await helper(interaction, key, **kwargs)
+    if not interaction.response.is_done():
+        await interaction.response.send_message(ephemeral=True, **kwargs)
+    else:
+        await interaction.followup.send(ephemeral=True, **kwargs)
+
+
+def _eco_t(lang: str, key: str) -> str:
+    data = {
+        "darija": {
+            "not_yours":"❌ هاد الجلسة ماشي ديالك.", "back":"رجع للبنك", "account":"حسابي",
+            "deposit":"Deposit", "withdraw":"Withdraw", "transfer":"Transfer", "savings":"Savings",
+            "loan":"طلب قرض", "repay":"خلص القرض", "transactions":"معاملاتي", "assets":"Assets",
+            "stats":"الاقتصاد", "xp":"XP Perks", "open_bank":"فتح البنك ديالي",
+            "shop_choose":"🗂️ اختار Category...", "shop_item":"🛒 اختار Item باش تشري...",
+            "shop_back":"رجع للـCategories", "lang_saved":"✅ اللغة ديالك ولات **الدارجة**.",
+        },
+        "en": {
+            "not_yours":"❌ This session belongs to another member.", "back":"Back to Bank", "account":"My Account",
+            "deposit":"Deposit", "withdraw":"Withdraw", "transfer":"Transfer", "savings":"Savings",
+            "loan":"Request Loan", "repay":"Repay Loan", "transactions":"Transactions", "assets":"Assets",
+            "stats":"Economy", "xp":"XP Perks", "open_bank":"Open My Bank",
+            "shop_choose":"🗂️ Choose a category...", "shop_item":"🛒 Choose an item to buy...",
+            "shop_back":"Back to Categories", "lang_saved":"✅ Your language is now **English**.",
+        },
+        "fr": {
+            "not_yours":"❌ Cette session appartient à un autre membre.", "back":"Retour à la banque", "account":"Mon compte",
+            "deposit":"Déposer", "withdraw":"Retirer", "transfer":"Transférer", "savings":"Épargne",
+            "loan":"Demander un prêt", "repay":"Rembourser", "transactions":"Transactions", "assets":"Actifs",
+            "stats":"Économie", "xp":"Avantages XP", "open_bank":"Ouvrir ma banque",
+            "shop_choose":"🗂️ Choisis une catégorie...", "shop_item":"🛒 Choisis un article...",
+            "shop_back":"Retour aux catégories", "lang_saved":"✅ Ta langue est maintenant **Français**.",
+        },
+    }
+    lang = lang if lang in data else "darija"
+    return data[lang].get(key, data["darija"].get(key, key))
+
+
+SHOP_CATEGORY_I18N = {
+    "boosts": {"en":("Boosts","Temporary XP and mini-game boosts."), "fr":("Boosts","Boosts temporaires pour l'XP et les mini-jeux.")},
+    "identity": {"en":("Identity","Personal colors, roles and tags."), "fr":("Identité","Couleurs, rôles et tags personnels.")},
+    "banking": {"en":("Banking","Savings and transfer advantages."), "fr":("Banque","Avantages d'épargne et de transfert.")},
+    "social": {"en":("Social","Visibility and interaction inside the server."), "fr":("Social","Visibilité et interaction dans le serveur.")},
+    "assets": {"en":("Assets","Permanent property counted in Net Worth and resellable."), "fr":("Actifs","Biens permanents comptés dans la valeur nette et revendables.")},
+    "luxury": {"en":("Luxury","Prestige money sinks for wealthy members."), "fr":("Luxe","Dépenses de prestige pour les membres fortunés.")},
+}
+
+SHOP_ITEM_DESC_I18N = {
+    "xpboost_small": {"en":"Chat and voice XP ×1.25 for 1 hour.","fr":"XP chat et vocal ×1,25 pendant 1 heure."},
+    "xpboost_medium": {"en":"Your XP ×1.5 for 1 full hour.","fr":"Ton XP ×1,5 pendant 1 heure complète."},
+    "xpboost_big": {"en":"Strong XP boost ×2 for 1 hour.","fr":"Boost XP puissant ×2 pendant 1 heure."},
+    "coinsboost_small": {"en":"Increases non-casino mini-game rewards. Casino odds never change.","fr":"Augmente les récompenses des mini-jeux hors casino. Les probabilités du casino ne changent jamais."},
+    "color_basic": {"en":"A personal color role for 7 days.","fr":"Un rôle de couleur personnelle pendant 7 jours."},
+    "color_month": {"en":"A personal color role for 30 days.","fr":"Un rôle de couleur personnelle pendant 30 jours."},
+    "permanent_color": {"en":"Permanent personal name color.","fr":"Couleur personnelle permanente pour ton nom."},
+    "customrole_week": {"en":"A custom-named role for 7 days.","fr":"Un rôle personnalisé pendant 7 jours."},
+    "customrole": {"en":"A custom-named role for 30 days.","fr":"Un rôle personnalisé pendant 30 jours."},
+    "legend_tag": {"en":"LEGEND tag for 7 days.","fr":"Tag LEGEND pendant 7 jours."},
+    "interest_boost_7d": {"en":"Adds +0.05%/day to your Savings rate for 7 days; paid from Treasury.","fr":"Ajoute +0,05 %/jour au taux d'épargne pendant 7 jours ; payé par le Trésor."},
+    "transfer_pass_7d": {"en":"0% fee on Bank→Bank transfers for 7 days.","fr":"0 % de frais sur les transferts Banque→Banque pendant 7 jours."},
+    "shoutout_public": {"en":"The bot posts a public shoutout for you in the dedicated channel.","fr":"Le bot publie un shoutout public dans le salon dédié."},
+    "asset_car": {"en":"Permanent Net Worth asset. Resale = 40% of paid price, funded by Treasury.","fr":"Actif permanent. Revente = 40 % du prix payé, financée par le Trésor."},
+    "asset_apartment": {"en":"Permanent property shown in your account and Net Worth; Treasury-funded resale.","fr":"Bien permanent affiché dans ton compte et ta valeur nette ; revente financée par le Trésor."},
+    "asset_business": {"en":"Permanent business asset for tycoons; prestige without passive money creation.","fr":"Actif business permanent ; prestige sans création d'argent passif."},
+    "asset_yacht": {"en":"Rare luxury asset; 40% resale when Treasury has liquidity.","fr":"Actif de luxe rare ; revente à 40 % si le Trésor a assez de liquidités."},
+    "asset_mansion": {"en":"The most expensive GGMW9 asset; a permanent wealth sink.","fr":"L'actif GGMW9 le plus cher ; une dépense de richesse permanente."},
+    "high_roller": {"en":"HIGH ROLLER prestige role for 14 days.","fr":"Rôle prestige HIGH ROLLER pendant 14 jours."},
+    "banker_title": {"en":"BANKER prestige role for 30 days.","fr":"Rôle prestige BANKER pendant 30 jours."},
+    "tycoon_title": {"en":"TYCOON prestige role for 30 days.","fr":"Rôle prestige TYCOON pendant 30 jours."},
+}
+
+
+def _shop_category_text(category_id: str, lang: str):
+    cat = cfg.SHOP_CATEGORIES.get(category_id, {"emoji":"🛒","name":"Shop","description":""})
+    if lang in {"en","fr"} and category_id in SHOP_CATEGORY_I18N:
+        name, desc = SHOP_CATEGORY_I18N[category_id][lang]
+        return cat.get("emoji","🛒"), name, desc
+    return cat.get("emoji","🛒"), cat.get("name","Shop"), cat.get("description","")
+
+
+def _shop_item_desc(item: dict, lang: str) -> str:
+    if lang in {"en","fr"}:
+        return SHOP_ITEM_DESC_I18N.get(item.get("id"), {}).get(lang, item.get("description", ""))
+    return item.get("description", "")
+
+
 class Economy(commands.Cog):
     """نظام العملة — كاع الـ cogs الأخرى كتعيّط عليه بـ bot.get_cog("Economy")"""
 
@@ -46,12 +158,15 @@ class Economy(commands.Cog):
         self.db = JsonStore("economy.json", default={})
         # حسابات النظام المركزي: Treasury / Jackpot / Events / Burn / Bank / Ledger.
         self.system_db = JsonStore("economy_system.json", default={})
+        # FX is display-only. Internal balances/transactions ALWAYS stay USD cents.
+        self.fx_db = JsonStore("fx_rates.json", default={"base":"USD","rates":{"USD":1.0},"date":None,"source":"Frankfurter"})
 
     async def cog_load(self):
         self.expire_purchases_loop.start()
         self.economy_stats_loop.start()
         self.loan_collection_loop.start()
         self.bank_interest_loop.start()
+        self.fx_rates_loop.start()
         # Persistent View: ما كيزيد حتى Slash Command جديد.
         self.bot.add_view(EconomyBankPanelView(self))
 
@@ -60,6 +175,7 @@ class Economy(commands.Cog):
         self.economy_stats_loop.cancel()
         self.loan_collection_loop.cancel()
         self.bank_interest_loop.cancel()
+        self.fx_rates_loop.cancel()
 
     @tasks.loop(minutes=15)
     async def expire_purchases_loop(self):
@@ -140,6 +256,8 @@ class Economy(commands.Cog):
             "events": 0,
             "burned": 0,
             "total_gambling_lost": 0,
+            "total_gambling_won": 0,
+            "big_win_channel_id": None,
             "total_shop_spent": 0,
             "total_jackpot_paid": 0,
             "bank_accounts": {},
@@ -158,6 +276,103 @@ class Economy(commands.Cog):
             if key not in root:
                 root[key] = value.copy() if isinstance(value, (dict, list)) else value
         return root
+
+    # ════════════════════════════════════════════════
+    # Display Currency / FX — presentation only
+    # ════════════════════════════════════════════════
+
+    def get_display_currency(self, guild_id: int, user_id: int) -> str:
+        code = str(self._acc(guild_id, user_id).get("display_currency", "USD") or "USD").upper()
+        return code if code in getattr(cfg, "DISPLAY_CURRENCIES", {"USD": {}}) else "USD"
+
+    def set_display_currency(self, guild_id: int, user_id: int, code: str) -> str:
+        code = str(code or "USD").upper()
+        if code not in getattr(cfg, "DISPLAY_CURRENCIES", {"USD": {}}):
+            code = "USD"
+        acc = self._acc(guild_id, user_id)
+        acc["display_currency"] = code
+        self.db.save()
+        return code
+
+    def _fx_rate(self, code: str) -> Optional[float]:
+        code = str(code or "USD").upper()
+        if code == "USD":
+            return 1.0
+        try:
+            rate = float((self.fx_db.data.get("rates") or {}).get(code))
+            return rate if rate > 0 else None
+        except (TypeError, ValueError):
+            return None
+
+    def format_currency_value(self, cents: int, code: str) -> Optional[str]:
+        code = str(code or "USD").upper()
+        if code == "USD":
+            return cfg.fmt_money(cents)
+        meta = getattr(cfg, "DISPLAY_CURRENCIES", {}).get(code)
+        rate = self._fx_rate(code)
+        if not meta or rate is None:
+            return None
+        value = (int(cents or 0) / float(getattr(cfg, "MONEY_SCALE", 100) or 100)) * rate
+        decimals = int(meta.get("decimals", 2))
+        symbol = meta.get("symbol", code)
+        if code in {"MAD", "DZD"}:
+            return f"{value:,.{decimals}f} {symbol}"
+        return f"{symbol}{value:,.{decimals}f}"
+
+    def money_with_preference(self, guild_id: int, user_id: int, cents: int) -> str:
+        """USD is source of truth; the optional second line is reference FX only."""
+        usd = cfg.fmt_money(cents)
+        code = self.get_display_currency(guild_id, user_id)
+        if code == "USD":
+            return usd
+        converted = self.format_currency_value(cents, code)
+        meta = getattr(cfg, "DISPLAY_CURRENCIES", {}).get(code, {})
+        if converted is None:
+            return f"{usd}\n⏳ {meta.get('emoji','💱')} {code} rate loading"
+        return f"{usd}\n≈ {meta.get('emoji','💱')} {converted}"
+
+    async def refresh_fx_rates(self) -> bool:
+        """Fetch USD→EUR/MAD/DZD reference rates; failures keep the last cache."""
+        url = str(getattr(cfg, "FX_API_URL", "") or "")
+        if not url:
+            return False
+        try:
+            timeout = aiohttp.ClientTimeout(total=12)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(url) as resp:
+                    if resp.status != 200:
+                        return False
+                    payload = await resp.json()
+            rows = payload if isinstance(payload, list) else []
+            rates = {"USD": 1.0}
+            rate_date = None
+            for row in rows:
+                quote = str(row.get("quote", "")).upper()
+                if quote in getattr(cfg, "DISPLAY_CURRENCIES", {}) and quote != "USD":
+                    try:
+                        rate = float(row.get("rate"))
+                    except (TypeError, ValueError):
+                        continue
+                    if rate > 0:
+                        rates[quote] = rate
+                        rate_date = rate_date or row.get("date")
+            if not all(code in rates for code in ("EUR", "MAD", "DZD")):
+                return False
+            self.fx_db.data.clear()
+            self.fx_db.data.update({"base":"USD","rates":rates,"date":rate_date,"source":"Frankfurter"})
+            self.fx_db.save()
+            return True
+        except Exception as exc:
+            print(f"[FX] refresh failed; keeping last cached rates: {type(exc).__name__}: {exc}")
+            return False
+
+    @tasks.loop(minutes=max(30, int(getattr(cfg, "FX_REFRESH_MINUTES", 360) or 360)))
+    async def fx_rates_loop(self):
+        await self.refresh_fx_rates()
+
+    @fx_rates_loop.before_loop
+    async def before_fx_rates_loop(self):
+        await self.bot.wait_until_ready()
 
     def get_bank_balance(self, guild_id: int, user_id: int) -> int:
         sys = self._system(guild_id)
@@ -276,6 +491,102 @@ class Economy(commands.Cog):
         # باش الاقتصاد العام يبان متحدث فوراً، ما نستناوش loop ديال الدقيقتين.
         await self.refresh_economy_stats(guild)
         return splits
+
+    async def ensure_big_win_channel(self, guild: discord.Guild):
+        """Find/create public read-only highlight feed for exceptional one-bet wins."""
+        configured = int(getattr(cfg, "CASINO_BIG_WIN_CHANNEL_ID", 0) or 0)
+        if configured:
+            ch = guild.get_channel(configured)
+            if ch:
+                return ch
+        sys = self._system(guild.id)
+        saved = int(sys.get("big_win_channel_id") or 0)
+        if saved:
+            ch = guild.get_channel(saved)
+            if ch:
+                return ch
+        ch = discord.utils.get(guild.text_channels, name="💎・big-wins") or discord.utils.get(guild.text_channels, name="big-wins")
+        if ch:
+            sys["big_win_channel_id"] = ch.id
+            self.system_db.save()
+            return ch
+        category = guild.get_channel(int(getattr(cfg, "ECONOMY_CATEGORY_ID", 0) or 0))
+        if category is not None and not isinstance(category, discord.CategoryChannel):
+            category = None
+        me = guild.me
+        overwrites = {
+            guild.default_role: discord.PermissionOverwrite(view_channel=True, read_message_history=True, send_messages=False),
+        }
+        if me:
+            overwrites[me] = discord.PermissionOverwrite(view_channel=True, read_message_history=True, send_messages=True, embed_links=True)
+        try:
+            ch = await guild.create_text_channel(
+                "💎・big-wins",
+                category=category,
+                topic="GGMW9 Casino — exceptional single-wager wins only. Read-only highlight feed.",
+                overwrites=overwrites,
+                reason="GGMW9 Economy: dedicated large casino wins feed",
+            )
+            sys["big_win_channel_id"] = ch.id
+            self.system_db.save()
+            return ch
+        except (discord.Forbidden, discord.HTTPException):
+            return None
+
+    async def _post_big_win(self, guild: discord.Guild, user: discord.abc.User, *, game: str, bet: int, payout: int, profit: int, details: str = "", is_jackpot: bool = False):
+        threshold = int(getattr(cfg, "CASINO_BIG_WIN_MIN_PROFIT", 25000) or 25000)
+        multiplier = (payout / bet) if bet > 0 else 0.0
+        mult_threshold = float(getattr(cfg, "CASINO_BIG_WIN_MIN_PAYOUT_MULTIPLIER", 10.0) or 10.0)
+        qualifies = bool(is_jackpot or profit >= threshold or (profit >= threshold // 2 and multiplier >= mult_threshold))
+        if not qualifies:
+            return
+        channel = await self.ensure_big_win_channel(guild)
+        if not channel:
+            return
+        embed = discord.Embed(
+            title="💎 BIG WIN — GGMW9 CASINO",
+            description=(
+                f"🎉 {user.mention} دار **Big Win** من رهان واحد!\n\n"
+                f"🎮 **Game:** `{game}`\n"
+                f"🎟️ **Bet:** {cfg.fmt_money(bet)}\n"
+                f"💰 **Payout:** {cfg.fmt_money(payout)}\n"
+                f"📈 **Net Profit:** **+{cfg.fmt_money(profit)}**\n"
+                f"✖️ **Return:** `{multiplier:.2f}x`"
+                + (f"\n\n{details}" if details else "")
+            ),
+            color=discord.Color.gold(),
+            timestamp=datetime.now(),
+        )
+        if is_jackpot:
+            embed.add_field(name="🏆 Jackpot", value="✅ Jackpot / progressive prize included", inline=False)
+        embed.set_thumbnail(url=user.display_avatar.url)
+        embed.set_footer(text="GGMW9 • Exceptional wins only • same odds for everyone")
+        try:
+            await channel.send(embed=embed)
+        except (discord.Forbidden, discord.HTTPException):
+            pass
+
+    async def record_gambling_win(self, guild: discord.Guild, user: discord.abc.User, bet: int, payout: int, game: str, *, details: str = "", is_jackpot: bool = False) -> dict:
+        """Audit a real casino win AFTER payout. This does not alter the balance."""
+        bet = max(0, int(bet or 0)); payout = max(0, int(payout or 0))
+        profit = max(0, payout - bet)
+        sys = self._system(guild.id)
+        sys["total_gambling_won"] = int(sys.get("total_gambling_won", 0) or 0) + profit
+        tx_id = self._record_transaction(
+            guild.id, user_id=user.id, kind="gambling_win", amount=profit, source=game,
+            description=f"ربح رهان فـ {game}", splits={"bet":bet,"payout":payout,"profit":profit},
+        )
+        multiplier = (payout / bet) if bet > 0 else 0.0
+        await self._economy_log(
+            guild, f"🎉 ربح رهان — TX #{tx_id}",
+            (f"**العضو:** {user.mention}\n**اللعبة:** `{game}`\n"
+             f"**Bet:** **{cfg.fmt_money(bet)}**\n**Payout:** **{cfg.fmt_money(payout)}**\n"
+             f"**Net Profit:** **+{cfg.fmt_money(profit)}**\n**Return:** `{multiplier:.2f}x`"
+             + (f"\n**Details:** {details}" if details else "")),
+            discord.Color.green(),
+        )
+        await self._post_big_win(guild, user, game=game, bet=bet, payout=payout, profit=profit, details=details, is_jackpot=is_jackpot)
+        return {"tx_id":tx_id,"bet":bet,"payout":payout,"profit":profit}
 
     async def route_shop_purchase(
         self,
@@ -1243,223 +1554,189 @@ class Economy(commands.Cog):
             f"💳 Wallet: **{cfg.fmt_money(self.get_balance(guild.id, user.id))}**"
         )
 
-    def build_bank_panel_embed(self, guild: discord.Guild) -> discord.Embed:
+    def build_bank_panel_embed(self, guild: discord.Guild, lang: str = "darija") -> discord.Embed:
         sys = self._system(guild.id)
-        embed = discord.Embed(
-            title="🏦 GGMW9 Central Bank",
-            description=(
+        if lang == "en":
+            desc = (
+                "**A real server bank:** Wallet, Savings, Transfers, Loans, Credit and Assets.\n\n"
+                "💳 **Wallet** — gaming and purchases.\n🏦 **Savings** — protected from casino bets and earns Treasury-funded daily interest.\n"
+                "💸 **Transfers** — Bank→Bank with a ledger and transparent fee.\n💳 **Loans** — funded by Treasury; Credit + Level determine terms.\n"
+                "🏠 **Assets** — property counted in Net Worth and resellable.\n\n"
+                "📍 **This #bank channel is the official full Bank panel. ARCADE only provides quick access.**"
+            )
+            rate_name, trans_name, redenom_name = "📈 Savings Rate", "💸 Transfers", "💵 USD System"
+            footer = "GGMW9 Bank • real ledger • Treasury-funded yield • personal language"
+        elif lang == "fr":
+            desc = (
+                "**Une vraie banque du serveur :** Wallet, Épargne, Transferts, Prêts, Crédit et Actifs.\n\n"
+                "💳 **Wallet** — jeux et achats.\n🏦 **Épargne** — protégée des paris et rémunérée par le Trésor.\n"
+                "💸 **Transferts** — Banque→Banque avec registre et frais transparents.\n💳 **Prêts** — financés par le Trésor ; Crédit + Niveau définissent les conditions.\n"
+                "🏠 **Actifs** — biens inclus dans la valeur nette et revendables.\n\n"
+                "📍 **Ce salon #bank est le panneau bancaire officiel complet. ARCADE sert uniquement d'accès rapide.**"
+            )
+            rate_name, trans_name, redenom_name = "📈 Taux d'épargne", "💸 Transferts", "💵 Système USD"
+            footer = "GGMW9 Bank • registre réel • rendement financé par le Trésor"
+        else:
+            desc = (
                 "**Bank حقيقي داخل اقتصاد السيرفر:** Wallet، Savings، Transfers، Loans، Credit وAssets.\n\n"
-                "💳 **Wallet** — اللعب والشراء.\n"
-                "🏦 **Savings** — محمية من الرهانات وكتربح Daily Interest من Treasury.\n"
-                "💸 **Transfers** — Bank→Bank مع Ledger وFee واضحة.\n"
-                "💳 **Loans** — ممولة من Treasury؛ Credit + Level كيحددو الشروط.\n"
+                "💳 **Wallet** — اللعب والشراء.\n🏦 **Savings** — محمية من الرهانات وكتربح Daily Interest من Treasury.\n"
+                "💸 **Transfers** — Bank→Bank مع Ledger وFee واضحة.\n💳 **Loans** — ممولة من Treasury؛ Credit + Level كيحددو الشروط.\n"
                 "🏠 **Assets** — ممتلكات كتدخل فـNet Worth ويمكن تعاود تبيعها.\n\n"
-                "💡 الاقتصاد ماكيخلقش Interest من والو: Savings yield كتخلص من Treasury."
-            ),
-            color=discord.Color.gold(),
-            timestamp=datetime.now(),
-        )
+                "📍 **هاد #bank هو البانل الرسمي والكامل ديال البنك؛ ARCADE غير Quick Access.**"
+            )
+            rate_name, trans_name, redenom_name = "📈 Savings Rate", "💸 Transfers", "💵 USD Re-denomination"
+            footer = "GGMW9 Bank • real ledger • no hidden balance reset"
+        embed = discord.Embed(title="🏦 GGMW9 Central Bank", description=desc, color=discord.Color.gold(), timestamp=datetime.now())
         embed.add_field(name="🏛️ Treasury", value=f"**{cfg.fmt_money(sys['treasury'])}**", inline=True)
         embed.add_field(name="🎰 Global Jackpot", value=f"**{cfg.fmt_money(sys['jackpot'])}**", inline=True)
         embed.add_field(name="🎉 Events Fund", value=f"**{cfg.fmt_money(sys['events'])}**", inline=True)
-        embed.add_field(
-            name="📈 Savings Rate",
-            value=(
-                f"Base **{getattr(cfg,'BANK_INTEREST_BASE_BPS_DAILY',5)/100:.2f}%/day**\n"
-                f"Min balance **{cfg.fmt_money(getattr(cfg,'BANK_INTEREST_MIN_BALANCE',2500))}**\n"
-                "Level وShop pass يقدرو يزيدو rate."
-            ), inline=True,
-        )
-        embed.add_field(
-            name="💸 Transfers",
-            value=(
-                f"Base fee **{getattr(cfg,'BANK_TRANSFER_FEE_BPS',100)/100:.2f}%**\n"
-                f"Daily limit من **{cfg.fmt_money(getattr(cfg,'BANK_TRANSFER_DAILY_LIMIT',100000))}**"
-            ), inline=True,
-        )
-        embed.add_field(
-            name="💵 USD Re-denomination",
-            value="الأرصدة القديمة ما تحيد منها والو: كل 100 وحدة قديمة كتظهر دابا **$1.00**. نفس القيمة الداخلية محفوظة.",
-            inline=False,
-        )
-        embed.set_footer(text="GGMW9 Bank • real ledger • no hidden balance reset")
+        if lang == "en":
+            rv = f"Base **{getattr(cfg,'BANK_INTEREST_BASE_BPS_DAILY',5)/100:.2f}%/day**\nMinimum **{cfg.fmt_money(getattr(cfg,'BANK_INTEREST_MIN_BALANCE',2500))}**\nLevel and Shop pass may increase it."
+            tv = f"Base fee **{getattr(cfg,'BANK_TRANSFER_FEE_BPS',100)/100:.2f}%**\nDaily limit starts at **{cfg.fmt_money(getattr(cfg,'BANK_TRANSFER_DAILY_LIMIT',100000))}**"
+            dv = "Balances are stored in cents and displayed as USD. No hidden reset is performed."
+        elif lang == "fr":
+            rv = f"Base **{getattr(cfg,'BANK_INTEREST_BASE_BPS_DAILY',5)/100:.2f}%/jour**\nMinimum **{cfg.fmt_money(getattr(cfg,'BANK_INTEREST_MIN_BALANCE',2500))}**\nLe niveau et le pass Boutique peuvent l'augmenter."
+            tv = f"Frais de base **{getattr(cfg,'BANK_TRANSFER_FEE_BPS',100)/100:.2f}%**\nLimite quotidienne dès **{cfg.fmt_money(getattr(cfg,'BANK_TRANSFER_DAILY_LIMIT',100000))}**"
+            dv = "Les soldes sont stockés en cents et affichés en USD. Aucun reset caché."
+        else:
+            rv = f"Base **{getattr(cfg,'BANK_INTEREST_BASE_BPS_DAILY',5)/100:.2f}%/day**\nMin balance **{cfg.fmt_money(getattr(cfg,'BANK_INTEREST_MIN_BALANCE',2500))}**\nLevel وShop pass يقدرو يزيدو rate."
+            tv = f"Base fee **{getattr(cfg,'BANK_TRANSFER_FEE_BPS',100)/100:.2f}%**\nDaily limit من **{cfg.fmt_money(getattr(cfg,'BANK_TRANSFER_DAILY_LIMIT',100000))}**"
+            dv = "الأرصدة كتتعرض بالدولار وبالسنت؛ ما كاين حتى Reset مخفي."
+        embed.add_field(name=rate_name, value=rv, inline=True)
+        embed.add_field(name=trans_name, value=tv, inline=True)
+        embed.add_field(name=redenom_name, value=dv, inline=False)
+        embed.add_field(name="🌐 Languages", value="🇲🇦 Darija (Default) • 🇬🇧 English • 🇫🇷 Français", inline=False)
+        embed.add_field(name="💱 Display Currency", value="الحساب الحقيقي ديما **USD**. من Account كل عضو يقدر يشوف تقريباً حتى **MAD / EUR / DZD** بلا ما يتبدل الرصيد أو الرهان.", inline=False)
+        embed.set_footer(text=footer + " • FX display: USD/MAD/EUR/DZD")
         return embed
 
-    def build_global_economy_embed(self, guild: discord.Guild) -> discord.Embed:
+    def build_global_economy_embed(self, guild: discord.Guild, lang: str = "darija") -> discord.Embed:
         sys = self._system(guild.id)
         guild_data = self.db.guild(guild.id)
         wallets = sum(max(0, int(acc.get("coins", 0) or 0)) for acc in guild_data.values())
         bank_total = sum(max(0, int(v or 0)) for v in sys.get("bank_accounts", {}).values())
-        assets_total = sum(
-            sum(max(0, int(a.get("paid_price", 0) or 0)) for a in (acc.get("assets") or {}).values())
-            for acc in guild_data.values()
-        )
-        active_loans = [
-            loan for loan in sys.get("loans", {}).values()
-            if loan and int(loan.get("remaining", 0) or 0) > 0
-        ]
+        assets_total = sum(sum(max(0, int(a.get("paid_price", 0) or 0)) for a in (acc.get("assets") or {}).values()) for acc in guild_data.values())
+        active_loans = [loan for loan in sys.get("loans", {}).values() if loan and int(loan.get("remaining", 0) or 0) > 0]
         loans_outstanding = sum(int(loan.get("remaining", 0) or 0) for loan in active_loans)
         overdue_loans = sum(1 for loan in active_loans if self._loan_is_overdue(loan))
         live_supply = wallets + bank_total + sys["treasury"] + sys["jackpot"] + sys["events"]
-
-        embed = discord.Embed(
-            title="📊 اقتصاد GGMW9 — Live",
-            description="USD economy: Wallet + Bank + Treasury + Casino + Shop + Assets.",
-            color=discord.Color.blurple(), timestamp=datetime.now(),
-        )
-        embed.add_field(name="💳 Wallets", value=f"**{cfg.fmt_money(wallets)}**", inline=True)
-        embed.add_field(name="🏦 Bank Deposits", value=f"**{cfg.fmt_money(bank_total)}**", inline=True)
-        embed.add_field(name="🏛️ Treasury", value=f"**{cfg.fmt_money(sys['treasury'])}**", inline=True)
-        embed.add_field(name="🎰 Jackpot", value=f"**{cfg.fmt_money(sys['jackpot'])}**", inline=True)
-        embed.add_field(name="🎉 Events", value=f"**{cfg.fmt_money(sys['events'])}**", inline=True)
-        embed.add_field(name="🔥 Burned", value=f"**{cfg.fmt_money(sys['burned'])}**", inline=True)
-        embed.add_field(name="📉 Casino Losses", value=f"**{cfg.fmt_money(sys['total_gambling_lost'])}**", inline=True)
-        embed.add_field(name="🛒 Shop Spend", value=f"**{cfg.fmt_money(sys['total_shop_spent'])}**", inline=True)
-        embed.add_field(name="🏆 Jackpot Paid", value=f"**{cfg.fmt_money(sys['total_jackpot_paid'])}**", inline=True)
-        embed.add_field(name="📈 Interest Paid", value=f"**{cfg.fmt_money(sys.get('total_interest_paid',0))}**", inline=True)
-        embed.add_field(name="💸 Transfer Fees", value=f"**{cfg.fmt_money(sys.get('total_transfer_fees',0))}**", inline=True)
-        embed.add_field(name="🏠 Asset Book Value", value=f"**{cfg.fmt_money(assets_total)}**", inline=True)
-        embed.add_field(name="💳 Loans Outstanding", value=f"**{cfg.fmt_money(loans_outstanding)}**", inline=True)
-        embed.add_field(name="⚠️ Overdue Loans", value=f"**{overdue_loans}**", inline=True)
-        embed.add_field(name="💹 Live Money Supply", value=f"**{cfg.fmt_money(live_supply)}**", inline=False)
-        embed.set_footer(text="Burn + Assets ما داخلينش فـliquid supply | Interest funded by Treasury")
+        if lang == "en":
+            title, desc = "📊 GGMW9 Economy — Live", "Live USD economy: Wallet + Bank + Treasury + Casino + Shop + Assets."
+            names = ["💳 Wallets","🏦 Bank Deposits","🏛️ Treasury","🎰 Jackpot","🎉 Events","🔥 Burned","🏠 Asset Book Value","💳 Loans Outstanding","⚠️ Overdue Loans","💵 Live Money Supply"]
+        elif lang == "fr":
+            title, desc = "📊 Économie GGMW9 — Live", "Économie USD en direct : Wallet + Banque + Trésor + Casino + Boutique + Actifs."
+            names = ["💳 Wallets","🏦 Dépôts bancaires","🏛️ Trésor","🎰 Jackpot","🎉 Événements","🔥 Détruit","🏠 Valeur des actifs","💳 Prêts en cours","⚠️ Prêts en retard","💵 Masse monétaire"]
+        else:
+            title, desc = "📊 اقتصاد GGMW9 — Live", "USD economy: Wallet + Bank + Treasury + Casino + Shop + Assets."
+            names = ["💳 Wallets","🏦 Bank Deposits","🏛️ Treasury","🎰 Jackpot","🎉 Events","🔥 Burned","🏠 Asset Book Value","💳 Loans Outstanding","⚠️ Overdue Loans","💵 Live Money Supply"]
+        embed = discord.Embed(title=title, description=desc, color=discord.Color.blurple(), timestamp=datetime.now())
+        vals=[wallets,bank_total,sys['treasury'],sys['jackpot'],sys['events'],sys['burned'],assets_total,loans_outstanding,overdue_loans,live_supply]
+        for i,(name,val) in enumerate(zip(names,vals)):
+            value = f"**{val}**" if i==8 else f"**{cfg.fmt_money(val)}**"
+            embed.add_field(name=name,value=value,inline=True)
+        if lang == "en":
+            loss_name, win_name = "🎰 Casino Losses Routed", "🎉 Casino Net Wins Logged"
+        elif lang == "fr":
+            loss_name, win_name = "🎰 Pertes Casino routées", "🎉 Gains nets Casino journalisés"
+        else:
+            loss_name, win_name = "🎰 Casino Losses Routed", "🎉 Casino Net Wins Logged"
+        embed.add_field(name=loss_name,value=f"**{cfg.fmt_money(int(sys.get('total_gambling_lost',0) or 0))}**",inline=True)
+        embed.add_field(name=win_name,value=f"**{cfg.fmt_money(int(sys.get('total_gambling_won',0) or 0))}**",inline=True)
+        embed.set_footer(text="🌐 Darija • English • Français")
         return embed
 
-    def build_user_account_embed(self, guild: discord.Guild, user: discord.abc.User) -> discord.Embed:
-        wallet = self.get_balance(guild.id, user.id)
-        bank = self.get_bank_balance(guild.id, user.id)
-        assets_value = self.get_assets_value(guild.id, user.id)
-        terms = self.get_loan_terms(guild.id, user.id)
-        net_worth = wallet + bank + assets_value
-        rate_bps = self.get_bank_interest_bps(guild.id, user.id)
-        sent_today = self.get_transfer_sent_today(guild.id, user.id)
-        transfer_limit = self.get_transfer_daily_limit(guild.id, user.id)
+    def build_user_account_embed(self, guild: discord.Guild, user: discord.abc.User, lang: str = "darija") -> discord.Embed:
+        wallet = self.get_balance(guild.id, user.id); bank = self.get_bank_balance(guild.id, user.id)
+        assets_value = self.get_assets_value(guild.id, user.id); terms = self.get_loan_terms(guild.id, user.id)
+        net_worth = wallet + bank + assets_value; rate_bps = self.get_bank_interest_bps(guild.id, user.id)
+        sent_today = self.get_transfer_sent_today(guild.id, user.id); transfer_limit = self.get_transfer_daily_limit(guild.id, user.id)
         fee_free = self._perk_active(guild.id, user.id, "transfer_fee_pass_expires")
-
-        embed = discord.Embed(
-            title=f"🏦 حساب {user.display_name}",
-            description=f"**Net Worth: {cfg.fmt_money(net_worth)}**",
-            color=discord.Color.green(),
-        )
-        embed.add_field(name="💳 Wallet", value=f"**{cfg.fmt_money(wallet)}**", inline=True)
-        embed.add_field(name="🏦 Savings", value=f"**{cfg.fmt_money(bank)}**", inline=True)
-        embed.add_field(name="🏠 Assets", value=f"**{cfg.fmt_money(assets_value)}**", inline=True)
-        embed.add_field(
-            name="📈 Savings Yield",
-            value=(f"**{rate_bps/100:.2f}% / day**\n"
-                   f"Min: {cfg.fmt_money(getattr(cfg,'BANK_INTEREST_MIN_BALANCE',2500))}\n"
-                   "Treasury-funded"), inline=True,
-        )
-        embed.add_field(
-            name="💸 Transfers اليوم",
-            value=(f"{cfg.fmt_money(sent_today)} / {cfg.fmt_money(transfer_limit)}\n"
-                   + ("✅ Fee Pass active" if fee_free else f"Fee {getattr(cfg,'BANK_TRANSFER_FEE_BPS',100)/100:.2f}%")),
-            inline=True,
-        )
-        embed.add_field(
-            name="💳 Credit",
-            value=f"**{terms['credit_score']}/100** • {terms['tier_name']} • Lv {terms['level']}",
-            inline=True,
-        )
-        embed.add_field(
-            name="🏦 Loan Terms",
-            value=(f"Limit: **{cfg.fmt_money(terms['effective_limit'])}**\n"
-                   f"Interest: **{terms['interest_percent']}%** • Term: **{terms['term_days']}d**"),
-            inline=False,
-        )
-        loan = self.get_active_loan(guild.id, user.id)
+        if lang == "en":
+            title=f"🏦 {user.display_name}'s Account"; net="Net Worth"; trans="💸 Transfers Today"; loan_terms="🏦 Loan Terms"; footer="Savings are protected from Casino until withdrawn • Assets can be sold from Bank"
+            yield_v=f"**{rate_bps/100:.2f}% / day**\nMin: {cfg.fmt_money(getattr(cfg,'BANK_INTEREST_MIN_BALANCE',2500))}\nTreasury-funded"
+            trans_v=f"{cfg.fmt_money(sent_today)} / {cfg.fmt_money(transfer_limit)}\n"+("✅ Fee Pass active" if fee_free else f"Fee {getattr(cfg,'BANK_TRANSFER_FEE_BPS',100)/100:.2f}%")
+            terms_v=f"Limit: **{cfg.fmt_money(terms['effective_limit'])}**\nInterest: **{terms['interest_percent']}%** • Term: **{terms['term_days']}d**"
+        elif lang == "fr":
+            title=f"🏦 Compte de {user.display_name}"; net="Valeur nette"; trans="💸 Transferts aujourd'hui"; loan_terms="🏦 Conditions du prêt"; footer="L'épargne est protégée du Casino tant qu'elle n'est pas retirée • Les actifs peuvent être revendus depuis la Banque"
+            yield_v=f"**{rate_bps/100:.2f}% / jour**\nMin : {cfg.fmt_money(getattr(cfg,'BANK_INTEREST_MIN_BALANCE',2500))}\nFinancé par le Trésor"
+            trans_v=f"{cfg.fmt_money(sent_today)} / {cfg.fmt_money(transfer_limit)}\n"+("✅ Pass sans frais actif" if fee_free else f"Frais {getattr(cfg,'BANK_TRANSFER_FEE_BPS',100)/100:.2f}%")
+            terms_v=f"Limite : **{cfg.fmt_money(terms['effective_limit'])}**\nIntérêt : **{terms['interest_percent']}%** • Durée : **{terms['term_days']}j**"
+        else:
+            title=f"🏦 حساب {user.display_name}"; net="Net Worth"; trans="💸 Transfers اليوم"; loan_terms="🏦 Loan Terms"; footer="Savings ماكيدخلش Casino حتى تسحبو | Assets تقدر تبيعهم من Bank"
+            yield_v=f"**{rate_bps/100:.2f}% / day**\nMin: {cfg.fmt_money(getattr(cfg,'BANK_INTEREST_MIN_BALANCE',2500))}\nTreasury-funded"
+            trans_v=f"{cfg.fmt_money(sent_today)} / {cfg.fmt_money(transfer_limit)}\n"+("✅ Fee Pass active" if fee_free else f"Fee {getattr(cfg,'BANK_TRANSFER_FEE_BPS',100)/100:.2f}%")
+            terms_v=f"Limit: **{cfg.fmt_money(terms['effective_limit'])}**\nInterest: **{terms['interest_percent']}%** • Term: **{terms['term_days']}d**"
+        display_code=self.get_display_currency(guild.id,user.id)
+        embed=discord.Embed(title=title,description=f"**{net}:**\n{self.money_with_preference(guild.id,user.id,net_worth)}",color=discord.Color.green())
+        embed.add_field(name="💳 Wallet",value=f"**{self.money_with_preference(guild.id,user.id,wallet)}**",inline=True); embed.add_field(name="🏦 Savings",value=f"**{self.money_with_preference(guild.id,user.id,bank)}**",inline=True); embed.add_field(name="🏠 Assets",value=f"**{self.money_with_preference(guild.id,user.id,assets_value)}**",inline=True)
+        embed.add_field(name="📈 Savings Yield",value=yield_v,inline=True); embed.add_field(name=trans,value=trans_v,inline=True); embed.add_field(name="💳 Credit",value=f"**{terms['credit_score']}/100** • {terms['tier_name']} • Lv {terms['level']}",inline=True)
+        embed.add_field(name=loan_terms,value=terms_v,inline=False)
+        loan=self.get_active_loan(guild.id,user.id)
         if loan:
-            state = "⚠️ Overdue" if self._loan_is_overdue(loan) else "🟢 Active"
-            embed.add_field(
-                name=f"💳 Loan #{loan.get('id')} — {state}",
-                value=(f"Remaining: **{cfg.fmt_money(int(loan.get('remaining',0)))}**\n"
-                       f"Due: <t:{self._loan_due_unix(loan)}:F> (<t:{self._loan_due_unix(loan)}:R>)"),
-                inline=False,
-            )
-        embed.set_thumbnail(url=user.display_avatar.url)
-        embed.set_footer(text="Savings ماكيدخلش Casino حتى تسحبو | Assets تقدر تبيعهم من Bank")
+            overdue=self._loan_is_overdue(loan)
+            state=("⚠️ Overdue" if overdue else "🟢 Active") if lang!="fr" else ("⚠️ En retard" if overdue else "🟢 Actif")
+            rem="Remaining" if lang=="en" else "Restant" if lang=="fr" else "Remaining"
+            due="Due" if lang=="en" else "Échéance" if lang=="fr" else "Due"
+            embed.add_field(name=f"💳 Loan #{loan.get('id')} — {state}",value=f"{rem}: **{cfg.fmt_money(int(loan.get('remaining',0)))}**\n{due}: <t:{self._loan_due_unix(loan)}:F> (<t:{self._loan_due_unix(loan)}:R>)",inline=False)
+        fx_date=self.fx_db.data.get("date")
+        fx_note=(f" • Display: {display_code} ≈ Frankfurter reference FX" + (f" ({fx_date})" if fx_date else "")) if display_code!="USD" else ""
+        embed.set_thumbnail(url=user.display_avatar.url); embed.set_footer(text=footer+fx_note)
         return embed
 
-    def build_xp_bank_perks_embed(self, guild: discord.Guild, user: discord.abc.User) -> discord.Embed:
-        terms = self.get_loan_terms(guild.id, user.id)
-        next_tier = self.get_next_xp_loan_tier(guild.id, user.id)
-        embed = discord.Embed(
-            title=f"⭐ Bank Privileges — {user.display_name}",
-            description="Level كيزيد Loan capacity وكيحسن Savings rate وTransfer limit؛ Credit كيقيس الالتزام بالأداء.",
-            color=discord.Color.gold(),
-        )
-        embed.add_field(
-            name="📊 دابا",
-            value=(f"⭐ Lv **{terms['level']}** — {terms['tier_name']}\n"
-                   f"💳 Credit **{terms['credit_score']}/100**\n"
-                   f"📈 Savings **{self.get_bank_interest_bps(guild.id,user.id)/100:.2f}%/day**\n"
-                   f"💸 Transfer limit **{cfg.fmt_money(self.get_transfer_daily_limit(guild.id,user.id))}/day**"),
-            inline=False,
-        )
-        embed.add_field(
-            name="💰 Loan",
-            value=(f"Base: **{cfg.fmt_money(terms['base_limit'])}**\n"
-                   f"After Credit: **{cfg.fmt_money(terms['credit_adjusted_limit'])}**\n"
-                   f"Liquidity Cap: **{cfg.fmt_money(terms['liquidity_cap'])}**\n"
-                   f"✅ Effective: **{cfg.fmt_money(terms['effective_limit'])}**\n"
-                   f"Interest **{terms['interest_percent']}%** • **{terms['term_days']}d**"),
-            inline=False,
-        )
+    def build_xp_bank_perks_embed(self, guild: discord.Guild, user: discord.abc.User, lang: str = "darija") -> discord.Embed:
+        terms=self.get_loan_terms(guild.id,user.id); next_tier=self.get_next_xp_loan_tier(guild.id,user.id)
+        if lang=="en": title=f"⭐ Bank Privileges — {user.display_name}"; desc="Level increases loan capacity, Savings rate and transfer limit; Credit measures repayment reliability."; now_name="📊 Current"; loan_name="💰 Loan"; next_name="🚀 Next Tier"
+        elif lang=="fr": title=f"⭐ Avantages bancaires — {user.display_name}"; desc="Le niveau augmente la capacité de prêt, le taux d'épargne et la limite de transfert ; le Crédit mesure la fiabilité des remboursements."; now_name="📊 Actuel"; loan_name="💰 Prêt"; next_name="🚀 Niveau suivant"
+        else: title=f"⭐ Bank Privileges — {user.display_name}"; desc="Level كيزيد Loan capacity وكيحسن Savings rate وTransfer limit؛ Credit كيقيس الالتزام بالأداء."; now_name="📊 دابا"; loan_name="💰 Loan"; next_name="🚀 Next Tier"
+        embed=discord.Embed(title=title,description=desc,color=discord.Color.gold())
+        embed.add_field(name=now_name,value=f"⭐ Lv **{terms['level']}** — {terms['tier_name']}\n💳 Credit **{terms['credit_score']}/100**\n📈 Savings **{self.get_bank_interest_bps(guild.id,user.id)/100:.2f}%/day**\n💸 Transfer limit **{cfg.fmt_money(self.get_transfer_daily_limit(guild.id,user.id))}/day**",inline=False)
+        embed.add_field(name=loan_name,value=f"Base: **{cfg.fmt_money(terms['base_limit'])}**\nAfter Credit: **{cfg.fmt_money(terms['credit_adjusted_limit'])}**\nLiquidity Cap: **{cfg.fmt_money(terms['liquidity_cap'])}**\n✅ Effective: **{cfg.fmt_money(terms['effective_limit'])}**\nInterest **{terms['interest_percent']}%** • **{terms['term_days']}d**",inline=False)
         if next_tier:
-            embed.add_field(
-                name="🚀 Next Tier",
-                value=(f"Lv **{int(next_tier.get('min_level',0))}** — {next_tier.get('name','Tier')}\n"
-                       f"Base Loan **{cfg.fmt_money(int(next_tier.get('base_limit',0)))}** • "
-                       f"{int(next_tier.get('interest',0))}% • {int(next_tier.get('term_days',0))}d"),
-                inline=False,
-            )
-        embed.set_thumbnail(url=user.display_avatar.url)
-        return embed
+            embed.add_field(name=next_name,value=f"Lv **{int(next_tier.get('min_level',0))}** — {next_tier.get('name','Tier')}\nBase Loan **{cfg.fmt_money(int(next_tier.get('base_limit',0)))}** • {int(next_tier.get('interest',0))}% • {int(next_tier.get('term_days',0))}d",inline=False)
+        embed.set_thumbnail(url=user.display_avatar.url); return embed
 
-    def build_user_transactions_embed(self, guild: discord.Guild, user: discord.abc.User) -> discord.Embed:
-        txs = self.get_user_transactions(guild.id, user.id, limit=12)
+    def build_user_transactions_embed(self, guild: discord.Guild, user: discord.abc.User, lang: str = "darija") -> discord.Embed:
+        txs=self.get_user_transactions(guild.id,user.id,limit=12)
         if not txs:
-            return discord.Embed(title="🧾 آخر المعاملات", description="📭 ماكايناش معاملات مسجلة.", color=discord.Color.blurple())
-        kind_icons = {
-            "gambling_loss":"🎰", "shop_purchase":"🛒", "jackpot_payout":"🏆",
-            "bank_deposit":"🏦", "bank_withdraw":"💸", "bank_transfer_out":"📤",
-            "bank_transfer_in":"📥", "bank_interest":"📈", "asset_sale":"🏠",
-            "loan_issued":"💳", "loan_repayment":"💸", "loan_paid":"✅",
-            "level_daily_bonus":"⭐", "admin_adjustment":"🛡️",
-        }
+            title="🧾 Recent Transactions" if lang=="en" else "🧾 Transactions récentes" if lang=="fr" else "🧾 آخر المعاملات"
+            empty="📭 No transactions recorded yet." if lang=="en" else "📭 Aucune transaction enregistrée." if lang=="fr" else "📭 ماكايناش معاملات مسجلة."
+            return discord.Embed(title=title,description=empty,color=discord.Color.blurple())
+        kind_icons={"gambling_loss":"🎰","gambling_win":"🎉","shop_purchase":"🛒","jackpot_payout":"🏆","bank_deposit":"🏦","bank_withdraw":"💸","bank_transfer_out":"📤","bank_transfer_in":"📥","bank_interest":"📈","asset_sale":"🏠","loan_issued":"💳","loan_repayment":"💸","loan_paid":"✅","level_daily_bonus":"⭐","admin_adjustment":"🛡️"}
         lines=[]
         for tx in txs:
             icon=kind_icons.get(tx.get("kind"),"💱")
-            try:
-                unix=int(datetime.fromisoformat(tx.get("ts","")).timestamp()); when=f"<t:{unix}:R>"
-            except Exception:
-                when="—"
-            lines.append(
-                f"{icon} **TX #{tx.get('id')}** • {tx.get('description',tx.get('source','عملية'))} • "
-                f"**{cfg.fmt_money(int(tx.get('amount',0)))}** • {when}"
-            )
-        return discord.Embed(title=f"🧾 معاملات {user.display_name}", description="\n".join(lines), color=discord.Color.blurple())
+            try: unix=int(datetime.fromisoformat(tx.get("ts","")).timestamp()); when=f"<t:{unix}:R>"
+            except Exception: when="—"
+            lines.append(f"{icon} **TX #{tx.get('id')}** • {tx.get('description',tx.get('source','transaction'))} • **{cfg.fmt_money(int(tx.get('amount',0)))}** • {when}")
+        title=(f"🧾 {user.display_name}'s Transactions" if lang=="en" else f"🧾 Transactions de {user.display_name}" if lang=="fr" else f"🧾 معاملات {user.display_name}")
+        return discord.Embed(title=title,description="\n".join(lines),color=discord.Color.blurple())
 
     async def ensure_bank_panel(self, guild: discord.Guild):
+        """Keep exactly one official public Bank panel; member work happens privately."""
         channel_id = int(getattr(cfg, "ECONOMY_BANK_CHANNEL_ID", 0) or 0)
         channel = guild.get_channel(channel_id) if channel_id else None
         if not channel:
             return
-        found = None
+        matches = []
         try:
-            async for msg in channel.history(limit=25):
+            async for msg in channel.history(limit=60):
                 if (
                     msg.author == self.bot.user and msg.embeds
                     and (msg.embeds[0].title or "") == "🏦 GGMW9 Central Bank"
                 ):
-                    found = msg
-                    break
+                    matches.append(msg)
         except discord.Forbidden:
             return
-        embed = self.build_bank_panel_embed(guild)
+        embed = self.build_bank_panel_embed(guild, lang="darija")
         try:
-            if found:
-                await found.edit(embed=embed, view=EconomyBankPanelView(self))
+            if matches:
+                keep = matches[0]
+                await keep.edit(embed=embed, view=EconomyBankPanelView(self))
+                for old in matches[1:]:
+                    try:
+                        await old.delete()
+                    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                        pass
             else:
                 await channel.send(embed=embed, view=EconomyBankPanelView(self))
         except (discord.Forbidden, discord.HTTPException):
@@ -1515,9 +1792,11 @@ class Economy(commands.Cog):
 
     @commands.Cog.listener()
     async def on_ready(self):
+        await self.refresh_fx_rates()
         for guild in self.bot.guilds:
             await self.process_bank_interest(guild)
             await self.ensure_bank_panel(guild)
+            await self.ensure_big_win_channel(guild)
             await self.refresh_economy_stats(guild)
 
     # ════════════════════════════════════════════════
@@ -1537,6 +1816,7 @@ class Economy(commands.Cog):
                 "earned_today_date": _today_key(),
                 "purchases": [],
                 "assets": {},
+                "display_currency": "USD",
             },
         )
 
@@ -1818,539 +2098,329 @@ class Economy(commands.Cog):
 
 
 class BankAmountModal(discord.ui.Modal):
-    def __init__(self, cog: "Economy", action: str):
-        title = "🏦 Deposit فـSavings" if action == "deposit" else "💸 Withdraw من Savings"
+    def __init__(self, cog: "Economy", action: str, lang: str = "darija", session_key: str = "bank"):
+        self.cog, self.action, self.lang, self.session_key = cog, action, lang, session_key
+        if lang == "en":
+            title = "🏦 Deposit to Savings" if action == "deposit" else "💸 Withdraw from Savings"; label="Amount in USD"; placeholder="Example: 25 or 25.50"
+        elif lang == "fr":
+            title = "🏦 Déposer sur l'épargne" if action == "deposit" else "💸 Retirer de l'épargne"; label="Montant en USD"; placeholder="Exemple : 25 ou 25.50"
+        else:
+            title = "🏦 Deposit فـSavings" if action == "deposit" else "💸 Withdraw من Savings"; label="المبلغ بالدولار"; placeholder="مثال: 25 أو 25.50"
         super().__init__(title=title)
-        self.cog = cog
-        self.action = action
-        self.amount = discord.ui.TextInput(
-            label="المبلغ بالدولار",
-            placeholder="مثال: 25 أو 25.50",
-            min_length=1,
-            max_length=16,
-            required=True,
-        )
-        self.add_item(self.amount)
+        self.amount=discord.ui.TextInput(label=label,placeholder=placeholder,min_length=1,max_length=16,required=True); self.add_item(self.amount)
 
     async def on_submit(self, interaction: discord.Interaction):
-        amount = cfg.parse_money_input(self.amount.value)
+        amount=cfg.parse_money_input(self.amount.value)
         if amount is None:
-            await interaction.response.send_message(
-                "❌ دخل مبلغ دولار صحيح أكبر من $0.00. مثال: `25` أو `25.50`.",
-                ephemeral=True,
-            )
-            return
-        if self.action == "deposit":
-            ok, msg = await self.cog.bank_deposit(interaction.guild, interaction.user, amount)
+            msg="❌ Enter a valid USD amount, e.g. `25` or `25.50`." if self.lang=="en" else "❌ Entre un montant USD valide, ex. `25` ou `25.50`." if self.lang=="fr" else "❌ دخل مبلغ دولار صحيح أكبر من $0.00. مثال: `25` أو `25.50`."
         else:
-            ok, msg = await self.cog.bank_withdraw(interaction.guild, interaction.user, amount)
-        await interaction.response.send_message(msg, ephemeral=True)
+            ok,msg = await (self.cog.bank_deposit(interaction.guild,interaction.user,amount) if self.action=="deposit" else self.cog.bank_withdraw(interaction.guild,interaction.user,amount))
+        await _upsert_panel(self.cog.bot,interaction,self.session_key,content=msg,embed=self.cog.build_user_account_embed(interaction.guild,interaction.user,lang=self.lang),view=BankSessionView(self.cog,interaction.user,self.lang,session_key=self.session_key))
 
 
 class BankTransferAmountModal(discord.ui.Modal):
-    def __init__(self, cog: "Economy", recipient: discord.Member):
+    def __init__(self,cog:"Economy",recipient:discord.Member,lang="darija",session_key="bank"):
+        self.cog,self.recipient,self.lang,self.session_key=cog,recipient,lang,session_key
         super().__init__(title=f"💸 Transfer → {recipient.display_name}"[:45])
-        self.cog = cog
-        self.recipient = recipient
-        self.amount = discord.ui.TextInput(
-            label="المبلغ بالدولار",
-            placeholder="مثال: 50 أو 125.75",
-            min_length=1,
-            max_length=16,
-            required=True,
-        )
-        self.add_item(self.amount)
-
-    async def on_submit(self, interaction: discord.Interaction):
-        amount = cfg.parse_money_input(self.amount.value)
+        label="Amount in USD" if lang=="en" else "Montant en USD" if lang=="fr" else "المبلغ بالدولار"
+        placeholder="Example: 50 or 125.75" if lang=="en" else "Exemple : 50 ou 125.75" if lang=="fr" else "مثال: 50 أو 125.75"
+        self.amount=discord.ui.TextInput(label=label,placeholder=placeholder,min_length=1,max_length=16,required=True); self.add_item(self.amount)
+    async def on_submit(self,interaction):
+        amount=cfg.parse_money_input(self.amount.value)
         if amount is None:
-            await interaction.response.send_message(
-                "❌ دخل مبلغ صحيح. مثال: `50` أو `125.75`.", ephemeral=True
-            )
-            return
-        ok, msg = await self.cog.bank_transfer(
-            interaction.guild, interaction.user, self.recipient, amount
-        )
-        await interaction.response.send_message(msg, ephemeral=True)
+            msg="❌ Enter a valid amount." if self.lang=="en" else "❌ Entre un montant valide." if self.lang=="fr" else "❌ دخل مبلغ صحيح."
+        else:
+            ok,msg=await self.cog.bank_transfer(interaction.guild,interaction.user,self.recipient,amount)
+        await _upsert_panel(self.cog.bot,interaction,self.session_key,content=msg,embed=self.cog.build_user_account_embed(interaction.guild,interaction.user,lang=self.lang),view=BankSessionView(self.cog,interaction.user,self.lang,session_key=self.session_key))
 
 
 class BankTransferUserSelect(discord.ui.UserSelect):
-    def __init__(self, cog: "Economy", owner_id: int):
-        self.cog = cog
-        self.owner_id = int(owner_id)
-        super().__init__(placeholder="👤 اختار شكون غادي توصّلو الفلوس...", min_values=1, max_values=1)
-
-    async def callback(self, interaction: discord.Interaction):
-        if interaction.user.id != self.owner_id:
-            await interaction.response.send_message("❌ هاد التحويل ماشي ديالك.", ephemeral=True)
-            return
-        picked = self.values[0]
-        recipient = interaction.guild.get_member(picked.id)
+    def __init__(self,cog:"Economy",owner_id:int,lang="darija",session_key="bank"):
+        self.cog,self.owner_id,self.lang,self.session_key=cog,int(owner_id),lang,session_key
+        ph="👤 Choose recipient..." if lang=="en" else "👤 Choisis le destinataire..." if lang=="fr" else "👤 اختار شكون غادي توصّلو الفلوس..."
+        super().__init__(placeholder=ph,min_values=1,max_values=1)
+    async def callback(self,interaction):
+        if interaction.user.id!=self.owner_id:
+            await interaction.response.send_message(_eco_t(self.lang,"not_yours"),ephemeral=True); return
+        picked=self.values[0]; recipient=interaction.guild.get_member(picked.id)
         if recipient is None:
-            try:
-                recipient = await interaction.guild.fetch_member(picked.id)
-            except Exception:
-                recipient = None
-        if recipient is None:
-            await interaction.response.send_message("❌ ما قدرتش نجيب هاد العضو.", ephemeral=True)
-            return
-        if recipient.bot:
-            await interaction.response.send_message("❌ مايمكنش تحول لـBot.", ephemeral=True)
-            return
-        if recipient.id == interaction.user.id:
-            await interaction.response.send_message("❌ مايمكنش تحول لنفسك.", ephemeral=True)
-            return
-        await interaction.response.send_modal(BankTransferAmountModal(self.cog, recipient))
+            try: recipient=await interaction.guild.fetch_member(picked.id)
+            except Exception: recipient=None
+        if recipient is None or recipient.bot or recipient.id==interaction.user.id:
+            msg="❌ Choose another human member." if self.lang=="en" else "❌ Choisis un autre membre humain." if self.lang=="fr" else "❌ اختار عضو بشري آخر."
+            await interaction.response.edit_message(content=msg,embed=None,view=BankSessionView(self.cog,interaction.user,self.lang,session_key=self.session_key)); return
+        await interaction.response.send_modal(BankTransferAmountModal(self.cog,recipient,self.lang,self.session_key))
 
 
 class BankTransferUserView(discord.ui.View):
-    def __init__(self, cog: "Economy", owner_id: int):
-        super().__init__(timeout=120)
-        self.add_item(BankTransferUserSelect(cog, owner_id))
+    def __init__(self,cog,owner_id,lang="darija",session_key="bank"):
+        super().__init__(timeout=120); self.add_item(BankTransferUserSelect(cog,owner_id,lang,session_key))
+        b=discord.ui.Button(label=_eco_t(lang,"back"),emoji="↩️",style=discord.ButtonStyle.secondary,row=1)
+        async def back(interaction):
+            await interaction.response.edit_message(content=None,embed=cog.build_user_account_embed(interaction.guild,interaction.user,lang=lang),view=BankSessionView(cog,interaction.user,lang,session_key=session_key))
+        b.callback=back; self.add_item(b)
 
 
 class LoanRequestModal(discord.ui.Modal):
-    def __init__(self, cog: "Economy", guild_id: int, user_id: int):
-        terms = cog.get_loan_terms(guild_id, user_id)
-        limit = int(terms["effective_limit"])
-        minimum = int(getattr(cfg, "LOAN_MIN_AMOUNT", 2500))
-        super().__init__(title="💳 طلب قرض من GGMW9 Bank")
-        self.cog = cog
-        self.amount = discord.ui.TextInput(
-            label="شحال بغيتي تسلف بالدولار؟",
-            placeholder=f"{cfg.fmt_money(minimum)} → {cfg.fmt_money(limit)}",
-            min_length=1,
-            max_length=16,
-            required=True,
-        )
-        self.add_item(self.amount)
-
-    async def on_submit(self, interaction: discord.Interaction):
-        amount = cfg.parse_money_input(self.amount.value)
-        if amount is None:
-            await interaction.response.send_message("❌ دخل مبلغ دولار صحيح.", ephemeral=True)
-            return
-        ok, msg = await self.cog.request_loan(interaction.guild, interaction.user, amount)
-        await interaction.response.send_message(msg, ephemeral=True)
+    def __init__(self,cog:"Economy",guild_id:int,user_id:int,lang="darija",session_key="bank"):
+        self.cog,self.lang,self.session_key=cog,lang,session_key; terms=cog.get_loan_terms(guild_id,user_id); limit=int(terms["effective_limit"]); minimum=int(getattr(cfg,"LOAN_MIN_AMOUNT",2500))
+        title="💳 Request a GGMW9 Bank Loan" if lang=="en" else "💳 Demander un prêt GGMW9" if lang=="fr" else "💳 طلب قرض من GGMW9 Bank"
+        super().__init__(title=title)
+        label="Loan amount in USD" if lang=="en" else "Montant du prêt en USD" if lang=="fr" else "شحال بغيتي تسلف بالدولار؟"
+        self.amount=discord.ui.TextInput(label=label,placeholder=f"{cfg.fmt_money(minimum)} → {cfg.fmt_money(limit)}",min_length=1,max_length=16,required=True); self.add_item(self.amount)
+    async def on_submit(self,interaction):
+        amount=cfg.parse_money_input(self.amount.value)
+        if amount is None: msg="❌ Enter a valid USD amount." if self.lang=="en" else "❌ Entre un montant USD valide." if self.lang=="fr" else "❌ دخل مبلغ دولار صحيح."
+        else: ok,msg=await self.cog.request_loan(interaction.guild,interaction.user,amount)
+        await _upsert_panel(self.cog.bot,interaction,self.session_key,content=msg,embed=self.cog.build_user_account_embed(interaction.guild,interaction.user,lang=self.lang),view=BankSessionView(self.cog,interaction.user,self.lang,session_key=self.session_key))
 
 
 class LoanRepayModal(discord.ui.Modal):
-    def __init__(self, cog: "Economy", loan: dict):
-        super().__init__(title=f"💸 أداء Loan #{loan.get('id')}")
-        self.cog = cog
-        self.amount = discord.ui.TextInput(
-            label="شحال بغيتي تخلص دابا بالدولار؟",
-            placeholder=f"الباقي {cfg.fmt_money(int(loan.get('remaining', 0)))}",
-            min_length=1,
-            max_length=16,
-            required=True,
-        )
-        self.add_item(self.amount)
-
-    async def on_submit(self, interaction: discord.Interaction):
-        amount = cfg.parse_money_input(self.amount.value)
-        if amount is None:
-            await interaction.response.send_message("❌ دخل مبلغ دولار صحيح.", ephemeral=True)
-            return
-        ok, msg = await self.cog.repay_loan(interaction.guild, interaction.user, amount)
-        await interaction.response.send_message(msg, ephemeral=True)
+    def __init__(self,cog:"Economy",loan:dict,lang="darija",session_key="bank"):
+        self.cog,self.lang,self.session_key=cog,lang,session_key; super().__init__(title=f"💸 Repay Loan #{loan.get('id')}")
+        label="Amount to repay now" if lang=="en" else "Montant à rembourser" if lang=="fr" else "شحال بغيتي تخلص دابا بالدولار؟"
+        ph=("Remaining " if lang=="en" else "Restant " if lang=="fr" else "الباقي ")+cfg.fmt_money(int(loan.get("remaining",0)))
+        self.amount=discord.ui.TextInput(label=label,placeholder=ph,min_length=1,max_length=16,required=True); self.add_item(self.amount)
+    async def on_submit(self,interaction):
+        amount=cfg.parse_money_input(self.amount.value)
+        if amount is None: msg="❌ Enter a valid USD amount." if self.lang=="en" else "❌ Entre un montant USD valide." if self.lang=="fr" else "❌ دخل مبلغ دولار صحيح."
+        else: ok,msg=await self.cog.repay_loan(interaction.guild,interaction.user,amount)
+        await _upsert_panel(self.cog.bot,interaction,self.session_key,content=msg,embed=self.cog.build_user_account_embed(interaction.guild,interaction.user,lang=self.lang),view=BankSessionView(self.cog,interaction.user,self.lang,session_key=self.session_key))
 
 
-def _build_savings_embed(cog: "Economy", guild: discord.Guild, user: discord.Member) -> discord.Embed:
-    bank = cog.get_bank_balance(guild.id, user.id)
-    bps = cog.get_bank_interest_bps(guild.id, user.id)
-    minimum = int(getattr(cfg, "BANK_INTEREST_MIN_BALANCE", 2500))
-    cap = int(getattr(cfg, "BANK_INTEREST_DAILY_ACCOUNT_CAP", 2500))
-    estimate = min(cap, bank * bps // 10000) if bank >= minimum else 0
-    boost = cog._perk_active(guild.id, user.id, "bank_interest_boost_expires")
-    embed = discord.Embed(
-        title="📈 Savings Account",
-        description=(
-            f"🏦 Balance: **{cfg.fmt_money(bank)}**\n"
-            f"📈 Rate ديالك: **{bps/100:.2f}% / day**\n"
-            f"🧮 Estimated next yield: **{cfg.fmt_money(estimate)}**\n\n"
-            "الأرباح كتخلص **غير من Treasury** وما كنخلقوش فلوس من والو. "
-            "إلا ميزانية Treasury اليومية ماكفاتش، الأرباح كتتوزع proportional بين الحسابات المؤهلة."
-        ),
-        color=discord.Color.green(),
-    )
-    embed.add_field(name="Minimum eligible balance", value=cfg.fmt_money(minimum), inline=True)
-    embed.add_field(name="Daily account cap", value=cfg.fmt_money(cap), inline=True)
-    embed.add_field(name="Shop Rate Boost", value="✅ Active" if boost else "—", inline=True)
-    embed.set_footer(text="Savings كتخلص مرة وحدة فكل UTC day")
-    return embed
+def _build_savings_embed(cog:"Economy",guild:discord.Guild,user:discord.Member,lang="darija"):
+    bank=cog.get_bank_balance(guild.id,user.id); bps=cog.get_bank_interest_bps(guild.id,user.id); minimum=int(getattr(cfg,"BANK_INTEREST_MIN_BALANCE",2500)); cap=int(getattr(cfg,"BANK_INTEREST_DAILY_ACCOUNT_CAP",2500)); estimate=min(cap,bank*bps//10000) if bank>=minimum else 0; boost=cog._perk_active(guild.id,user.id,"bank_interest_boost_expires")
+    if lang=="en": desc=f"🏦 Balance: **{cfg.fmt_money(bank)}**\n📈 Your rate: **{bps/100:.2f}% / day**\n🧮 Estimated next yield: **{cfg.fmt_money(estimate)}**\n\nInterest is paid **only from Treasury**; money is not created from nothing."; min_n="Minimum eligible balance"; cap_n="Daily account cap"; footer="Savings pay once per UTC day"
+    elif lang=="fr": desc=f"🏦 Solde : **{cfg.fmt_money(bank)}**\n📈 Ton taux : **{bps/100:.2f}% / jour**\n🧮 Rendement estimé : **{cfg.fmt_money(estimate)}**\n\nLes intérêts sont payés **uniquement par le Trésor** ; aucun argent n'est créé."; min_n="Solde minimum éligible"; cap_n="Plafond quotidien"; footer="L'épargne est rémunérée une fois par jour UTC"
+    else: desc=f"🏦 Balance: **{cfg.fmt_money(bank)}**\n📈 Rate ديالك: **{bps/100:.2f}% / day**\n🧮 Estimated next yield: **{cfg.fmt_money(estimate)}**\n\nالأرباح كتخلص **غير من Treasury** وما كنخلقوش فلوس من والو."; min_n="Minimum eligible balance"; cap_n="Daily account cap"; footer="Savings كتخلص مرة وحدة فكل UTC day"
+    e=discord.Embed(title="📈 Savings Account",description=desc,color=discord.Color.green()); e.add_field(name=min_n,value=cfg.fmt_money(minimum),inline=True); e.add_field(name=cap_n,value=cfg.fmt_money(cap),inline=True); e.add_field(name="Shop Rate Boost",value="✅ Active" if boost else "—",inline=True); e.set_footer(text=footer); return e
 
 
-def _build_assets_embed(cog: "Economy", guild: discord.Guild, user: discord.Member) -> discord.Embed:
-    assets = cog.get_owned_assets(guild.id, user.id)
-    book = cog.get_assets_value(guild.id, user.id)
-    resale_pct = int(getattr(cfg, "ASSET_RESALE_PERCENT", 40))
-    if not assets:
-        desc = "📭 ماعندك حتى Asset دابا. شري الممتلكات من 🛒 Shop → 🏠 Assets."
+def _build_assets_embed(cog:"Economy",guild:discord.Guild,user:discord.Member,lang="darija"):
+    assets=cog.get_owned_assets(guild.id,user.id); book=cog.get_assets_value(guild.id,user.id); resale_pct=int(getattr(cfg,"ASSET_RESALE_PERCENT",40))
+    if not assets: desc="📭 No assets yet. Buy them from Shop → Assets." if lang=="en" else "📭 Aucun actif. Achète-en dans Boutique → Actifs." if lang=="fr" else "📭 ماعندك حتى Asset دابا. شري الممتلكات من 🛒 Shop → 🏠 Assets."
     else:
-        lines = []
-        for item_id, a in assets.items():
-            paid = int(a.get("paid_price", 0) or 0)
-            resale = paid * resale_pct // 100
-            lines.append(
-                f"{a.get('emoji','🏠')} **{a.get('name',item_id)}** • Book {cfg.fmt_money(paid)} • Sell {cfg.fmt_money(resale)}"
-            )
-        desc = "\n".join(lines)
-    embed = discord.Embed(
-        title=f"🏠 Assets — {user.display_name}", description=desc, color=discord.Color.gold()
-    )
-    embed.add_field(name="Book Value", value=f"**{cfg.fmt_money(book)}**", inline=True)
-    embed.add_field(name="Market resale", value=f"**{resale_pct}%** of paid price", inline=True)
-    embed.set_footer(text="Resale كيتخلص من Treasury liquidity؛ Assets كيدخلو فـNet Worth")
-    return embed
+        lines=[]
+        for item_id,a in assets.items():
+            paid=int(a.get("paid_price",0) or 0); resale=paid*resale_pct//100; lines.append(f"{a.get('emoji','🏠')} **{a.get('name',item_id)}** • Book {cfg.fmt_money(paid)} • Sell {cfg.fmt_money(resale)}")
+        desc="\n".join(lines)
+    title=f"🏠 Assets — {user.display_name}" if lang!="fr" else f"🏠 Actifs — {user.display_name}"
+    e=discord.Embed(title=title,description=desc,color=discord.Color.gold()); e.add_field(name="Book Value" if lang!="fr" else "Valeur comptable",value=f"**{cfg.fmt_money(book)}**",inline=True); e.add_field(name="Market resale" if lang!="fr" else "Revente",value=f"**{resale_pct}%**",inline=True); return e
 
 
 class AssetSellSelect(discord.ui.Select):
-    def __init__(self, cog: "Economy", user: discord.Member):
-        self.cog = cog
-        self.user = user
-        assets = cog.get_owned_assets(user.guild.id, user.id)
-        options = []
-        resale_pct = int(getattr(cfg, "ASSET_RESALE_PERCENT", 40))
-        for item_id, a in list(assets.items())[:25]:
-            paid = int(a.get("paid_price", 0) or 0)
-            options.append(discord.SelectOption(
-                label=f"{a.get('name',item_id)} — {cfg.fmt_money(paid * resale_pct // 100)}",
-                value=item_id,
-                emoji=a.get("emoji", "🏠"),
-                description="Sell back to market"[:100],
-            ))
-        super().__init__(placeholder="🏷️ اختار Asset باش تبيعها...", options=options, min_values=1, max_values=1)
-
-    async def callback(self, interaction: discord.Interaction):
-        if interaction.user.id != self.user.id:
-            await interaction.response.send_message("❌ هاد Assets ماشي ديالك.", ephemeral=True)
-            return
-        await interaction.response.defer(ephemeral=True)
-        ok, msg = await self.cog.sell_asset(interaction.guild, interaction.user, self.values[0])
-        await interaction.edit_original_response(
-            content=msg,
-            embed=_build_assets_embed(self.cog, interaction.guild, interaction.user),
-            view=AssetsView(self.cog, interaction.user),
-        )
+    def __init__(self,cog,user,lang="darija",session_key="bank"):
+        self.cog,self.user,self.lang,self.session_key=cog,user,lang,session_key; assets=cog.get_owned_assets(user.guild.id,user.id); resale_pct=int(getattr(cfg,"ASSET_RESALE_PERCENT",40)); opts=[]
+        for item_id,a in list(assets.items())[:25]:
+            paid=int(a.get("paid_price",0) or 0); opts.append(discord.SelectOption(label=f"{a.get('name',item_id)} — {cfg.fmt_money(paid*resale_pct//100)}",value=item_id,emoji=a.get("emoji","🏠")))
+        ph="🏷️ Choose an asset to sell..." if lang=="en" else "🏷️ Choisis un actif à vendre..." if lang=="fr" else "🏷️ اختار Asset باش تبيعها..."; super().__init__(placeholder=ph,options=opts,min_values=1,max_values=1)
+    async def callback(self,interaction):
+        if interaction.user.id!=self.user.id: await interaction.response.send_message(_eco_t(self.lang,"not_yours"),ephemeral=True); return
+        await interaction.response.defer(ephemeral=True); ok,msg=await self.cog.sell_asset(interaction.guild,interaction.user,self.values[0]); await interaction.edit_original_response(content=msg,embed=_build_assets_embed(self.cog,interaction.guild,interaction.user,self.lang),view=AssetsView(self.cog,interaction.user,self.lang,self.session_key))
 
 
 class AssetsView(discord.ui.View):
-    def __init__(self, cog: "Economy", user: discord.Member):
-        super().__init__(timeout=180)
-        if cog.get_owned_assets(user.guild.id, user.id):
-            self.add_item(AssetSellSelect(cog, user))
+    def __init__(self,cog,user,lang="darija",session_key="bank"):
+        super().__init__(timeout=180); self.cog,self.user,self.lang,self.session_key=cog,user,lang,session_key
+        if cog.get_owned_assets(user.guild.id,user.id): self.add_item(AssetSellSelect(cog,user,lang,session_key))
+        b=discord.ui.Button(label=_eco_t(lang,"back"),emoji="↩️",style=discord.ButtonStyle.secondary,row=1); b.callback=self.back; self.add_item(b)
+    async def back(self,interaction):
+        if interaction.user.id!=self.user.id: await interaction.response.send_message(_eco_t(self.lang,"not_yours"),ephemeral=True); return
+        await interaction.response.edit_message(content=None,embed=self.cog.build_user_account_embed(interaction.guild,interaction.user,lang=self.lang),view=BankSessionView(self.cog,interaction.user,self.lang,self.session_key))
+
+
+class BankDisplayCurrencySelect(discord.ui.Select):
+    def __init__(self,cog:"Economy",user:discord.Member,lang="darija",session_key="bank"):
+        self.cog,self.user,self.lang,self.session_key=cog,user,lang,session_key
+        current=cog.get_display_currency(user.guild.id,user.id)
+        labels={"USD":("US Dollar","Dollar US","الدولار الأمريكي"),"MAD":("Moroccan Dirham","Dirham marocain","الدرهم المغربي"),"EUR":("Euro","Euro","الأورو الأوروبي"),"DZD":("Algerian Dinar","Dinar algérien","الدينار الجزائري")}
+        idx=1 if lang=="fr" else 0 if lang=="en" else 2
+        opts=[]
+        for code,meta in getattr(cfg,"DISPLAY_CURRENCIES",{}).items():
+            text=labels.get(code,(meta.get("name",code),)*3)[idx]
+            opts.append(discord.SelectOption(label=f"{text} ({code})",value=code,emoji=meta.get("emoji","💱"),default=(code==current)))
+        placeholder="💱 Display currency" if lang=="en" else "💱 Devise d'affichage" if lang=="fr" else "💱 العملة اللي بغيتي تشوف بها الرصيد"
+        super().__init__(placeholder=placeholder,options=opts,min_values=1,max_values=1,row=3)
+    async def callback(self,interaction):
+        if interaction.user.id!=self.user.id:
+            await interaction.response.send_message(_eco_t(self.lang,"not_yours"),ephemeral=True); return
+        code=self.cog.set_display_currency(interaction.guild.id,interaction.user.id,self.values[0])
+        if self.lang=="en": msg=f"✅ Display currency: **{code}**. GGMW9 accounting still settles in USD."
+        elif self.lang=="fr": msg=f"✅ Devise d'affichage : **{code}**. La comptabilité GGMW9 reste en USD."
+        else: msg=f"✅ دابا الرصيد غادي يبان ليك حتى بـ **{code}**. الحسابات والرهانات كيبقاو بالدولار USD."
+        await interaction.response.edit_message(content=msg,embed=self.cog.build_user_account_embed(interaction.guild,interaction.user,lang=self.lang),view=BankSessionView(self.cog,interaction.user,self.lang,self.session_key))
+
+
+class BankSessionView(discord.ui.View):
+    """Private member bank. Every non-modal navigation edits the same message."""
+    def __init__(self,cog:"Economy",user:discord.Member,lang="darija",session_key="bank"):
+        super().__init__(timeout=300); self.cog,self.user,self.lang,self.session_key=cog,user,lang,session_key
+        items=[
+            ("💳 "+_eco_t(lang,"account"),discord.ButtonStyle.primary,self.account),
+            ("🏦 "+_eco_t(lang,"deposit"),discord.ButtonStyle.success,self.deposit),
+            ("💸 "+_eco_t(lang,"withdraw"),discord.ButtonStyle.secondary,self.withdraw),
+            ("💵 "+_eco_t(lang,"transfer"),discord.ButtonStyle.primary,self.transfer),
+            ("📈 "+_eco_t(lang,"savings"),discord.ButtonStyle.success,self.savings),
+            ("💳 "+_eco_t(lang,"loan"),discord.ButtonStyle.success,self.loan),
+            ("💸 "+_eco_t(lang,"repay"),discord.ButtonStyle.primary,self.repay),
+            ("🧾 "+_eco_t(lang,"transactions"),discord.ButtonStyle.secondary,self.transactions),
+            ("🏠 "+_eco_t(lang,"assets"),discord.ButtonStyle.secondary,self.assets),
+            ("⭐ "+_eco_t(lang,"xp"),discord.ButtonStyle.secondary,self.xp),
+            ("📊 "+_eco_t(lang,"stats"),discord.ButtonStyle.secondary,self.stats),
+        ]
+        for i,(label,style,cb) in enumerate(items):
+            b=discord.ui.Button(label=label[:80],style=style,row=i//5); b.callback=cb; self.add_item(b)
+        self.add_item(BankDisplayCurrencySelect(cog,user,lang,session_key))
+    async def _ok(self,interaction):
+        if interaction.user.id!=self.user.id: await interaction.response.send_message(_eco_t(self.lang,"not_yours"),ephemeral=True); return False
+        return True
+    async def account(self,interaction):
+        if await self._ok(interaction): await interaction.response.edit_message(content=None,embed=self.cog.build_user_account_embed(interaction.guild,interaction.user,lang=self.lang),view=self)
+    async def deposit(self,interaction):
+        if await self._ok(interaction): await interaction.response.send_modal(BankAmountModal(self.cog,"deposit",self.lang,self.session_key))
+    async def withdraw(self,interaction):
+        if await self._ok(interaction): await interaction.response.send_modal(BankAmountModal(self.cog,"withdraw",self.lang,self.session_key))
+    async def transfer(self,interaction):
+        if not await self._ok(interaction): return
+        sent=self.cog.get_transfer_sent_today(interaction.guild.id,interaction.user.id); limit=self.cog.get_transfer_daily_limit(interaction.guild.id,interaction.user.id); fee_free=self.cog._perk_active(interaction.guild.id,interaction.user.id,"transfer_fee_pass_expires")
+        if self.lang=="en": content=f"💵 **Bank→Bank Transfer**\n🏦 Savings: **{cfg.fmt_money(self.cog.get_bank_balance(interaction.guild.id,interaction.user.id))}**\n📊 Today: **{cfg.fmt_money(sent)} / {cfg.fmt_money(limit)}**\n"+("✅ Fee Pass active" if fee_free else f"💸 Fee: {getattr(cfg,'BANK_TRANSFER_FEE_BPS',100)/100:.2f}%")+"\n\nChoose the recipient:"
+        elif self.lang=="fr": content=f"💵 **Transfert Banque→Banque**\n🏦 Épargne : **{cfg.fmt_money(self.cog.get_bank_balance(interaction.guild.id,interaction.user.id))}**\n📊 Aujourd'hui : **{cfg.fmt_money(sent)} / {cfg.fmt_money(limit)}**\n"+("✅ Pass sans frais actif" if fee_free else f"💸 Frais : {getattr(cfg,'BANK_TRANSFER_FEE_BPS',100)/100:.2f}%")+"\n\nChoisis le destinataire :"
+        else: content=f"💵 **Bank→Bank Transfer**\n🏦 Savings: **{cfg.fmt_money(self.cog.get_bank_balance(interaction.guild.id,interaction.user.id))}**\n📊 Today: **{cfg.fmt_money(sent)} / {cfg.fmt_money(limit)}**\n"+("✅ Fee Pass active" if fee_free else f"💸 Fee: {getattr(cfg,'BANK_TRANSFER_FEE_BPS',100)/100:.2f}%")+"\n\nاختار العضو اللي بغيتي تحول ليه:"
+        await interaction.response.edit_message(content=content,embed=None,view=BankTransferUserView(self.cog,self.user.id,self.lang,self.session_key))
+    async def savings(self,interaction):
+        if await self._ok(interaction): await interaction.response.edit_message(content=None,embed=_build_savings_embed(self.cog,interaction.guild,interaction.user,self.lang),view=self)
+    async def loan(self,interaction):
+        if not await self._ok(interaction): return
+        loan=self.cog.get_active_loan(interaction.guild.id,interaction.user.id)
+        if loan:
+            state="⚠️ Overdue" if self.cog._loan_is_overdue(loan) else "🟢 Active"; await interaction.response.edit_message(content=f"💳 Loan **#{loan.get('id')}** {state}\nRemaining: **{cfg.fmt_money(int(loan.get('remaining',0)))}**\nDue: <t:{self.cog._loan_due_unix(loan)}:F>",embed=None,view=self); return
+        terms=self.cog.get_loan_terms(interaction.guild.id,interaction.user.id); minimum=int(getattr(cfg,"LOAN_MIN_AMOUNT",2500))
+        if int(terms["effective_limit"])<minimum:
+            await interaction.response.edit_message(content=f"❌ Loan limit: **{cfg.fmt_money(terms['effective_limit'])}** • minimum {cfg.fmt_money(minimum)}",embed=None,view=self); return
+        await interaction.response.send_modal(LoanRequestModal(self.cog,interaction.guild.id,interaction.user.id,self.lang,self.session_key))
+    async def repay(self,interaction):
+        if not await self._ok(interaction): return
+        loan=self.cog.get_active_loan(interaction.guild.id,interaction.user.id)
+        if not loan:
+            msg="ℹ️ No active loan." if self.lang=="en" else "ℹ️ Aucun prêt actif." if self.lang=="fr" else "ℹ️ ماعندك حتى قرض خدام دابا."; await interaction.response.edit_message(content=msg,embed=None,view=self); return
+        await interaction.response.send_modal(LoanRepayModal(self.cog,loan,self.lang,self.session_key))
+    async def transactions(self,interaction):
+        if await self._ok(interaction): await interaction.response.edit_message(content=None,embed=self.cog.build_user_transactions_embed(interaction.guild,interaction.user,lang=self.lang),view=self)
+    async def assets(self,interaction):
+        if await self._ok(interaction): await interaction.response.edit_message(content=None,embed=_build_assets_embed(self.cog,interaction.guild,interaction.user,self.lang),view=AssetsView(self.cog,interaction.user,self.lang,self.session_key))
+    async def xp(self,interaction):
+        if await self._ok(interaction): await interaction.response.edit_message(content=None,embed=self.cog.build_xp_bank_perks_embed(interaction.guild,interaction.user,lang=self.lang),view=self)
+    async def stats(self,interaction):
+        if await self._ok(interaction): await interaction.response.edit_message(content=None,embed=self.cog.build_global_economy_embed(interaction.guild,lang=self.lang),view=self)
+
+
+class BankLanguageSelect(discord.ui.Select):
+    def __init__(self,cog):
+        self.cog=cog; super().__init__(placeholder="🌐 اللغة / Language / Langue",options=[discord.SelectOption(label="Darija",value="darija",emoji="🇲🇦"),discord.SelectOption(label="English",value="en",emoji="🇬🇧"),discord.SelectOption(label="Français",value="fr",emoji="🇫🇷")],custom_id="ggmw9:economy:language",row=1)
+    async def callback(self,interaction):
+        lang=_set_panel_lang(self.cog.bot,interaction.guild.id,interaction.user.id,self.values[0]); await _upsert_panel(self.cog.bot,interaction,"bank",content=_eco_t(lang,"lang_saved"),embed=self.cog.build_user_account_embed(interaction.guild,interaction.user,lang=lang),view=BankSessionView(self.cog,interaction.user,lang,"bank"))
 
 
 class EconomyBankPanelView(discord.ui.View):
-    """Central Bank persistent panel: Wallet, Savings, transfers, loans, assets."""
-
-    def __init__(self, cog: "Economy"):
-        super().__init__(timeout=None)
-        self.cog = cog
-
-    @discord.ui.button(label="💳 حسابي", style=discord.ButtonStyle.primary, custom_id="ggmw9:economy:account", row=0)
-    async def account_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message(
-            embed=self.cog.build_user_account_embed(interaction.guild, interaction.user), ephemeral=True
-        )
-
-    @discord.ui.button(label="🏦 Deposit", style=discord.ButtonStyle.success, custom_id="ggmw9:economy:deposit", row=0)
-    async def deposit_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(BankAmountModal(self.cog, "deposit"))
-
-    @discord.ui.button(label="💸 Withdraw", style=discord.ButtonStyle.secondary, custom_id="ggmw9:economy:withdraw", row=0)
-    async def withdraw_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(BankAmountModal(self.cog, "withdraw"))
-
-    @discord.ui.button(label="💵 Transfer", style=discord.ButtonStyle.primary, custom_id="ggmw9:economy:transfer", row=0)
-    async def transfer_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        sent = self.cog.get_transfer_sent_today(interaction.guild.id, interaction.user.id)
-        limit = self.cog.get_transfer_daily_limit(interaction.guild.id, interaction.user.id)
-        fee_free = self.cog._perk_active(interaction.guild.id, interaction.user.id, "transfer_fee_pass_expires")
-        await interaction.response.send_message(
-            (
-                f"💵 **Bank→Bank Transfer**\n"
-                f"🏦 Savings: **{cfg.fmt_money(self.cog.get_bank_balance(interaction.guild.id, interaction.user.id))}**\n"
-                f"📊 Today: **{cfg.fmt_money(sent)} / {cfg.fmt_money(limit)}**\n"
-                + ("✅ Fee Pass active\n" if fee_free else f"💸 Fee: **{getattr(cfg,'BANK_TRANSFER_FEE_BPS',100)/100:.2f}%** (min {cfg.fmt_money(getattr(cfg,'BANK_TRANSFER_MIN_FEE',10))}, max {cfg.fmt_money(getattr(cfg,'BANK_TRANSFER_MAX_FEE',500))})\n")
-                + "\nاختار العضو اللي بغيتي تحول ليه:"
-            ),
-            view=BankTransferUserView(self.cog, interaction.user.id),
-            ephemeral=True,
-        )
-
-    @discord.ui.button(label="🏛️ Treasury", style=discord.ButtonStyle.secondary, custom_id="ggmw9:economy:treasury", row=0)
-    async def treasury_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        sys = self.cog._system(interaction.guild.id)
-        embed = discord.Embed(
-            title="🏛️ خزينة السيرفر",
-            description=(
-                f"🏛️ **Treasury:** {cfg.fmt_money(sys['treasury'])}\n"
-                f"🎉 **Events Fund:** {cfg.fmt_money(sys['events'])}\n"
-                f"🔥 **Burned:** {cfg.fmt_money(sys['burned'])}\n\n"
-                "Treasury كتمول Savings Interest، Loans وAsset resale. Burn كيتحيد نهائياً ضد التضخم."
-            ), color=discord.Color.gold()
-        )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
-    @discord.ui.button(label="🎰 Jackpot", style=discord.ButtonStyle.danger, custom_id="ggmw9:economy:jackpot", row=1)
-    async def jackpot_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        sys = self.cog._system(interaction.guild.id)
-        embed = discord.Embed(
-            title="🎰 Progressive Global Jackpot",
-            description=(
-                f"# **{cfg.fmt_money(sys['jackpot'])}**\n\n"
-                "كيكبر من جزء من **الخسارات الحقيقية** ديال Casino. كيتصرف كامل فـ:\n"
-                "• 🎰 Slots — `7️⃣ | 7️⃣ | 7️⃣`\n"
-                "• 🎫 Scratch — `💰` Jackpot\n"
-                "• 🎟️ Lottery — 4/4"
-            ), color=discord.Color.gold()
-        )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
-    @discord.ui.button(label="📊 الاقتصاد", style=discord.ButtonStyle.primary, custom_id="ggmw9:economy:stats", row=1)
-    async def stats_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message(embed=self.cog.build_global_economy_embed(interaction.guild), ephemeral=True)
-
-    @discord.ui.button(label="🧾 معاملاتي", style=discord.ButtonStyle.secondary, custom_id="ggmw9:economy:transactions", row=1)
-    async def transactions_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message(embed=self.cog.build_user_transactions_embed(interaction.guild, interaction.user), ephemeral=True)
-
-    @discord.ui.button(label="💳 طلب قرض", style=discord.ButtonStyle.success, custom_id="ggmw9:economy:loan_request", row=1)
-    async def loan_request_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        loan = self.cog.get_active_loan(interaction.guild.id, interaction.user.id)
-        if loan:
-            state = "⚠️ متأخر" if self.cog._loan_is_overdue(loan) else "🟢 خدام"
-            await interaction.response.send_message(
-                f"💳 عندك Loan **#{loan.get('id')}** {state}.\nالباقي: **{cfg.fmt_money(int(loan.get('remaining',0)))}**\nالأجل: <t:{self.cog._loan_due_unix(loan)}:F>",
-                ephemeral=True,
-            )
-            return
-        terms = self.cog.get_loan_terms(interaction.guild.id, interaction.user.id)
-        min_amount = int(getattr(cfg, "LOAN_MIN_AMOUNT", 2500))
-        if int(terms["effective_limit"]) < min_amount:
-            await interaction.response.send_message(
-                f"❌ الحد الفعلي ديالك دابا **{cfg.fmt_money(terms['effective_limit'])}** وماوصلش للحد الأدنى {cfg.fmt_money(min_amount)}.",
-                ephemeral=True,
-            )
-            return
-        await interaction.response.send_modal(LoanRequestModal(self.cog, interaction.guild.id, interaction.user.id))
-
-    @discord.ui.button(label="💸 خلص القرض", style=discord.ButtonStyle.primary, custom_id="ggmw9:economy:loan_repay", row=1)
-    async def loan_repay_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        loan = self.cog.get_active_loan(interaction.guild.id, interaction.user.id)
-        if not loan:
-            await interaction.response.send_message("ℹ️ ماعندك حتى قرض خدام دابا.", ephemeral=True)
-            return
-        await interaction.response.send_modal(LoanRepayModal(self.cog, loan))
-
-    @discord.ui.button(label="⭐ XP Perks", style=discord.ButtonStyle.secondary, custom_id="ggmw9:economy:xp_perks", row=2)
-    async def xp_perks_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message(embed=self.cog.build_xp_bank_perks_embed(interaction.guild, interaction.user), ephemeral=True)
-
-    @discord.ui.button(label="📈 Savings", style=discord.ButtonStyle.success, custom_id="ggmw9:economy:savings", row=2)
-    async def savings_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message(embed=_build_savings_embed(self.cog, interaction.guild, interaction.user), ephemeral=True)
-
-    @discord.ui.button(label="🏠 Assets", style=discord.ButtonStyle.secondary, custom_id="ggmw9:economy:assets", row=2)
-    async def assets_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message(
-            embed=_build_assets_embed(self.cog, interaction.guild, interaction.user),
-            view=AssetsView(self.cog, interaction.user),
-            ephemeral=True,
-        )
+    """Clean public bank: overview stays public, member actions stay in one private session."""
+    def __init__(self,cog):
+        super().__init__(timeout=None); self.cog=cog; self.add_item(BankLanguageSelect(cog))
+    @discord.ui.button(label="🏦 فتح البنك ديالي",style=discord.ButtonStyle.success,custom_id="ggmw9:economy:open_bank",row=0)
+    async def open_bank(self,interaction,button):
+        lang=_panel_lang(self.cog.bot,interaction.guild.id,interaction.user.id); await _upsert_panel(self.cog.bot,interaction,"bank",content=None,embed=self.cog.build_user_account_embed(interaction.guild,interaction.user,lang=lang),view=BankSessionView(self.cog,interaction.user,lang,"bank"))
+    @discord.ui.button(label="📊 Economy Stats",style=discord.ButtonStyle.secondary,custom_id="ggmw9:economy:public_stats",row=0)
+    async def stats(self,interaction,button):
+        lang=_panel_lang(self.cog.bot,interaction.guild.id,interaction.user.id); await _upsert_panel(self.cog.bot,interaction,"bank",content=None,embed=self.cog.build_global_economy_embed(interaction.guild,lang=lang),view=BankSessionView(self.cog,interaction.user,lang,"bank"))
 
 
-def build_shop_home_embed(cog: "Economy", guild: discord.Guild, user: discord.Member) -> discord.Embed:
-    balance = cog.get_balance(guild.id, user.id)
-    bank = cog.get_bank_balance(guild.id, user.id)
-    discount = cog.get_shop_discount_percent(guild.id, user.id)
-    lines = []
-    for category_id, cat in cfg.SHOP_CATEGORIES.items():
-        count = sum(1 for i in cfg.SHOP_ITEMS if i.get("category") == category_id)
-        lines.append(f"{cat['emoji']} **{cat['name']}** — {cat['description']} `({count})`")
-    embed = discord.Embed(
-        title="🛒 GGMW9 Marketplace",
-        description=(
-            f"💳 Wallet: **{cfg.fmt_money(balance)}** • 🏦 Savings: **{cfg.fmt_money(bank)}**\n"
-            + (f"⭐ Level Discount: **-{discount}%**\n" if discount else "")
-            + "\n" + "\n".join(lines)
-            + "\n\nاختار Category من اللائحة. المتجر دابا فيه **utility + assets + prestige** باش الفلوس يكون عندها معنى."
-        ),
-        color=discord.Color.blurple(),
-    )
-    embed.set_footer(text="Shop spend → Treasury + Events + permanent Burn")
-    return embed
+def build_shop_home_embed(cog:"Economy",guild:discord.Guild,user:discord.Member,lang="darija"):
+    balance=cog.get_balance(guild.id,user.id); bank=cog.get_bank_balance(guild.id,user.id); discount=cog.get_shop_discount_percent(guild.id,user.id); lines=[]
+    for cid,cat in cfg.SHOP_CATEGORIES.items():
+        emoji,name,desc=_shop_category_text(cid,lang); count=sum(1 for i in cfg.SHOP_ITEMS if i.get("category")==cid); lines.append(f"{emoji} **{name}** — {desc} `({count})`")
+    if lang=="en": intro=f"💳 Wallet: **{cfg.fmt_money(balance)}** • 🏦 Savings: **{cfg.fmt_money(bank)}**\n"+(f"⭐ Level Discount: **-{discount}%**\n" if discount else "")+"\n"+"\n".join(lines)+"\n\nChoose a category. Every item has a real server utility, asset or prestige purpose."
+    elif lang=="fr": intro=f"💳 Wallet : **{cfg.fmt_money(balance)}** • 🏦 Épargne : **{cfg.fmt_money(bank)}**\n"+(f"⭐ Réduction de niveau : **-{discount}%**\n" if discount else "")+"\n"+"\n".join(lines)+"\n\nChoisis une catégorie. Chaque article a une utilité, un actif ou un rôle de prestige."
+    else: intro=f"💳 Wallet: **{cfg.fmt_money(balance)}** • 🏦 Savings: **{cfg.fmt_money(bank)}**\n"+(f"⭐ Level Discount: **-{discount}%**\n" if discount else "")+"\n"+"\n".join(lines)+"\n\nاختار Category من اللائحة. المتجر فيه utility + assets + prestige باش الفلوس يكون عندها معنى."
+    e=discord.Embed(title="🛒 GGMW9 Marketplace",description=intro,color=discord.Color.blurple()); e.set_footer(text="🌐 Darija • English • Français | Shop spend → Treasury + Events + Burn"); return e
 
 
-def build_shop_category_embed(cog: "Economy", guild: discord.Guild, user: discord.Member, category_id: str) -> discord.Embed:
-    cat = cfg.SHOP_CATEGORIES.get(category_id, {"emoji":"🛒","name":"Shop","description":""})
-    balance = cog.get_balance(guild.id, user.id)
-    discount = cog.get_shop_discount_percent(guild.id, user.id)
-    items = [i for i in cfg.SHOP_ITEMS if i.get("category") == category_id]
-    lines = []
+def build_shop_category_embed(cog:"Economy",guild:discord.Guild,user:discord.Member,category_id:str,lang="darija"):
+    emoji,name,desc=_shop_category_text(category_id,lang); balance=cog.get_balance(guild.id,user.id); discount=cog.get_shop_discount_percent(guild.id,user.id); items=[i for i in cfg.SHOP_ITEMS if i.get("category")==category_id]; lines=[]
     for item in items:
-        price = cog.get_shop_price(guild.id, user.id, item["price"])
-        affordable = "✅" if balance >= price else "❌"
-        if price != int(item["price"]):
-            price_text = f"~~{cfg.fmt_money(item['price'])}~~ → **{cfg.fmt_money(price)}**"
-        else:
-            price_text = f"**{cfg.fmt_money(price)}**"
-        lines.append(f"{affordable} {item['emoji']} **{item['name']}** — {price_text}\n↳ {item['description']}")
-    embed = discord.Embed(
-        title=f"{cat['emoji']} {cat['name']}",
-        description=(
-            f"💳 Wallet: **{cfg.fmt_money(balance)}**" + (f" • ⭐ -{discount}%" if discount else "") + "\n\n"
-            + ("\n\n".join(lines) if lines else "📭 هاد Category خاوية دابا.")
-        ),
-        color=discord.Color.blurple(),
-    )
-    return embed
+        price=cog.get_shop_price(guild.id,user.id,item["price"]); affordable="✅" if balance>=price else "❌"; price_text=f"~~{cfg.fmt_money(item['price'])}~~ → **{cfg.fmt_money(price)}**" if price!=int(item["price"]) else f"**{cfg.fmt_money(price)}**"; lines.append(f"{affordable} {item['emoji']} **{item['name']}** — {price_text}\n↳ {_shop_item_desc(item,lang)}")
+    empty="📭 This category is empty." if lang=="en" else "📭 Cette catégorie est vide." if lang=="fr" else "📭 هاد Category خاوية دابا."
+    return discord.Embed(title=f"{emoji} {name}",description=f"💳 Wallet: **{cfg.fmt_money(balance)}**"+(f" • ⭐ -{discount}%" if discount else "")+"\n\n"+("\n\n".join(lines) if lines else empty),color=discord.Color.blurple())
 
 
 class ShopCategorySelect(discord.ui.Select):
-    def __init__(self, cog: "Economy", user: discord.Member):
-        self.cog = cog
-        self.user = user
-        options = [
-            discord.SelectOption(
-                label=cat["name"], value=cid, emoji=cat["emoji"], description=cat["description"][:100]
-            ) for cid, cat in cfg.SHOP_CATEGORIES.items()
-        ]
-        super().__init__(placeholder="🗂️ اختار Category...", options=options, min_values=1, max_values=1)
-
-    async def callback(self, interaction: discord.Interaction):
-        if interaction.user.id != self.user.id:
-            await interaction.response.send_message("❌ هاد المتجر ماشي ديالك.", ephemeral=True)
-            return
-        cid = self.values[0]
-        await interaction.response.edit_message(
-            content=None,
-            embed=build_shop_category_embed(self.cog, interaction.guild, interaction.user, cid),
-            view=ShopItemsView(self.cog, interaction.user, cid),
-        )
+    def __init__(self,cog,user,lang="darija",session_key="shop"):
+        self.cog,self.user,self.lang,self.session_key=cog,user,lang,session_key; opts=[]
+        for cid in cfg.SHOP_CATEGORIES:
+            emoji,name,desc=_shop_category_text(cid,lang); opts.append(discord.SelectOption(label=name,value=cid,emoji=emoji,description=desc[:100]))
+        super().__init__(placeholder=_eco_t(lang,"shop_choose"),options=opts,min_values=1,max_values=1)
+    async def callback(self,interaction):
+        if interaction.user.id!=self.user.id: await interaction.response.send_message(_eco_t(self.lang,"not_yours"),ephemeral=True); return
+        cid=self.values[0]; await interaction.response.edit_message(content=None,embed=build_shop_category_embed(self.cog,interaction.guild,interaction.user,cid,self.lang),view=ShopItemsView(self.cog,interaction.user,cid,self.lang,self.session_key))
 
 
 class ShopView(discord.ui.View):
-    def __init__(self, cog: "Economy", user: discord.Member):
-        super().__init__(timeout=300)
-        self.cog = cog
-        self.user = user
-        self.add_item(ShopCategorySelect(cog, user))
+    def __init__(self,cog,user,lang="darija",session_key="shop"):
+        super().__init__(timeout=300); self.cog,self.user,self.lang,self.session_key=cog,user,lang,session_key; self.add_item(ShopCategorySelect(cog,user,lang,session_key))
 
 
 class ShopBackButton(discord.ui.Button):
-    def __init__(self, cog: "Economy", user: discord.Member):
-        super().__init__(label="رجع للـCategories", emoji="↩️", style=discord.ButtonStyle.secondary, row=1)
-        self.cog = cog
-        self.user = user
-
-    async def callback(self, interaction: discord.Interaction):
-        if interaction.user.id != self.user.id:
-            await interaction.response.send_message("❌ ماشي ديالك.", ephemeral=True)
-            return
-        await interaction.response.edit_message(
-            content=None,
-            embed=build_shop_home_embed(self.cog, interaction.guild, interaction.user),
-            view=ShopView(self.cog, interaction.user),
-        )
+    def __init__(self,cog,user,lang="darija",session_key="shop"):
+        super().__init__(label=_eco_t(lang,"shop_back"),emoji="↩️",style=discord.ButtonStyle.secondary,row=1); self.cog,self.user,self.lang,self.session_key=cog,user,lang,session_key
+    async def callback(self,interaction):
+        if interaction.user.id!=self.user.id: await interaction.response.send_message(_eco_t(self.lang,"not_yours"),ephemeral=True); return
+        await interaction.response.edit_message(content=None,embed=build_shop_home_embed(self.cog,interaction.guild,interaction.user,self.lang),view=ShopView(self.cog,interaction.user,self.lang,self.session_key))
 
 
 class ShopItemsView(discord.ui.View):
-    def __init__(self, cog: "Economy", user: discord.Member, category_id: str):
-        super().__init__(timeout=300)
-        self.add_item(ShopItemSelect(cog, user, category_id))
-        self.add_item(ShopBackButton(cog, user))
+    def __init__(self,cog,user,category_id,lang="darija",session_key="shop"):
+        super().__init__(timeout=300); self.add_item(ShopItemSelect(cog,user,category_id,lang,session_key)); self.add_item(ShopBackButton(cog,user,lang,session_key))
 
 
 class ShopItemSelect(discord.ui.Select):
-    def __init__(self, cog: "Economy", user: discord.Member, category_id: str):
-        self.cog = cog
-        self.user = user
-        self.category_id = category_id
-        items = [i for i in cfg.SHOP_ITEMS if i.get("category") == category_id]
-        options = []
+    def __init__(self,cog,user,category_id,lang="darija",session_key="shop"):
+        self.cog,self.user,self.category_id,self.lang,self.session_key=cog,user,category_id,lang,session_key; items=[i for i in cfg.SHOP_ITEMS if i.get("category")==category_id]; opts=[]
         for item in items[:25]:
-            price = cog.get_shop_price(user.guild.id, user.id, item["price"])
-            options.append(discord.SelectOption(
-                label=f"{item['name']} — {cfg.fmt_money(price)}"[:100],
-                value=item["id"], emoji=item["emoji"], description=item["description"][:100]
-            ))
-        super().__init__(placeholder="🛒 اختار Item باش تشري...", options=options, min_values=1, max_values=1)
-
-    async def callback(self, interaction: discord.Interaction):
-        if interaction.user.id != self.user.id:
-            await interaction.response.send_message("❌ هاد المتجر ماشي ديالك.", ephemeral=True)
-            return
-        item = next((i for i in cfg.SHOP_ITEMS if i["id"] == self.values[0]), None)
-        if not item:
-            await interaction.response.send_message("❌ Item ما بقاتش موجودة.", ephemeral=True)
-            return
-        price = self.cog.get_shop_price(interaction.guild.id, interaction.user.id, item["price"])
-        balance = self.cog.get_balance(interaction.guild.id, interaction.user.id)
-        if balance < price:
-            await interaction.response.send_message(
-                f"❌ ناقصك **{cfg.fmt_money(price-balance)}** فالWallet.", ephemeral=True
-            )
-            return
-        priced = dict(item); priced["_final_price"] = price
-        if item["type"] in {"role_color", "role_color_perm"}:
-            await interaction.response.edit_message(
-                content=f"🎨 اختار اللون لـ **{item['name']}** — {cfg.fmt_money(price)}",
-                embed=None,
-                view=ColorPickView(self.cog, interaction.user, priced, self.category_id),
-            )
-            return
-        if item["type"] == "custom_role":
-            await interaction.response.send_modal(CustomRoleModal(self.cog, priced))
-            return
-        await interaction.response.defer(ephemeral=True)
-        ok, msg, final_price = await execute_purchase(self.cog, interaction.guild, interaction.user, priced)
-        await interaction.edit_original_response(
-            content=("✅ " if ok else "❌ ") + msg,
-            embed=build_shop_category_embed(self.cog, interaction.guild, interaction.user, self.category_id),
-            view=ShopItemsView(self.cog, interaction.user, self.category_id),
-        )
+            price=cog.get_shop_price(user.guild.id,user.id,item["price"]); opts.append(discord.SelectOption(label=f"{item['name']} — {cfg.fmt_money(price)}"[:100],value=item["id"],emoji=item["emoji"],description=_shop_item_desc(item,lang)[:100]))
+        super().__init__(placeholder=_eco_t(lang,"shop_item"),options=opts,min_values=1,max_values=1)
+    async def callback(self,interaction):
+        if interaction.user.id!=self.user.id: await interaction.response.send_message(_eco_t(self.lang,"not_yours"),ephemeral=True); return
+        item=next((i for i in cfg.SHOP_ITEMS if i["id"]==self.values[0]),None)
+        if not item: await interaction.response.edit_message(content="❌ Item unavailable.",embed=None,view=ShopView(self.cog,self.user,self.lang,self.session_key)); return
+        price=self.cog.get_shop_price(interaction.guild.id,interaction.user.id,item["price"]); balance=self.cog.get_balance(interaction.guild.id,interaction.user.id)
+        if balance<price:
+            msg=f"❌ You need **{cfg.fmt_money(price-balance)}** more in Wallet." if self.lang=="en" else f"❌ Il te manque **{cfg.fmt_money(price-balance)}** dans le Wallet." if self.lang=="fr" else f"❌ ناقصك **{cfg.fmt_money(price-balance)}** فالWallet."
+            await interaction.response.edit_message(content=msg,embed=build_shop_category_embed(self.cog,interaction.guild,interaction.user,self.category_id,self.lang),view=ShopItemsView(self.cog,self.user,self.category_id,self.lang,self.session_key)); return
+        priced=dict(item); priced["_final_price"]=price
+        if item["type"] in {"role_color","role_color_perm"}:
+            await interaction.response.edit_message(content=f"🎨 {item['name']} — {cfg.fmt_money(price)}",embed=None,view=ColorPickView(self.cog,self.user,priced,self.category_id,self.lang,self.session_key)); return
+        if item["type"]=="custom_role":
+            await interaction.response.send_modal(CustomRoleModal(self.cog,priced,self.category_id,self.lang,self.session_key)); return
+        await interaction.response.defer(ephemeral=True); ok,msg,_=await execute_purchase(self.cog,interaction.guild,interaction.user,priced); prefix="✅ " if ok else "❌ "; await interaction.edit_original_response(content=prefix+msg,embed=build_shop_category_embed(self.cog,interaction.guild,interaction.user,self.category_id,self.lang),view=ShopItemsView(self.cog,self.user,self.category_id,self.lang,self.session_key))
 
 
 class ColorPickView(discord.ui.View):
-    def __init__(self, cog: "Economy", user: discord.Member, item: dict, category_id: str = "identity"):
-        super().__init__(timeout=120)
-        self.cog = cog; self.user = user; self.item = item; self.category_id = category_id
-        options = [discord.SelectOption(label=name, value=str(value)) for name, value in cfg.SHOP_COLORS.items()]
-        select = discord.ui.Select(placeholder="🎨 اختار اللون...", options=options)
-        select.callback = self.on_pick
-        self.add_item(select); self.select = select
-        self.add_item(ShopBackButton(cog, user))
-
-    async def on_pick(self, interaction: discord.Interaction):
-        if interaction.user.id != self.user.id:
-            await interaction.response.send_message("❌ ماشي ديالك.", ephemeral=True)
-            return
-        await interaction.response.defer(ephemeral=True)
-        item = dict(self.item); item["color"] = int(self.select.values[0])
-        ok, msg, _ = await execute_purchase(self.cog, interaction.guild, interaction.user, item)
-        await interaction.edit_original_response(
-            content=("✅ " if ok else "❌ ") + msg,
-            embed=build_shop_category_embed(self.cog, interaction.guild, interaction.user, self.category_id),
-            view=ShopItemsView(self.cog, interaction.user, self.category_id),
-        )
+    def __init__(self,cog,user,item,category_id="identity",lang="darija",session_key="shop"):
+        super().__init__(timeout=120); self.cog,self.user,self.item,self.category_id,self.lang,self.session_key=cog,user,item,category_id,lang,session_key
+        opts=[discord.SelectOption(label=name,value=str(value)) for name,value in cfg.SHOP_COLORS.items()]; sel=discord.ui.Select(placeholder="🎨 Choose color..." if lang=="en" else "🎨 Choisis une couleur..." if lang=="fr" else "🎨 اختار اللون...",options=opts); sel.callback=self.on_pick; self.select=sel; self.add_item(sel); self.add_item(ShopBackButton(cog,user,lang,session_key))
+    async def on_pick(self,interaction):
+        if interaction.user.id!=self.user.id: await interaction.response.send_message(_eco_t(self.lang,"not_yours"),ephemeral=True); return
+        await interaction.response.defer(ephemeral=True); item=dict(self.item); item["color"]=int(self.select.values[0]); ok,msg,_=await execute_purchase(self.cog,interaction.guild,interaction.user,item); await interaction.edit_original_response(content=("✅ " if ok else "❌ ")+msg,embed=build_shop_category_embed(self.cog,interaction.guild,interaction.user,self.category_id,self.lang),view=ShopItemsView(self.cog,self.user,self.category_id,self.lang,self.session_key))
 
 
-class CustomRoleModal(discord.ui.Modal, title="🏷️ الرول المخصص ديالك"):
-    role_name = discord.ui.TextInput(label="سمية الرول", max_length=32, placeholder="مثال: King of GGMW9")
-
-    def __init__(self, cog: "Economy", item: dict):
-        super().__init__(); self.cog = cog; self.item = item
-
-    async def on_submit(self, interaction: discord.Interaction):
-        item = dict(self.item); item["custom_name"] = str(self.role_name.value).strip()
-        if not item["custom_name"]:
-            await interaction.response.send_message("❌ الاسم خاوي.", ephemeral=True); return
-        await interaction.response.defer(ephemeral=True)
-        ok, msg, _ = await execute_purchase(self.cog, interaction.guild, interaction.user, item)
-        await interaction.followup.send(("✅ " if ok else "❌ ") + msg, ephemeral=True)
+class CustomRoleModal(discord.ui.Modal):
+    def __init__(self,cog,item,category_id="identity",lang="darija",session_key="shop"):
+        self.cog,self.item,self.category_id,self.lang,self.session_key=cog,item,category_id,lang,session_key
+        title="🏷️ Your Custom Role" if lang=="en" else "🏷️ Ton rôle personnalisé" if lang=="fr" else "🏷️ الرول المخصص ديالك"; super().__init__(title=title)
+        label="Role name" if lang=="en" else "Nom du rôle" if lang=="fr" else "سمية الرول"; self.role_name=discord.ui.TextInput(label=label,max_length=32,placeholder="King of GGMW9"); self.add_item(self.role_name)
+    async def on_submit(self,interaction):
+        item=dict(self.item); item["custom_name"]=str(self.role_name.value).strip()
+        if not item["custom_name"]: msg="❌ Empty name."
+        else: ok,msg,_=await execute_purchase(self.cog,interaction.guild,interaction.user,item); msg=("✅ " if ok else "❌ ")+msg
+        await _upsert_panel(self.cog.bot,interaction,self.session_key,content=msg,embed=build_shop_category_embed(self.cog,interaction.guild,interaction.user,self.category_id,self.lang),view=ShopItemsView(self.cog,interaction.user,self.category_id,self.lang,self.session_key))
 
 
 async def execute_purchase(cog: "Economy", guild: discord.Guild, user: discord.Member, item: dict) -> Tuple[bool, str, int]:

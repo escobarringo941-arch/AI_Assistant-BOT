@@ -293,6 +293,11 @@ async def run_roll(cog: Dice, interaction: discord.Interaction, user: discord.ab
 
     from cogs.gambling_panel import record_casino_round
     record_casino_round(cog.bot, guild_id, user_id, "dice", bet, granted if won else 0)
+    if won:
+        await eco.record_gambling_win(
+            interaction.guild, user, bet, granted, "dice",
+            details=f"{lvl['label']} • roll {result}/20 • threshold {threshold}+ • x{multiplier}",
+        )
     new_balance = eco.get_balance(guild_id, user_id)
     final_embed = discord.Embed(
         title=title,

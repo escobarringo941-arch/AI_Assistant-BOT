@@ -241,6 +241,12 @@ async def _play_out(cog: Lottery, msg: discord.Message, guild_id: int,
     from cogs.gambling_panel import record_casino_round
     round_payout = (granted + jackpot_bonus) if result["win_type"] != "none" else 0
     record_casino_round(cog.bot, guild_id, user_id, "lottery", bet, round_payout)
+    if result["win_type"] != "none":
+        await eco.record_gambling_win(
+            interaction.guild, user, bet, round_payout, "lottery",
+            details=f"Matched {result['count']}/{cfg.LOTTERY_PICK_COUNT} • x{result['multiplier']}",
+            is_jackpot=bool(jackpot_bonus or result["win_type"] == "jackpot"),
+        )
     new_balance = eco.get_balance(guild_id, user_id)
     final_embed = discord.Embed(
         title=title,
