@@ -49,9 +49,7 @@ class Coinflip(commands.Cog):
 
     # ═══════════════════════════════════════════════════
 
-    @commands.hybrid_command(name="coinflip", aliases=["قمرة"],
-                             description="راهن وقلب العملة 🪙")
-    @app_commands.describe(bet="شحال بغيتي تراهن")
+    @commands.command(name="coinflip", aliases=["قمرة"], hidden=True)
     @commands.cooldown(1, cfg.COOLDOWN_COINFLIP, commands.BucketType.user)
     async def coinflip_cmd(self, ctx: commands.Context, bet: int):
         eco = self.economy()
