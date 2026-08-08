@@ -144,6 +144,44 @@ class ArcadeLanguageSelect(discord.ui.Select):
         )
 
 
+
+class ArcadeSessionLanguageSelect(discord.ui.Select):
+    """Language switcher for a member's private ARCADE session.
+
+    This component intentionally has no persistent custom_id: it belongs to the
+    live ephemeral view and can be switched repeatedly without touching the
+    public shared panel.
+    """
+    def __init__(self, bot: commands.Bot, user: discord.abc.User, *, row: int = 1):
+        self.bot = bot
+        self.user = user
+        current = _lang(bot, getattr(getattr(user, "guild", None), "id", 0), user.id)
+        options = [
+            discord.SelectOption(label="Darija", value="darija", emoji="🇲🇦", default=current == "darija"),
+            discord.SelectOption(label="English", value="en", emoji="🇬🇧", default=current == "en"),
+            discord.SelectOption(label="Français", value="fr", emoji="🇫🇷", default=current == "fr"),
+        ]
+        super().__init__(
+            placeholder="🌐 اللغة / Language / Langue",
+            min_values=1,
+            max_values=1,
+            options=options,
+            row=row,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user.id:
+            lang = _lang(self.bot, interaction.guild.id, interaction.user.id)
+            await interaction.response.send_message(_txt(lang, "not_yours"), ephemeral=True)
+            return
+        lang = _set_lang(self.bot, interaction.guild.id, interaction.user.id, self.values[0])
+        await interaction.response.edit_message(
+            content=_txt(lang, "language_saved"),
+            embed=build_arcade_personal_embed(lang),
+            view=ArcadePrivateHomeView(self.bot, interaction.user, lang),
+        )
+
+
 class GamesPanelView(discord.ui.View):
     """Persistent public ARCADE. Five clear destinations + personal language."""
 
@@ -262,7 +300,7 @@ def build_economy_quick_embed(lang: str) -> discord.Embed:
 
 class ArcadeEconomyView(discord.ui.View):
     def __init__(self, bot: commands.Bot, user: discord.abc.User, lang: str):
-        super().__init__(timeout=300)
+        super().__init__(timeout=900)
         self.bot, self.user, self.lang = bot, user, lang
         labels = {
             "darija": ["🏦 البنك", "🛒 المتجر", "💳 حسابي", "📊 الاقتصاد", "↩️ ARCADE"],
@@ -276,9 +314,10 @@ class ArcadeEconomyView(discord.ui.View):
             (labels[3], discord.ButtonStyle.secondary, self.stats),
             (labels[4], discord.ButtonStyle.secondary, self.back),
         ]:
-            b = discord.ui.Button(label=label, style=style)
+            b = discord.ui.Button(label=label, style=style, row=0)
             b.callback = callback
             self.add_item(b)
+        self.add_item(ArcadeSessionLanguageSelect(bot, user, row=1))
 
     async def _owner(self, interaction):
         if interaction.user.id != self.user.id:
@@ -348,7 +387,8 @@ class ArcadePrivateHomeView(discord.ui.View):
             (_txt(lang,"leaders"), discord.ButtonStyle.secondary, self.leaders),
         ]
         for label, style, cb in items:
-            b=discord.ui.Button(label=label,style=style); b.callback=cb; self.add_item(b)
+            b=discord.ui.Button(label=label,style=style,row=0); b.callback=cb; self.add_item(b)
+        self.add_item(ArcadeSessionLanguageSelect(bot, user, row=1))
 
     async def _ok(self, interaction):
         if interaction.user.id != self.user.id:
@@ -378,12 +418,15 @@ class ArcadePrivateHomeView(discord.ui.View):
 
 class TriviaQuickView(discord.ui.View):
     def __init__(self, bot, user, lang):
-        super().__init__(timeout=300); self.bot=bot; self.user=user; self.lang=lang
+        super().__init__(timeout=900); self.bot=bot; self.user=user; self.lang=lang
         if getattr(cfg, "TRIVIA_CHANNEL_ID", 0):
             url = f"https://discord.com/channels/{user.guild.id}/{int(cfg.TRIVIA_CHANNEL_ID)}" if isinstance(user, discord.Member) else None
             if url:
-                self.add_item(discord.ui.Button(label="🧠 Open Trivia Channel", style=discord.ButtonStyle.link, url=url))
-        b=discord.ui.Button(label="↩️ ARCADE",style=discord.ButtonStyle.secondary); b.callback=self.back; self.add_item(b)
+                label = "🧠 Open Trivia Channel" if lang == "en" else "🧠 Ouvrir le salon Trivia" if lang == "fr" else "🧠 دخل لقناة Trivia"
+                self.add_item(discord.ui.Button(label=label, style=discord.ButtonStyle.link, url=url, row=0))
+        back_label = "↩️ Back to ARCADE" if lang == "en" else "↩️ Retour à ARCADE" if lang == "fr" else "↩️ رجع لـARCADE"
+        b=discord.ui.Button(label=back_label,style=discord.ButtonStyle.secondary,row=0); b.callback=self.back; self.add_item(b)
+        self.add_item(ArcadeSessionLanguageSelect(bot, user, row=1))
 
     async def back(self, interaction):
         if interaction.user.id != self.user.id:
@@ -414,7 +457,9 @@ class GameMenuView(discord.ui.View):
         opts=[discord.SelectOption(label=g[lk],value=g["id"],emoji=g["emoji"],description=g[dk][:100]) for g in GAMES]
         sel=discord.ui.Select(placeholder=_txt(lang,"choose_game")[:150],options=opts,min_values=1,max_values=1)
         sel.callback=self.on_pick; self.select=sel; self.add_item(sel)
-        b=discord.ui.Button(label="↩️ ARCADE",style=discord.ButtonStyle.secondary,row=1); b.callback=self.back; self.add_item(b)
+        back_label = "↩️ Back to ARCADE" if lang == "en" else "↩️ Retour à ARCADE" if lang == "fr" else "↩️ ARCADE"
+        b=discord.ui.Button(label=back_label,style=discord.ButtonStyle.secondary,row=1); b.callback=self.back; self.add_item(b)
+        self.add_item(ArcadeSessionLanguageSelect(bot, user, row=2))
 
     async def back(self, interaction):
         if interaction.user.id != self.user.id:
@@ -553,12 +598,33 @@ class LeaderboardLanguageSelect(discord.ui.Select):
         await _upsert(self.bot,interaction,"leaderboards",content=_txt(lang,"leader_pick"),embed=build_leaderboard_home_embed(lang),view=LeaderboardPanelView(self.bot,owner=interaction.user,lang=lang,session_key="leaderboards",persistent=False))
 
 
+
+class LeaderboardPrivateLanguageSelect(discord.ui.Select):
+    def __init__(self,bot,owner,lang="darija",session_key="leaderboards",*,row=1):
+        self.bot,self.owner,self.lang,self.session_key=bot,owner,lang,session_key
+        super().__init__(placeholder="🌐 اللغة / Language / Langue",options=[
+            discord.SelectOption(label="Darija",value="darija",emoji="🇲🇦",default=lang=="darija"),
+            discord.SelectOption(label="English",value="en",emoji="🇬🇧",default=lang=="en"),
+            discord.SelectOption(label="Français",value="fr",emoji="🇫🇷",default=lang=="fr"),
+        ],min_values=1,max_values=1,row=row)
+    async def callback(self,interaction):
+        if interaction.user.id!=self.owner.id:
+            await interaction.response.send_message(_txt(self.lang,"not_yours"),ephemeral=True); return
+        lang=_set_lang(self.bot,interaction.guild.id,interaction.user.id,self.values[0])
+        await interaction.response.edit_message(content=_txt(lang,"leader_pick"),embed=build_leaderboard_home_embed(lang),view=LeaderboardPanelView(self.bot,owner=self.owner,lang=lang,session_key=self.session_key,persistent=False))
+
+
 class LeaderboardPanelView(discord.ui.View):
     def __init__(self,bot,owner=None,lang="darija",session_key="leaderboards",persistent=True):
-        super().__init__(timeout=None if persistent else 300); self.bot=bot
+        super().__init__(timeout=None if persistent else 900); self.bot=bot
         self.add_item(LeaderboardSelect(bot,owner=owner,lang=lang,session_key=session_key,persistent=persistent))
         if persistent:
             self.add_item(LeaderboardLanguageSelect(bot))
+        elif owner is not None:
+            if session_key == "arcade":
+                self.add_item(ArcadeSessionLanguageSelect(bot, owner, row=1))
+            else:
+                self.add_item(LeaderboardPrivateLanguageSelect(bot, owner, lang, session_key, row=1))
 
 
 # ═══════════════════════════════════════════════════════

@@ -2224,6 +2224,7 @@ class AssetsView(discord.ui.View):
         super().__init__(timeout=180); self.cog,self.user,self.lang,self.session_key=cog,user,lang,session_key
         if cog.get_owned_assets(user.guild.id,user.id): self.add_item(AssetSellSelect(cog,user,lang,session_key))
         b=discord.ui.Button(label=_eco_t(lang,"back"),emoji="↩️",style=discord.ButtonStyle.secondary,row=1); b.callback=self.back; self.add_item(b)
+        self.add_item(BankSessionLanguageSelect(cog,user,lang,session_key,row=2))
     async def back(self,interaction):
         if interaction.user.id!=self.user.id: await interaction.response.send_message(_eco_t(self.lang,"not_yours"),ephemeral=True); return
         await interaction.response.edit_message(content=None,embed=self.cog.build_user_account_embed(interaction.guild,interaction.user,lang=self.lang),view=BankSessionView(self.cog,interaction.user,self.lang,self.session_key))
@@ -2251,6 +2252,29 @@ class BankDisplayCurrencySelect(discord.ui.Select):
         await interaction.response.edit_message(content=msg,embed=self.cog.build_user_account_embed(interaction.guild,interaction.user,lang=self.lang),view=BankSessionView(self.cog,interaction.user,self.lang,self.session_key))
 
 
+
+class BankSessionLanguageSelect(discord.ui.Select):
+    """Rebuilds the member bank in the selected language on the SAME message."""
+    def __init__(self, cog:"Economy", user:discord.Member, lang="darija", session_key="bank", *, row:int=4):
+        self.cog,self.user,self.lang,self.session_key=cog,user,lang,session_key
+        options=[
+            discord.SelectOption(label="Darija",value="darija",emoji="🇲🇦",default=lang=="darija"),
+            discord.SelectOption(label="English",value="en",emoji="🇬🇧",default=lang=="en"),
+            discord.SelectOption(label="Français",value="fr",emoji="🇫🇷",default=lang=="fr"),
+        ]
+        super().__init__(placeholder="🌐 اللغة / Language / Langue",options=options,min_values=1,max_values=1,row=row)
+
+    async def callback(self,interaction:discord.Interaction):
+        if interaction.user.id!=self.user.id:
+            await interaction.response.send_message(_eco_t(self.lang,"not_yours"),ephemeral=True); return
+        lang=_set_panel_lang(self.cog.bot,interaction.guild.id,interaction.user.id,self.values[0])
+        await interaction.response.edit_message(
+            content=_eco_t(lang,"lang_saved"),
+            embed=self.cog.build_user_account_embed(interaction.guild,interaction.user,lang=lang),
+            view=BankSessionView(self.cog,interaction.user,lang,self.session_key),
+        )
+
+
 class BankSessionView(discord.ui.View):
     """Private member bank. Every non-modal navigation edits the same message."""
     def __init__(self,cog:"Economy",user:discord.Member,lang="darija",session_key="bank"):
@@ -2271,6 +2295,7 @@ class BankSessionView(discord.ui.View):
         for i,(label,style,cb) in enumerate(items):
             b=discord.ui.Button(label=label[:80],style=style,row=i//5); b.callback=cb; self.add_item(b)
         self.add_item(BankDisplayCurrencySelect(cog,user,lang,session_key))
+        self.add_item(BankSessionLanguageSelect(cog,user,lang,session_key,row=4))
     async def _ok(self,interaction):
         if interaction.user.id!=self.user.id: await interaction.response.send_message(_eco_t(self.lang,"not_yours"),ephemeral=True); return False
         return True
@@ -2362,9 +2387,33 @@ class ShopCategorySelect(discord.ui.Select):
         cid=self.values[0]; await interaction.response.edit_message(content=None,embed=build_shop_category_embed(self.cog,interaction.guild,interaction.user,cid,self.lang),view=ShopItemsView(self.cog,interaction.user,cid,self.lang,self.session_key))
 
 
+
+class ShopSessionLanguageSelect(discord.ui.Select):
+    def __init__(self,cog:"Economy",user:discord.Member,lang="darija",session_key="shop",*,row:int=1):
+        self.cog,self.user,self.lang,self.session_key=cog,user,lang,session_key
+        options=[
+            discord.SelectOption(label="Darija",value="darija",emoji="🇲🇦",default=lang=="darija"),
+            discord.SelectOption(label="English",value="en",emoji="🇬🇧",default=lang=="en"),
+            discord.SelectOption(label="Français",value="fr",emoji="🇫🇷",default=lang=="fr"),
+        ]
+        super().__init__(placeholder="🌐 اللغة / Language / Langue",options=options,min_values=1,max_values=1,row=row)
+
+    async def callback(self,interaction):
+        if interaction.user.id!=self.user.id:
+            await interaction.response.send_message(_eco_t(self.lang,"not_yours"),ephemeral=True); return
+        lang=_set_panel_lang(self.cog.bot,interaction.guild.id,interaction.user.id,self.values[0])
+        await interaction.response.edit_message(
+            content=_eco_t(lang,"lang_saved"),
+            embed=build_shop_home_embed(self.cog,interaction.guild,interaction.user,lang),
+            view=ShopView(self.cog,interaction.user,lang,self.session_key),
+        )
+
+
 class ShopView(discord.ui.View):
     def __init__(self,cog,user,lang="darija",session_key="shop"):
-        super().__init__(timeout=300); self.cog,self.user,self.lang,self.session_key=cog,user,lang,session_key; self.add_item(ShopCategorySelect(cog,user,lang,session_key))
+        super().__init__(timeout=900); self.cog,self.user,self.lang,self.session_key=cog,user,lang,session_key
+        self.add_item(ShopCategorySelect(cog,user,lang,session_key))
+        self.add_item(ShopSessionLanguageSelect(cog,user,lang,session_key,row=1))
 
 
 class ShopBackButton(discord.ui.Button):
@@ -2377,7 +2426,10 @@ class ShopBackButton(discord.ui.Button):
 
 class ShopItemsView(discord.ui.View):
     def __init__(self,cog,user,category_id,lang="darija",session_key="shop"):
-        super().__init__(timeout=300); self.add_item(ShopItemSelect(cog,user,category_id,lang,session_key)); self.add_item(ShopBackButton(cog,user,lang,session_key))
+        super().__init__(timeout=900)
+        self.add_item(ShopItemSelect(cog,user,category_id,lang,session_key))
+        self.add_item(ShopBackButton(cog,user,lang,session_key))
+        self.add_item(ShopSessionLanguageSelect(cog,user,lang,session_key,row=2))
 
 
 class ShopItemSelect(discord.ui.Select):
@@ -2405,7 +2457,7 @@ class ShopItemSelect(discord.ui.Select):
 class ColorPickView(discord.ui.View):
     def __init__(self,cog,user,item,category_id="identity",lang="darija",session_key="shop"):
         super().__init__(timeout=120); self.cog,self.user,self.item,self.category_id,self.lang,self.session_key=cog,user,item,category_id,lang,session_key
-        opts=[discord.SelectOption(label=name,value=str(value)) for name,value in cfg.SHOP_COLORS.items()]; sel=discord.ui.Select(placeholder="🎨 Choose color..." if lang=="en" else "🎨 Choisis une couleur..." if lang=="fr" else "🎨 اختار اللون...",options=opts); sel.callback=self.on_pick; self.select=sel; self.add_item(sel); self.add_item(ShopBackButton(cog,user,lang,session_key))
+        opts=[discord.SelectOption(label=name,value=str(value)) for name,value in cfg.SHOP_COLORS.items()]; sel=discord.ui.Select(placeholder="🎨 Choose color..." if lang=="en" else "🎨 Choisis une couleur..." if lang=="fr" else "🎨 اختار اللون...",options=opts); sel.callback=self.on_pick; self.select=sel; self.add_item(sel); self.add_item(ShopBackButton(cog,user,lang,session_key)); self.add_item(ShopSessionLanguageSelect(cog,user,lang,session_key,row=2))
     async def on_pick(self,interaction):
         if interaction.user.id!=self.user.id: await interaction.response.send_message(_eco_t(self.lang,"not_yours"),ephemeral=True); return
         await interaction.response.defer(ephemeral=True); item=dict(self.item); item["color"]=int(self.select.values[0]); ok,msg,_=await execute_purchase(self.cog,interaction.guild,interaction.user,item); await interaction.edit_original_response(content=("✅ " if ok else "❌ ")+msg,embed=build_shop_category_embed(self.cog,interaction.guild,interaction.user,self.category_id,self.lang),view=ShopItemsView(self.cog,self.user,self.category_id,self.lang,self.session_key))

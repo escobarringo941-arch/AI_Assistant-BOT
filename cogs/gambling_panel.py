@@ -517,6 +517,34 @@ class CasinoLanguageSelect(discord.ui.Select):
         )
 
 
+
+class CasinoSessionLanguageSelect(discord.ui.Select):
+    """Private Casino switcher: edits the SAME ephemeral message every time."""
+    def __init__(self, bot: commands.Bot, user: discord.abc.User, lang: str = "darija", *, row: int = 1):
+        self.bot,self.user,self.lang=bot,user,lang
+        options=[
+            discord.SelectOption(label="Darija",value="darija",emoji="🇲🇦",default=lang=="darija"),
+            discord.SelectOption(label="English",value="en",emoji="🇬🇧",default=lang=="en"),
+            discord.SelectOption(label="Français",value="fr",emoji="🇫🇷",default=lang=="fr"),
+        ]
+        super().__init__(placeholder="🌐 اللغة / Language / Langue",options=options,min_values=1,max_values=1,row=row)
+
+    async def callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message(_casino_text(self.lang,"not_yours"),ephemeral=True); return
+        lang=_set_lang(self.bot,interaction.guild.id,interaction.user.id,self.values[0])
+        saved=(
+            "✅ اللغة ديالك ولات **الدارجة**." if lang=="darija" else
+            "✅ Your Casino language is now **English**." if lang=="en" else
+            "✅ La langue du Casino est maintenant **Français**."
+        )
+        await interaction.response.edit_message(
+            content=saved,
+            embed=build_session_menu_embed(self.bot,interaction.guild,interaction.user,lang),
+            view=GamblingMenuView(self.bot,interaction.user,lang=lang),
+        )
+
+
 class GamblingPanelView(discord.ui.View):
     def __init__(self, bot: commands.Bot):
         super().__init__(timeout=None)
@@ -580,9 +608,10 @@ class CasinoInfoBackView(discord.ui.View):
         self.user = user
         self.lang = lang
         label = {"darija": "رجع للـCasino", "en": "Back to Casino", "fr": "Retour au Casino"}.get(lang, "رجع للـCasino")
-        b = discord.ui.Button(label=label, emoji="↩️", style=discord.ButtonStyle.secondary)
+        b = discord.ui.Button(label=label, emoji="↩️", style=discord.ButtonStyle.secondary, row=0)
         b.callback = self.back
         self.add_item(b)
+        self.add_item(CasinoSessionLanguageSelect(bot, user, lang, row=1))
 
     async def back(self, interaction: discord.Interaction):
         if interaction.user.id != self.user.id:
@@ -634,12 +663,13 @@ class GameSwitchSelect(discord.ui.Select):
 
 class GamblingMenuView(discord.ui.View):
     def __init__(self, bot: commands.Bot, user: discord.abc.User, lang: str | None = None):
-        super().__init__(timeout=300)
+        super().__init__(timeout=900)
         self.bot = bot
         self.user = user
         guild_id = getattr(getattr(user, "guild", None), "id", 0)
         self.lang = lang or _lang(bot, guild_id, user.id)
         self.add_item(GameSwitchSelect(bot, user, row=0, lang=self.lang))
+        self.add_item(CasinoSessionLanguageSelect(bot, user, self.lang, row=1))
 
 
 class BetRetryView(discord.ui.View):
@@ -652,6 +682,7 @@ class BetRetryView(discord.ui.View):
         guild_id = getattr(getattr(user, "guild", None), "id", 0)
         self.lang = lang or _lang(bot, guild_id, user.id)
         self.add_item(GameSwitchSelect(bot, user, row=1, lang=self.lang))
+        self.add_item(CasinoSessionLanguageSelect(bot, user, self.lang, row=2))
         button = discord.ui.Button(label=_casino_text(self.lang, "enter_bet"), style=discord.ButtonStyle.success, row=0)
         button.callback = self.retry_bet
         self.add_item(button)
@@ -805,6 +836,7 @@ class GamblingRoundControls(discord.ui.View):
         change.callback = self.change_bet
         self.add_item(change)
         self.add_item(GameSwitchSelect(bot, user, row=1, lang=self.lang))
+        self.add_item(CasinoSessionLanguageSelect(bot, user, self.lang, row=2))
 
     async def replay_same(self, interaction: discord.Interaction):
         if interaction.user.id != self.user.id:
