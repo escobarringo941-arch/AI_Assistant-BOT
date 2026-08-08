@@ -539,10 +539,7 @@ class GamblingPanel(commands.Cog):
         await channel.send(embed=embed, view=GamblingPanelView(self.bot))
 
     # الأمر القديم بقى كما هو؛ ما زدنا حتى Slash جديد.
-    @commands.hybrid_command(
-        name="gamblingpanel",
-        description="⚙️ بعث panel القمار فهاد الـ channel (Admin)",
-    )
+    @commands.command(name="gamblingpanel", hidden=True)
     @commands.has_permissions(administrator=True)
     async def gamblingpanel_cmd(self, ctx: commands.Context):
         await self._send_panel(ctx.channel)
