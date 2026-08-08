@@ -15,6 +15,7 @@
 """
 
 import discord
+import re
 from discord.ext import commands, tasks
 from discord import app_commands
 from datetime import datetime, timedelta, timezone
@@ -2046,35 +2047,148 @@ class Economy(commands.Cog):
                 return p
         return None
 
-    async def _position_cosmetic_role(self, guild: discord.Guild, role: discord.Role) -> Tuple[bool, str]:
-        """Put a personal cosmetic role at the highest safe position below the bot.
+    @staticmethod
+    def _is_protected_staff_role(role: discord.Role) -> bool:
+        if role.is_default() or role.managed:
+            return False
+        perms = role.permissions
+        permission_names = getattr(
+            cfg,
+            "SHOP_ROLE_STAFF_PERMISSION_NAMES",
+            (
+                "administrator","manage_guild","manage_roles",
+                "kick_members","ban_members","moderate_members","manage_messages",
+            ),
+        )
+        if any(bool(getattr(perms, name, False)) for name in permission_names):
+            return True
+        normalized = re.sub(r"[^a-zA-Z\u0600-\u06FF]+", " ", role.name).strip().lower()
+        return normalized in {
+            "owner","server owner","admin","administrator","moderator","mod","staff","management",
+            "المالك","مالك","الإدارة","ادارة","أدمن","ادمن","مود","موديراتور","مشرف","المشرفين",
+        }
 
-        This makes a purchased personal color actually become the member's
-        effective Discord name color instead of silently sitting below another
-        colored role.
-        """
+    def _shop_role_records(self, guild: discord.Guild):
+        item_types = {i.get("id"): i.get("type") for i in getattr(cfg, "SHOP_ITEMS", [])}
+        records = {}
+        for _, acc in (self.db.guild(guild.id) or {}).items():
+            for p in acc.get("purchases", []) or []:
+                if not self._shop_purchase_active(p):
+                    continue
+                rid = int(p.get("role_id") or 0)
+                if not rid:
+                    continue
+                item_type = item_types.get(p.get("item_id"))
+                effect_key = str(p.get("effect_key") or "")
+                if effect_key == "personal_color" or item_type in {"role_color","role_color_perm"}:
+                    priority = 0
+                elif item_type == "custom_role" or effect_key.startswith("custom_role:"):
+                    priority = 1
+                elif item_type in {"legend_tag","title_role"} or effect_key.startswith("shared_role:"):
+                    priority = 2
+                else:
+                    priority = 3
+                records[rid] = min(priority, records.get(rid, priority))
+        return records
+
+    async def sync_shop_role_hierarchy(
+        self,
+        guild: discord.Guild,
+        *,
+        extra_role: discord.Role = None,
+        extra_priority: int = 3,
+    ) -> Tuple[bool, str]:
+        """Shop roles = one smart block below staff and above normal roles."""
         me = guild.me or (guild.get_member(self.bot.user.id) if self.bot.user else None)
         if not me:
-            return False, "ماقدرتش نحدد Role ديال البوت."
+            return False, "ماقدرتش نحدد رول ديال البوت."
         if not me.guild_permissions.manage_roles:
-            return False, "البوت خاصو صلاحية **Manage Roles / إدارة الرولات**."
+            return False, "البوت خاصو صلاحية **إدارة الرولات / Manage Roles**."
         if me.top_role.is_default() or me.top_role.position <= 1:
-            return False, "Role ديال البوت خاصها تكون فوق رولات الأعضاء."
+            return False, "رول ديال البوت خاصها تكون فوق الرولات المشتراة."
 
-        desired = max(1, int(me.top_role.position) - 1)
-        if role.position >= me.top_role.position:
-            return False, "الرول المشتراة فوق Role ديال البوت ومايقدرش يتحكم فيها."
+        records = self._shop_role_records(guild)
+        if extra_role is not None:
+            records[extra_role.id] = min(extra_priority, records.get(extra_role.id, extra_priority))
+
+        shop_roles = []
+        for rid, priority in records.items():
+            role = guild.get_role(int(rid))
+            if not role or role.managed:
+                continue
+            if role >= me.top_role:
+                return False, f"{role.mention} فوق/نفس مستوى رول البوت."
+            shop_roles.append((priority, role))
+
+        if not shop_roles:
+            return True, ""
+
+        shop_ids = {r.id for _, r in shop_roles}
+        staff_roles = [
+            r for r in guild.roles
+            if r.id not in shop_ids
+            and r.id != me.top_role.id
+            and self._is_protected_staff_role(r)
+        ]
+
+        target_top = int(me.top_role.position) - 1
+        if staff_roles:
+            # Always under the lowest protected Admin/Moderator role.
+            target_top = min(
+                target_top,
+                min(int(r.position) for r in staff_roles) - 1,
+            )
+
+        if target_top < 1:
+            return False, (
+                "ماكايناش بلاصة آمنة تحت الإدارة. "
+                "طلع رول البوت وRoles ديال Admin/Moderator لفوق."
+            )
+
+        # Highest inside Shop block: Personal Color > Custom/Decoration > Prestige.
+        ordered = sorted(shop_roles, key=lambda x: (x[0], x[1].id))
+        if len(ordered) > target_top:
+            return False, "عدد Shop Roles كبير بزاف مقارنة بالبلاصة المتوفرة."
+
+        desired = [(role, target_top - idx) for idx, (_, role) in enumerate(ordered)]
 
         try:
-            # Position can shift while Discord reorders roles, so only request
-            # the highest position the bot is legally allowed to manage.
-            if role.position != desired:
-                await role.edit(position=desired, reason="GGMW9 Shop — cosmetic role priority")
-            return True, ""
+            for role, position in reversed(desired):
+                current = guild.get_role(role.id) or role
+                if int(current.position) != int(position):
+                    await current.edit(
+                        position=int(position),
+                        reason="GGMW9 Shop — smart role hierarchy sync",
+                    )
         except discord.Forbidden:
-            return False, "البوت ماقدرش يطلع الرول. طلّع Role ديال البوت فوق رولات الأعضاء."
+            return False, (
+                "Discord منع ترتيب الرولات. تأكد أن البوت عندو **Manage Roles** "
+                "وRole ديالو فوق Shop Roles."
+            )
         except discord.HTTPException as exc:
-            return False, f"Discord رفض ترتيب الرول: {exc}"
+            return False, f"Discord رفض ترتيب Shop Roles: {exc}"
+
+        return True, ""
+
+    async def _position_cosmetic_role(self, guild: discord.Guild, role: discord.Role) -> Tuple[bool, str]:
+        return await self.sync_shop_role_hierarchy(
+            guild,
+            extra_role=role,
+            extra_priority=0,
+        )
+
+    async def _position_shop_role(
+        self,
+        guild: discord.Guild,
+        role: discord.Role,
+        *,
+        priority: int,
+    ) -> Tuple[bool, str]:
+        return await self.sync_shop_role_hierarchy(
+            guild,
+            extra_role=role,
+            extra_priority=priority,
+        )
 
     @staticmethod
     def _effective_colored_role(member: discord.Member):
@@ -2167,6 +2281,8 @@ class Economy(commands.Cog):
             except Exception:
                 continue
             await self.repair_member_shop_roles(guild, member)
+
+        await self.sync_shop_role_hierarchy(guild)
 
     # ════════════════════════════════════════════════
     # API داخلي
@@ -2366,7 +2482,11 @@ class Economy(commands.Cog):
         *,
         actor: Optional[discord.abc.User] = None,
     ) -> dict:
-        """Source of truth واحد لـ Owner Panel وfallback command."""
+        """Owner-only direct wallet adjustment in INTERNAL CENTS.
+
+        No Daily Cap, no game cap, no total-earned counter, no bot log and
+        no transaction-ledger entry. The recipient only gets a DM.
+        """
         amount = int(amount)
         before = self.get_balance(guild.id, member.id)
 
@@ -2375,14 +2495,15 @@ class Economy(commands.Cog):
                 guild.id,
                 member.id,
                 amount,
-                source="owner_adjustment",
+                source="owner_private_adjustment",
                 respect_cap=False,
                 count_as_earned=False,
             )
         else:
+            # Keep Wallet non-negative so the rest of the economy stays valid.
             remove = min(before, abs(amount))
             acc = self._acc(guild.id, member.id)
-            acc["coins"] = max(0, before - remove)
+            acc["coins"] = before - remove
             self.db.save()
             applied = -remove
 
@@ -2392,46 +2513,31 @@ class Economy(commands.Cog):
         try:
             if applied >= 0:
                 await member.send(
-                    f"💰 تزادو ليك **{cfg.fmt_money(applied)}** من إدارة السيرفر.\n"
+                    "💰 إدارة GGMW9 زادت ليك رصيد بشكل خاص.\n"
+                    f"**+{cfg.fmt_money(applied)}**\n"
                     f"الرصيد دابا: **{cfg.fmt_money(after)}**"
                 )
             else:
                 await member.send(
-                    f"💸 تحيدو من رصيدك **{cfg.fmt_money(abs(applied))}** من إدارة السيرفر.\n"
+                    "💸 إدارة GGMW9 نقصات من الرصيد بشكل خاص.\n"
+                    f"**-{cfg.fmt_money(abs(applied))}**\n"
                     f"الرصيد دابا: **{cfg.fmt_money(after)}**"
                 )
         except (discord.Forbidden, discord.HTTPException):
             dm_sent = False
 
-        tx_id = self._record_transaction(
-            guild.id,
-            user_id=member.id,
-            kind="admin_adjustment",
-            amount=abs(applied),
-            source="owner_control",
-            description="Owner balance adjustment",
-            splits={"delta": applied, "before": before, "after": after},
-        )
-        actor_text = actor.mention if actor else "Owner"
-        await self._economy_log(
-            guild,
-            f"🛡️ Owner Balance Adjustment — TX #{tx_id}",
-            (
-                f"**العضو:** {member.mention}\n"
-                f"**التغيير الفعلي:** **{cfg.fmt_money(applied, signed=True)}**\n"
-                f"**قبل:** **{cfg.fmt_money(before)}** → **بعد:** **{cfg.fmt_money(after)}**\n"
-                f"**من طرف:** {actor_text}"
-            ),
-            discord.Color.blurple(),
-        )
+        # Aggregate stats may refresh; this does not identify the Owner action.
         await self.refresh_economy_stats(guild)
+
         return {
             "before": before,
             "after": after,
             "applied": applied,
+            "requested": amount,
             "dm_sent": dm_sent,
-            "tx_id": tx_id,
+            "tx_id": None,
         }
+
 
 
     # ════════════════════════════════════════════════
@@ -3012,13 +3118,201 @@ class ShopItemSelect(discord.ui.Select):
         await interaction.response.defer(ephemeral=True); ok,msg,_=await execute_purchase(self.cog,interaction.guild,interaction.user,priced); prefix="✅ " if ok else "❌ "; await interaction.edit_original_response(content=prefix+msg,embed=build_shop_category_embed(self.cog,interaction.guild,interaction.user,self.category_id,self.lang),view=ShopItemsView(self.cog,self.user,self.category_id,self.lang,self.session_key))
 
 
+def _palette_name(palette: dict, lang: str) -> str:
+    names = palette.get("name") or {}
+    return names.get(lang, names.get("darija", "ألوان"))
+
+
+def _shop_color_name(color: dict, lang: str) -> str:
+    names = color.get("name") or {}
+    return names.get(lang, names.get("darija", color.get("id", "لون")))
+
+
+class ColorPaletteSelect(discord.ui.Select):
+    def __init__(self,cog,user,item,category_id="identity",lang="darija",session_key="shop"):
+        self.cog,self.user,self.item,self.category_id,self.lang,self.session_key=cog,user,item,category_id,lang,session_key
+        options=[]
+        for pid,data in list(getattr(cfg,"SHOP_COLOR_PALETTES",{}).items())[:25]:
+            count=len(data.get("colors",[]))
+            options.append(discord.SelectOption(
+                label=_palette_name(data,lang)[:100],
+                value=pid,
+                emoji=data.get("emoji","🎨"),
+                description=(
+                    f"{count} ألوان" if lang=="darija"
+                    else f"{count} colors" if lang=="en"
+                    else f"{count} couleurs"
+                )[:100],
+            ))
+        super().__init__(
+            placeholder=(
+                "🎨 اختار مجموعة الألوان..." if lang=="darija"
+                else "🎨 Choose a color palette..." if lang=="en"
+                else "🎨 Choisis une palette..."
+            ),
+            options=options,min_values=1,max_values=1,row=0
+        )
+
+    async def callback(self,interaction):
+        if interaction.user.id!=self.user.id:
+            await interaction.response.send_message(_eco_t(self.lang,"not_yours"),ephemeral=True); return
+        await interaction.response.edit_message(
+            content=(
+                "🎨 اختار اللون. HEX ديالو باين تحت السمية." if self.lang=="darija"
+                else "🎨 Choose a color. Its HEX is shown below." if self.lang=="en"
+                else "🎨 Choisis une couleur. Son HEX est affiché."
+            ),
+            embed=None,
+            view=PaletteColorsView(
+                self.cog,self.user,self.item,self.values[0],
+                self.category_id,self.lang,self.session_key
+            ),
+        )
+
+
+class CustomHexButton(discord.ui.Button):
+    def __init__(self,cog,user,item,category_id="identity",lang="darija",session_key="shop",row=1):
+        super().__init__(
+            label=(
+                "🎯 لون HEX مخصص" if lang=="darija"
+                else "🎯 Custom HEX" if lang=="en"
+                else "🎯 HEX personnalisé"
+            ),
+            style=discord.ButtonStyle.primary,row=row
+        )
+        self.cog,self.user,self.item,self.category_id,self.lang,self.session_key=cog,user,item,category_id,lang,session_key
+
+    async def callback(self,interaction):
+        if interaction.user.id!=self.user.id:
+            await interaction.response.send_message(_eco_t(self.lang,"not_yours"),ephemeral=True); return
+        await interaction.response.send_modal(
+            CustomHexColorModal(self.cog,self.item,self.category_id,self.lang,self.session_key)
+        )
+
+
 class ColorPickView(discord.ui.View):
     def __init__(self,cog,user,item,category_id="identity",lang="darija",session_key="shop"):
-        super().__init__(timeout=120); self.cog,self.user,self.item,self.category_id,self.lang,self.session_key=cog,user,item,category_id,lang,session_key
-        opts=[discord.SelectOption(label=name,value=str(value)) for name,value in cfg.SHOP_COLORS.items()]; sel=discord.ui.Select(placeholder="🎨 Choose color..." if lang=="en" else "🎨 Choisis une couleur..." if lang=="fr" else "🎨 اختار اللون...",options=opts); sel.callback=self.on_pick; self.select=sel; self.add_item(sel); self.add_item(ShopBackButton(cog,user,lang,session_key)); self.add_item(ShopSessionLanguageSelect(cog,user,lang,session_key,row=2))
-    async def on_pick(self,interaction):
-        if interaction.user.id!=self.user.id: await interaction.response.send_message(_eco_t(self.lang,"not_yours"),ephemeral=True); return
-        await interaction.response.defer(ephemeral=True); item=dict(self.item); item["color"]=int(self.select.values[0]); ok,msg,_=await execute_purchase(self.cog,interaction.guild,interaction.user,item); await interaction.edit_original_response(content=("✅ " if ok else "❌ ")+msg,embed=build_shop_category_embed(self.cog,interaction.guild,interaction.user,self.category_id,self.lang),view=ShopItemsView(self.cog,self.user,self.category_id,self.lang,self.session_key))
+        super().__init__(timeout=300)
+        self.add_item(ColorPaletteSelect(cog,user,item,category_id,lang,session_key))
+        self.add_item(CustomHexButton(cog,user,item,category_id,lang,session_key,row=1))
+        self.add_item(ShopBackButton(cog,user,lang,session_key))
+        self.add_item(ShopSessionLanguageSelect(cog,user,lang,session_key,row=2))
+
+
+class PaletteColorSelect(discord.ui.Select):
+    def __init__(self,cog,user,item,palette_id,category_id="identity",lang="darija",session_key="shop"):
+        self.cog,self.user,self.item,self.palette_id,self.category_id,self.lang,self.session_key=cog,user,item,palette_id,category_id,lang,session_key
+        palette=getattr(cfg,"SHOP_COLOR_PALETTES",{}).get(palette_id,{})
+        options=[]
+        for color in palette.get("colors",[])[:25]:
+            value=int(color["value"])
+            options.append(discord.SelectOption(
+                label=_shop_color_name(color,lang)[:100],
+                value=str(value),
+                emoji=color.get("emoji","🎨"),
+                description=f"#{value:06X}",
+            ))
+        super().__init__(
+            placeholder=(
+                "🎨 اختار اللون..." if lang=="darija"
+                else "🎨 Choose a color..." if lang=="en"
+                else "🎨 Choisis une couleur..."
+            ),
+            options=options,min_values=1,max_values=1,row=0
+        )
+
+    async def callback(self,interaction):
+        if interaction.user.id!=self.user.id:
+            await interaction.response.send_message(_eco_t(self.lang,"not_yours"),ephemeral=True); return
+        await interaction.response.defer(ephemeral=True)
+        item=dict(self.item); item["color"]=int(self.values[0])
+        ok,msg,_=await execute_purchase(self.cog,interaction.guild,interaction.user,item)
+        await interaction.edit_original_response(
+            content=("✅ " if ok else "❌ ")+msg,
+            embed=build_shop_category_embed(self.cog,interaction.guild,interaction.user,self.category_id,self.lang),
+            view=ShopItemsView(self.cog,self.user,self.category_id,self.lang,self.session_key),
+        )
+
+
+class PaletteBackButton(discord.ui.Button):
+    def __init__(self,cog,user,item,category_id="identity",lang="darija",session_key="shop"):
+        super().__init__(
+            label=(
+                "↩️ رجع لمجموعات الألوان" if lang=="darija"
+                else "↩️ Back to palettes" if lang=="en"
+                else "↩️ Retour aux palettes"
+            ),
+            style=discord.ButtonStyle.secondary,row=1
+        )
+        self.cog,self.user,self.item,self.category_id,self.lang,self.session_key=cog,user,item,category_id,lang,session_key
+
+    async def callback(self,interaction):
+        if interaction.user.id!=self.user.id:
+            await interaction.response.send_message(_eco_t(self.lang,"not_yours"),ephemeral=True); return
+        await interaction.response.edit_message(
+            content=(
+                "🎨 اختار مجموعة، أو استعمل HEX مخصص." if self.lang=="darija"
+                else "🎨 Choose a palette or use Custom HEX." if self.lang=="en"
+                else "🎨 Choisis une palette ou utilise un HEX personnalisé."
+            ),
+            embed=None,
+            view=ColorPickView(self.cog,self.user,self.item,self.category_id,self.lang,self.session_key),
+        )
+
+
+class PaletteColorsView(discord.ui.View):
+    def __init__(self,cog,user,item,palette_id,category_id="identity",lang="darija",session_key="shop"):
+        super().__init__(timeout=300)
+        self.add_item(PaletteColorSelect(cog,user,item,palette_id,category_id,lang,session_key))
+        self.add_item(CustomHexButton(cog,user,item,category_id,lang,session_key,row=1))
+        self.add_item(PaletteBackButton(cog,user,item,category_id,lang,session_key))
+        self.add_item(ShopSessionLanguageSelect(cog,user,lang,session_key,row=2))
+
+
+class CustomHexColorModal(discord.ui.Modal):
+    def __init__(self,cog,item,category_id="identity",lang="darija",session_key="shop"):
+        self.cog,self.item,self.category_id,self.lang,self.session_key=cog,item,category_id,lang,session_key
+        super().__init__(title=(
+            "🎯 لون HEX مخصص" if lang=="darija"
+            else "🎯 Custom HEX Color" if lang=="en"
+            else "🎯 Couleur HEX personnalisée"
+        ))
+        self.hex_input=discord.ui.TextInput(
+            label=(
+                "HEX ديال اللون" if lang=="darija"
+                else "Color HEX" if lang=="en"
+                else "HEX de la couleur"
+            ),
+            placeholder="#8B5CF6",min_length=6,max_length=7,required=True
+        )
+        self.add_item(self.hex_input)
+
+    async def on_submit(self,interaction):
+        raw=str(self.hex_input.value).strip().upper()
+        if raw.startswith("#"): raw=raw[1:]
+        if not re.fullmatch(r"[0-9A-F]{6}",raw):
+            await interaction.response.send_message(
+                "❌ دخل HEX صحيح بحال `#8B5CF6`." if self.lang=="darija"
+                else "❌ Enter a valid HEX such as `#8B5CF6`." if self.lang=="en"
+                else "❌ Entre un HEX valide comme `#8B5CF6`.",
+                ephemeral=True
+            ); return
+        value=int(raw,16)
+        if value==0:
+            await interaction.response.send_message(
+                "❌ `#000000` عند Discord كيتحسب بلا لون. استعمل `#010101` للأسود." if self.lang=="darija"
+                else "❌ Discord treats `#000000` as no color. Use `#010101` for black." if self.lang=="en"
+                else "❌ Discord traite `#000000` comme aucune couleur. Utilise `#010101`.",
+                ephemeral=True
+            ); return
+        await interaction.response.defer(ephemeral=True)
+        item=dict(self.item); item["color"]=value
+        ok,msg,_=await execute_purchase(self.cog,interaction.guild,interaction.user,item)
+        await interaction.edit_original_response(
+            content=("✅ " if ok else "❌ ")+msg,
+            embed=build_shop_category_embed(self.cog,interaction.guild,interaction.user,self.category_id,self.lang),
+            view=ShopItemsView(self.cog,interaction.user,self.category_id,self.lang,self.session_key),
+        )
 
 
 class CustomRoleModal(discord.ui.Modal):
@@ -3217,6 +3511,13 @@ async def apply_purchase(cog: "Economy", guild: discord.Guild, user: discord.Mem
                 mentionable=False,
                 reason=f"رول خاص من المتجر — {user}",
             )
+            ok, reason = await cog._position_shop_role(guild, role, priority=1)
+            if not ok:
+                try:
+                    await role.delete(reason="Rollback custom role hierarchy failure")
+                except Exception:
+                    pass
+                return False, reason
             await user.add_roles(role, reason="GGMW9 Shop custom role")
             days = int(item.get("duration_days", 30))
             entry = _record_purchase(
@@ -3243,6 +3544,9 @@ async def apply_purchase(cog: "Economy", guild: discord.Guild, user: discord.Mem
             role = discord.utils.get(guild.roles, name="👑 LEGEND")
             if not role:
                 role = await guild.create_role(name="👑 LEGEND", colour=discord.Colour.gold(), mentionable=False, reason="Legend Tag shop")
+            ok, reason = await cog._position_shop_role(guild, role, priority=2)
+            if not ok:
+                return False, reason
             await user.add_roles(role, reason="Legend Tag purchase")
             days = int(item.get("duration_days", 7))
             entry = _record_purchase(
@@ -3269,6 +3573,9 @@ async def apply_purchase(cog: "Economy", guild: discord.Guild, user: discord.Mem
                     mentionable=False,
                     reason=f"Prestige title shop — {user}",
                 )
+            ok, reason = await cog._position_shop_role(guild, role, priority=2)
+            if not ok:
+                return False, reason
             await user.add_roles(role, reason="GGMW9 Prestige purchase")
             days = int(item.get("duration_days", 30))
             entry = _record_purchase(
