@@ -220,7 +220,7 @@ async def _play_out(cog: Scratch, msg: discord.Message, guild_id: int,
     jackpot_bonus = 0
 
     if result["win_type"] != "none":
-        granted = eco.add_coins(guild_id, user_id, result["payout"], source="scratch")
+        granted = eco.add_coins(guild_id, user_id, result["payout"], source="scratch", respect_cap=False)
         s["wins"] += 1
         s["won"] += granted
         s["biggest_win"] = max(s["biggest_win"], granted)
@@ -236,8 +236,6 @@ async def _play_out(cog: Scratch, msg: discord.Message, guild_id: int,
         desc_extra = f"\n💰 ربحتي **{granted:,}** {cfg.CURRENCY_EMOJI} (×{result['multiplier']})"
         if jackpot_bonus:
             desc_extra += f"\n🏆 **Global Jackpot:** +**{jackpot_bonus:,}** {cfg.CURRENCY_EMOJI}"
-        if granted < result["payout"]:
-            desc_extra += f"\n⚠️ وصلتي قريب من السقف اليومي — كان خاصك تربح {result['payout']:,}."
     else:
         s["losses"] += 1
         cog.db.save()
