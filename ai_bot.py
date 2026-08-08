@@ -327,21 +327,21 @@ LEVEL_PERK_ADDITIONS = {
 # daily_bonus_percent = بونيص فوق /daily، كيتخلص من Treasury باش ما نخلقوش تضخم.
 # loan_* = شروط البنك الأساسية قبل Credit Score وسيولة Treasury.
 LEVEL_ROLE_BENEFITS = {
-    5:   {"name": "🌱 Starter",     "shop_discount_percent": 1,  "daily_bonus_percent": 2,  "loan_base": 300,  "loan_interest": 15, "loan_days": 2, "feature": "😀 External Emojis + Stickers"},
-    10:  {"name": "🥉 Bronze I",    "shop_discount_percent": 2,  "daily_bonus_percent": 4,  "loan_base": 450,  "loan_interest": 14, "loan_days": 2, "feature": "🔊 Soundboard"},
-    15:  {"name": "🥉 Bronze II",   "shop_discount_percent": 3,  "daily_bonus_percent": 6,  "loan_base": 600,  "loan_interest": 13, "loan_days": 3, "feature": "🎙️ Voice Messages + External Sounds"},
-    20:  {"name": "🥈 Silver I",    "shop_discount_percent": 4,  "daily_bonus_percent": 8,  "loan_base": 800,  "loan_interest": 12, "loan_days": 3, "feature": "📎 Embeds/Attachments + Bio"},
-    25:  {"name": "🥈 Silver II",   "shop_discount_percent": 5,  "daily_bonus_percent": 10, "loan_base": 1000, "loan_interest": 11, "loan_days": 3, "feature": "🧵 Public Threads"},
-    30:  {"name": "💠 Sapphire I",  "shop_discount_percent": 6,  "daily_bonus_percent": 12, "loan_base": 1300, "loan_interest": 10, "loan_days": 3, "feature": "🎮 Discord Activities + XP Milestone Boost"},
-    35:  {"name": "💠 Sapphire II", "shop_discount_percent": 7,  "daily_bonus_percent": 14, "loan_base": 1600, "loan_interest": 10, "loan_days": 4, "feature": "📡 Go Live / Stream"},
-    40:  {"name": "🥇 Gold I",      "shop_discount_percent": 8,  "daily_bonus_percent": 16, "loan_base": 2000, "loan_interest": 9,  "loan_days": 4, "feature": "🔐 Private Threads + XP Milestone Boost"},
-    45:  {"name": "🥇 Gold II",     "shop_discount_percent": 9,  "daily_bonus_percent": 18, "loan_base": 2400, "loan_interest": 9,  "loan_days": 4, "feature": "🎤 Request to Speak + أقوى Economy Tier"},
-    50:  {"name": "💎 Platinum",    "shop_discount_percent": 10, "daily_bonus_percent": 20, "loan_base": 3000, "loan_interest": 8,  "loan_days": 5, "feature": "👑 Milestone Announcement + XP Boost"},
-    60:  {"name": "💎 Diamond",     "shop_discount_percent": 11, "daily_bonus_percent": 22, "loan_base": 3800, "loan_interest": 8,  "loan_days": 5, "feature": "🗳️ Create Poll + XP Boost"},
-    70:  {"name": "🌟 Elite",       "shop_discount_percent": 12, "daily_bonus_percent": 24, "loan_base": 4800, "loan_interest": 7,  "loan_days": 5, "feature": "🌟 Elite Badge + XP Boost"},
-    80:  {"name": "👑 Master",      "shop_discount_percent": 13, "daily_bonus_percent": 26, "loan_base": 6000, "loan_interest": 6,  "loan_days": 6, "feature": "💫 Master Economy Tier + XP Boost"},
-    90:  {"name": "🔱 Mythic",      "shop_discount_percent": 14, "daily_bonus_percent": 28, "loan_base": 7500, "loan_interest": 5,  "loan_days": 6, "feature": "🔱 Mythic Economy Tier + XP Boost"},
-    100: {"name": "🏆 Legend",      "shop_discount_percent": 15, "daily_bonus_percent": 30, "loan_base": 9500, "loan_interest": 4,  "loan_days": 7, "feature": "👑 Legend Personal Role + أفضل شروط البنك"},
+    5:   {"name": "🌱 Starter",     "shop_discount_percent": 1,  "daily_bonus_percent": 2,  "loan_base": 5000,  "loan_interest": 15, "loan_days": 2, "feature": "😀 External Emojis + Stickers"},
+    10:  {"name": "🥉 Bronze I",    "shop_discount_percent": 2,  "daily_bonus_percent": 4,  "loan_base": 7500,  "loan_interest": 14, "loan_days": 2, "feature": "🔊 Soundboard"},
+    15:  {"name": "🥉 Bronze II",   "shop_discount_percent": 3,  "daily_bonus_percent": 6,  "loan_base": 10000,  "loan_interest": 13, "loan_days": 3, "feature": "🎙️ Voice Messages + External Sounds"},
+    20:  {"name": "🥈 Silver I",    "shop_discount_percent": 4,  "daily_bonus_percent": 8,  "loan_base": 15000,  "loan_interest": 12, "loan_days": 3, "feature": "📎 Embeds/Attachments + Bio"},
+    25:  {"name": "🥈 Silver II",   "shop_discount_percent": 5,  "daily_bonus_percent": 10, "loan_base": 20000, "loan_interest": 11, "loan_days": 3, "feature": "🧵 Public Threads"},
+    30:  {"name": "💠 Sapphire I",  "shop_discount_percent": 6,  "daily_bonus_percent": 12, "loan_base": 30000, "loan_interest": 10, "loan_days": 3, "feature": "🎮 Discord Activities + XP Milestone Boost"},
+    35:  {"name": "💠 Sapphire II", "shop_discount_percent": 7,  "daily_bonus_percent": 14, "loan_base": 40000, "loan_interest": 10, "loan_days": 4, "feature": "📡 Go Live / Stream"},
+    40:  {"name": "🥇 Gold I",      "shop_discount_percent": 8,  "daily_bonus_percent": 16, "loan_base": 50000, "loan_interest": 9,  "loan_days": 4, "feature": "🔐 Private Threads + XP Milestone Boost"},
+    45:  {"name": "🥇 Gold II",     "shop_discount_percent": 9,  "daily_bonus_percent": 18, "loan_base": 65000, "loan_interest": 9,  "loan_days": 4, "feature": "🎤 Request to Speak + أقوى Economy Tier"},
+    50:  {"name": "💎 Platinum",    "shop_discount_percent": 10, "daily_bonus_percent": 20, "loan_base": 80000, "loan_interest": 8,  "loan_days": 5, "feature": "👑 Milestone Announcement + XP Boost"},
+    60:  {"name": "💎 Diamond",     "shop_discount_percent": 11, "daily_bonus_percent": 22, "loan_base": 100000, "loan_interest": 8,  "loan_days": 5, "feature": "🗳️ Create Poll + XP Boost"},
+    70:  {"name": "🌟 Elite",       "shop_discount_percent": 12, "daily_bonus_percent": 24, "loan_base": 125000, "loan_interest": 7,  "loan_days": 5, "feature": "🌟 Elite Badge + XP Boost"},
+    80:  {"name": "👑 Master",      "shop_discount_percent": 13, "daily_bonus_percent": 26, "loan_base": 150000, "loan_interest": 6,  "loan_days": 6, "feature": "💫 Master Economy Tier + XP Boost"},
+    90:  {"name": "🔱 Mythic",      "shop_discount_percent": 14, "daily_bonus_percent": 28, "loan_base": 200000, "loan_interest": 5,  "loan_days": 6, "feature": "🔱 Mythic Economy Tier + XP Boost"},
+    100: {"name": "🏆 Legend",      "shop_discount_percent": 15, "daily_bonus_percent": 30, "loan_base": 300000, "loan_interest": 4,  "loan_days": 7, "feature": "👑 Legend Personal Role + أفضل شروط البنك"},
 }
 
 
@@ -353,7 +353,7 @@ def get_level_perks(level: int) -> dict:
         "name": "👤 Member",
         "shop_discount_percent": 0,
         "daily_bonus_percent": 0,
-        "loan_base": 200,
+        "loan_base": 2500,
         "loan_interest": 16,
         "loan_days": 2,
         "feature": "طلع Level 5 باش تفتح أول امتيازات.",
@@ -379,7 +379,7 @@ def format_level_perk_summary(level: int) -> str:
     return (
         f"{p['name']} • 🛒 **-{p['shop_discount_percent']}% Shop** • "
         f"🎁 **+{p['daily_bonus_percent']}% Daily** • "
-        f"🏦 **{p['loan_base']:,} / {p['loan_interest']}% / {p['loan_days']}d** • "
+        f"🏦 **{cfg.fmt_money(p['loan_base'])} / {p['loan_interest']}% / {p['loan_days']}d** • "
         f"{p['feature']}"
     )
 
@@ -7746,7 +7746,7 @@ async def setup_levels_info_message(guild: discord.Guild):
             f"{role_display} **Lv {lvl} — {p.get('name', '')}**\n"
             f"> 🛒 -{p.get('shop_discount_percent', 0)}% • "
             f"🎁 Daily +{p.get('daily_bonus_percent', 0)}% • "
-            f"🏦 {int(p.get('loan_base', 0)):,} / {p.get('loan_interest', 0)}% / {p.get('loan_days', 0)}d\n"
+            f"🏦 {cfg.fmt_money(int(p.get('loan_base', 0)))} / {p.get('loan_interest', 0)}% / {p.get('loan_days', 0)}d\n"
             f"> {p.get('feature', '—')}"
         )
 
@@ -10046,7 +10046,7 @@ def build_rank_embed(guild: discord.Guild, member: discord.Member) -> discord.Em
             f"**{active_perks['name']}**\n"
             f"🛒 Shop: **-{active_perks['shop_discount_percent']}%** • "
             f"🎁 Daily: **+{active_perks['daily_bonus_percent']}%**\n"
-            f"🏦 Loan Base: **{active_perks['loan_base']:,}** • "
+            f"🏦 Loan Base: **{cfg.fmt_money(active_perks['loan_base'])}** • "
             f"Interest **{active_perks['loan_interest']}%** • "
             f"**{active_perks['loan_days']}d**\n"
             f"{active_perks['feature']}"
@@ -10062,7 +10062,7 @@ def build_rank_embed(guild: discord.Guild, member: discord.Member) -> discord.Em
                 f"Level **{next_perks['threshold']}** — **{next_perks['name']}**\n"
                 f"🛒 -{next_perks['shop_discount_percent']}% • "
                 f"🎁 +{next_perks['daily_bonus_percent']}% • "
-                f"🏦 {next_perks['loan_base']:,} / "
+                f"🏦 {cfg.fmt_money(next_perks['loan_base'])} / "
                 f"{next_perks['loan_interest']}% / {next_perks['loan_days']}d"
             ),
             inline=False,
@@ -10549,7 +10549,7 @@ def build_levelroadmap_embed() -> discord.Embed:
             f"**Lv.{lvl} — {p['name']}**\n"
             f"> 🛒 -{p['shop_discount_percent']}% Shop • "
             f"🎁 +{p['daily_bonus_percent']}% Daily • "
-            f"🏦 {p['loan_base']:,} / {p['loan_interest']}% / {p['loan_days']}d\n"
+            f"🏦 {cfg.fmt_money(p['loan_base'])} / {p['loan_interest']}% / {p['loan_days']}d\n"
             f"> {p['feature']}"
         )
     embed = discord.Embed(
@@ -11713,7 +11713,7 @@ def _owner_control_embed(guild: discord.Guild) -> discord.Embed:
         description=(
             "هاد الـPanel هي المركز الخاص بالـOwner. ما تحتاجش تكتب أوامر الإدارة فالشات.\n\n"
             "📊 **XP & Levels** — Settings / Adjust XP / Set Level / Audit / Sync Roles\n"
-            "💰 **Economy** — Give/Remove Coins / Member Account / Economy Stats / Bank Refresh\n"
+            "💵 **Economy** — Give/Remove USD / Member Account / Economy Stats / Bank Refresh\n"
             "⚙️ **Bot Settings** — Anti-Raid / Warns / Auto-Info / Features / XP Settings\n"
             "🖥️ **Refresh Panels** — Levels / Leaderboard / Games / Shop / Gambling / Bank\n"
             "🔊 **Voice Tools** — صاوب Room Mute Panel باختيار Voice Channel\n\n"
@@ -11722,9 +11722,9 @@ def _owner_control_embed(guild: discord.Guild) -> discord.Embed:
         color=discord.Color.dark_gold(),
         timestamp=datetime.now(),
     )
-    embed.add_field(name="🏛️ Treasury", value=f"**{treasury:,}**", inline=True)
-    embed.add_field(name="🎰 Jackpot", value=f"**{jackpot:,}**", inline=True)
-    embed.add_field(name="🎉 Events", value=f"**{events:,}**", inline=True)
+    embed.add_field(name="🏛️ Treasury", value=f"**{cfg.fmt_money(treasury)}**", inline=True)
+    embed.add_field(name="🎰 Jackpot", value=f"**{cfg.fmt_money(jackpot)}**", inline=True)
+    embed.add_field(name="🎉 Events", value=f"**{cfg.fmt_money(events)}**", inline=True)
     embed.set_footer(text="GGMW9 Owner Center • Persistent • No public admin commands needed")
     return embed
 
@@ -11764,14 +11764,11 @@ class OwnerXPAdjustModal(discord.ui.Modal, title="🛠️ تعديل XP"):
         if not (OWNER_ID and interaction.user.id == OWNER_ID):
             await interaction.response.send_message("❌ Owner فقط.", ephemeral=True)
             return
-        raw = str(self.amount.value).strip().replace(",", "").replace(" ", "")
-        try:
-            amount = int(raw)
-        except ValueError:
-            await interaction.response.send_message("❌ دخل رقم صحيح.", ephemeral=True)
-            return
-        if amount == 0:
-            await interaction.response.send_message("❌ المبلغ ما يكونش 0.", ephemeral=True)
+        amount = cfg.parse_money_input(self.amount.value, allow_negative=True)
+        if amount is None:
+            await interaction.response.send_message(
+                "❌ دخل مبلغ دولار صحيح، مثال `$100` أو `-50.50`.", ephemeral=True
+            )
             return
 
         result = await adjust_user_xp(self.member, interaction.guild, amount)
@@ -11883,7 +11880,7 @@ class OwnerCoinsAdjustModal(discord.ui.Modal, title="💰 تعديل الرصي�
         self.member = member
         self.amount = discord.ui.TextInput(
             label="+ باش تزيد / - باش تحيد",
-            placeholder="مثال: 1000 أو -500",
+            placeholder="مثال: $100 أو -$50.50",
             required=True,
             max_length=14,
         )
@@ -11918,9 +11915,9 @@ class OwnerCoinsAdjustModal(discord.ui.Modal, title="💰 تعديل الرصي�
             title="💰 Owner Balance Adjustment",
             description=(
                 f"**العضو:** {self.member.mention}\n"
-                f"**التغيير الفعلي:** {result['applied']:+,} {cfg.CURRENCY_EMOJI}\n"
-                f"**قبل:** {result['before']:,}\n"
-                f"**دابا:** **{result['after']:,}**"
+                f"**التغيير الفعلي:** {cfg.fmt_money(result['applied'], signed=True)}\n"
+                f"**قبل:** {cfg.fmt_money(result['before'])}\n"
+                f"**دابا:** **{cfg.fmt_money(result['after'])}**"
             ),
             color=color,
         )
@@ -11936,7 +11933,7 @@ class OwnerMemberSelect(discord.ui.UserSelect):
             "xp_adjust": "اختار العضو باش تبدل XP",
             "set_level": "اختار العضو باش تدير Set Level",
             "xp_audit": "اختار العضو باش تشوف XP Audit",
-            "coins": "اختار العضو باش تزيد/تحيد Coins",
+            "coins": "اختار العضو باش تزيد/تحيد USD",
             "economy_account": "اختار العضو باش تشوف حسابو",
         }
         super().__init__(
@@ -12064,7 +12061,7 @@ class OwnerEconomyView(OwnerOnlyView):
     def __init__(self):
         super().__init__(timeout=300)
 
-    @discord.ui.button(label="Give / Remove Coins", emoji="💰", style=discord.ButtonStyle.success)
+    @discord.ui.button(label="Give / Remove USD", emoji="💵", style=discord.ButtonStyle.success)
     async def coins(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.edit_message(
             content="👤 اختار العضو:",
@@ -12502,7 +12499,7 @@ class OwnerControlCenterView(OwnerOnlyView):
     async def economy(self, interaction: discord.Interaction, button: discord.ui.Button):
         embed = discord.Embed(
             title="💰 Owner — Economy",
-            description="Coins / Accounts / Bank / Economy Stats.",
+            description="USD / Accounts / Bank / Economy Stats.",
             color=discord.Color.gold(),
         )
         await interaction.response.send_message(embed=embed, view=OwnerEconomyView(), ephemeral=True)
@@ -12806,7 +12803,7 @@ async def on_ready():
 
 
 # ═══════════════════════════════════════════════════════
-# ║   🎮 Mini Games + 🪙 نظام الدراهم — تحميل الـ Cogs      ║
+# ║   🎮 Mini Games + 💵 نظام الدولار — تحميل الـ Cogs      ║
 # ═══════════════════════════════════════════════════════
 # الجسر (Bridge): كنعطيو للـ cogs الجداد الدوال اللي محتاجينها من هاد
 # الملف، بلا ما نديرو import متبادل (circular import). الـ cogs كيوصلو
