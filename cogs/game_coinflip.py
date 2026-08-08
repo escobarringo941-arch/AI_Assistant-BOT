@@ -240,7 +240,7 @@ async def run_flip(cog: Coinflip, interaction: discord.Interaction, user: discor
 
     if won:
         payout = int(bet * cfg.COINFLIP_PAYOUT_MULTIPLIER)
-        granted = eco.add_coins(guild_id, user_id, payout, source="coinflip")
+        granted = eco.add_coins(guild_id, user_id, payout, source="coinflip", respect_cap=False)
         s["wins"] += 1
         s["won"] += granted
         s["biggest_win"] = max(s["biggest_win"], granted)
@@ -249,8 +249,6 @@ async def run_flip(cog: Coinflip, interaction: discord.Interaction, user: discor
         color = discord.Color.green()
         title = "🎉 ربحتي!"
         desc_extra = f"\n💰 ربحتي **{granted:,}** {cfg.CURRENCY_EMOJI} (×{cfg.COINFLIP_PAYOUT_MULTIPLIER})"
-        if granted < payout:
-            desc_extra += f"\n⚠️ وصلتي قريب من السقف اليومي — كان خاصك تربح {payout:,}."
     else:
         s["losses"] += 1
         cog.db.save()
