@@ -1741,6 +1741,239 @@ class Economy(commands.Cog):
 
 
 
+class BankAmountModal(discord.ui.Modal):
+    def __init__(self, cog: "Economy", action: str):
+        title = "🏦 إيداع فالبنك" if action == "deposit" else "💸 سحب من البنك"
+        super().__init__(title=title)
+        self.cog = cog
+        self.action = action
+        self.amount = discord.ui.TextInput(
+            label="المبلغ",
+            placeholder="مثلا 500",
+            min_length=1,
+            max_length=12,
+            required=True,
+        )
+        self.add_item(self.amount)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        raw = str(self.amount.value).strip().replace(",", "").replace(" ", "")
+        if not raw.isdigit() or int(raw) <= 0:
+            await interaction.response.send_message("❌ دخل مبلغ صحيح أكبر من 0.", ephemeral=True)
+            return
+        amount = int(raw)
+        if self.action == "deposit":
+            ok, msg = await self.cog.bank_deposit(interaction.guild, interaction.user, amount)
+        else:
+            ok, msg = await self.cog.bank_withdraw(interaction.guild, interaction.user, amount)
+        await interaction.response.send_message(msg, ephemeral=True)
+
+
+
+class LoanRequestModal(discord.ui.Modal):
+    def __init__(self, cog: "Economy", guild_id: int, user_id: int):
+        terms = cog.get_loan_terms(guild_id, user_id)
+        limit = int(terms["effective_limit"])
+        super().__init__(title="💳 طلب قرض من GGMW9 Bank")
+        self.cog = cog
+        self.amount = discord.ui.TextInput(
+            label="شحال بغيتي تسلف؟",
+            placeholder=f"من {getattr(cfg, 'LOAN_MIN_AMOUNT', 100)} حتى {limit}",
+            min_length=1,
+            max_length=12,
+            required=True,
+        )
+        self.add_item(self.amount)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        raw = str(self.amount.value).strip().replace(",", "").replace(" ", "")
+        if not raw.isdigit() or int(raw) <= 0:
+            await interaction.response.send_message("❌ دخل مبلغ صحيح.", ephemeral=True)
+            return
+        ok, msg = await self.cog.request_loan(
+            interaction.guild, interaction.user, int(raw)
+        )
+        await interaction.response.send_message(msg, ephemeral=True)
+
+
+class LoanRepayModal(discord.ui.Modal):
+    def __init__(self, cog: "Economy", loan: dict):
+        super().__init__(title=f"💸 أداء Loan #{loan.get('id')}")
+        self.cog = cog
+        self.amount = discord.ui.TextInput(
+            label="شحال بغيتي تخلص دابا؟",
+            placeholder=f"الباقي {int(loan.get('remaining', 0))}",
+            min_length=1,
+            max_length=12,
+            required=True,
+        )
+        self.add_item(self.amount)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        raw = str(self.amount.value).strip().replace(",", "").replace(" ", "")
+        if not raw.isdigit() or int(raw) <= 0:
+            await interaction.response.send_message("❌ دخل مبلغ صحيح.", ephemeral=True)
+            return
+        ok, msg = await self.cog.repay_loan(
+            interaction.guild, interaction.user, int(raw)
+        )
+        await interaction.response.send_message(msg, ephemeral=True)
+
+
+class EconomyBankPanelView(discord.ui.View):
+    """Central Bank Panel دائم — كاع الوظائف هنا Buttons/Modals، بلا حتى Slash جديد."""
+
+    def __init__(self, cog: "Economy"):
+        super().__init__(timeout=None)
+        self.cog = cog
+
+    @discord.ui.button(
+        label="💳 حسابي", style=discord.ButtonStyle.primary,
+        custom_id="ggmw9:economy:account", row=0
+    )
+    async def account_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(
+            embed=self.cog.build_user_account_embed(interaction.guild, interaction.user),
+            ephemeral=True,
+        )
+
+    @discord.ui.button(
+        label="🏦 إيداع", style=discord.ButtonStyle.success,
+        custom_id="ggmw9:economy:deposit", row=0
+    )
+    async def deposit_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(BankAmountModal(self.cog, "deposit"))
+
+    @discord.ui.button(
+        label="💸 سحب", style=discord.ButtonStyle.secondary,
+        custom_id="ggmw9:economy:withdraw", row=0
+    )
+    async def withdraw_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(BankAmountModal(self.cog, "withdraw"))
+
+    @discord.ui.button(
+        label="🏛️ الخزينة", style=discord.ButtonStyle.secondary,
+        custom_id="ggmw9:economy:treasury", row=0
+    )
+    async def treasury_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        sys = self.cog._system(interaction.guild.id)
+        embed = discord.Embed(
+            title="🏛️ خزينة السيرفر",
+            description=(
+                f"🏛️ **Treasury:** {sys['treasury']:,} {cfg.CURRENCY_EMOJI}\n"
+                f"🎉 **Events Fund:** {sys['events']:,} {cfg.CURRENCY_EMOJI}\n"
+                f"🔥 **Burned من البداية:** {sys['burned']:,} {cfg.CURRENCY_EMOJI}\n\n"
+                "الخزينة وصندوق Events فلوس حقيقية خارجة من الاقتصاد ديال اللاعبين؛ "
+                "الـBurn هو اللي كيتحيد نهائياً ضد التضخم."
+            ),
+            color=discord.Color.gold(),
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @discord.ui.button(
+        label="🎰 Jackpot", style=discord.ButtonStyle.danger,
+        custom_id="ggmw9:economy:jackpot", row=1
+    )
+    async def jackpot_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        sys = self.cog._system(interaction.guild.id)
+        embed = discord.Embed(
+            title="🎰 Global Jackpot",
+            description=(
+                f"# **{sys['jackpot']:,}** {cfg.CURRENCY_EMOJI}\n\n"
+                "كيكبر من جزء من الرهانات اللي **تخسرو فعلاً**.\n"
+                "🏆 كيتصرف كامل تلقائياً ملي يجي Jackpot حقيقي فـ:\n"
+                "• 🎰 Slots — `7️⃣ | 7️⃣ | 7️⃣`\n"
+                "• 🎫 Scratch — رمز `💰` الفائز\n"
+                "• 🎟️ Lottery — تطابق كامل"
+            ),
+            color=discord.Color.gold(),
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @discord.ui.button(
+        label="📊 الاقتصاد", style=discord.ButtonStyle.primary,
+        custom_id="ggmw9:economy:stats", row=1
+    )
+    async def stats_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(
+            embed=self.cog.build_global_economy_embed(interaction.guild),
+            ephemeral=True,
+        )
+
+    @discord.ui.button(
+        label="🧾 معاملاتي", style=discord.ButtonStyle.secondary,
+        custom_id="ggmw9:economy:transactions", row=1
+    )
+    async def transactions_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(
+            embed=self.cog.build_user_transactions_embed(interaction.guild, interaction.user),
+            ephemeral=True,
+        )
+
+
+    @discord.ui.button(
+        label="💳 طلب قرض", style=discord.ButtonStyle.success,
+        custom_id="ggmw9:economy:loan_request", row=1
+    )
+    async def loan_request_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        loan = self.cog.get_active_loan(interaction.guild.id, interaction.user.id)
+        if loan:
+            state = "⚠️ متأخر" if self.cog._loan_is_overdue(loan) else "🟢 خدام"
+            await interaction.response.send_message(
+                (
+                    f"💳 عندك Loan **#{loan.get('id')}** {state}.\\n"
+                    f"الباقي: **{int(loan.get('remaining', 0)):,}** {cfg.CURRENCY_EMOJI}\\n"
+                    f"الأجل: <t:{self.cog._loan_due_unix(loan)}:F> "
+                    f"(<t:{self.cog._loan_due_unix(loan)}:R>)\\n"
+                    "خاصك تساليه قبل قرض جديد."
+                ),
+                ephemeral=True,
+            )
+            return
+        terms = self.cog.get_loan_terms(interaction.guild.id, interaction.user.id)
+        min_amount = int(getattr(cfg, "LOAN_MIN_AMOUNT", 100) or 100)
+        if int(terms["effective_limit"]) < min_amount:
+            await interaction.response.send_message(
+                (
+                    f"❌ الحد ديالك ماكافيش لقرض دابا.\n"
+                    f"⭐ Level **{terms['level']}** — {terms['tier_name']}\n"
+                    f"💳 Credit **{terms['credit_score']}/100**\n"
+                    f"🏛️ الحد الفعلي: **{terms['effective_limit']:,}** {cfg.CURRENCY_EMOJI}\n\n"
+                    "ضغط **⭐ امتيازات XP** باش تشوف الطريق للـTier الجاي."
+                ),
+                ephemeral=True,
+            )
+            return
+        await interaction.response.send_modal(
+            LoanRequestModal(self.cog, interaction.guild.id, interaction.user.id)
+        )
+
+    @discord.ui.button(
+        label="💸 خلص القرض", style=discord.ButtonStyle.primary,
+        custom_id="ggmw9:economy:loan_repay", row=1
+    )
+    async def loan_repay_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        loan = self.cog.get_active_loan(interaction.guild.id, interaction.user.id)
+        if not loan:
+            await interaction.response.send_message(
+                "ℹ️ ماعندك حتى قرض خدام دابا.", ephemeral=True
+            )
+            return
+        await interaction.response.send_modal(LoanRepayModal(self.cog, loan))
+
+
+    @discord.ui.button(
+        label="⭐ امتيازات XP", style=discord.ButtonStyle.secondary,
+        custom_id="ggmw9:economy:xp_perks", row=2
+    )
+    async def xp_perks_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(
+            embed=self.cog.build_xp_bank_perks_embed(interaction.guild, interaction.user),
+            ephemeral=True,
+        )
+
+
+
 class ShopView(discord.ui.View):
     def __init__(self, cog: "Economy", user: discord.abc.User):
         super().__init__(timeout=180)
