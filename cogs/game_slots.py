@@ -73,9 +73,7 @@ class Slots(commands.Cog):
 
     # ═══════════════════════════════════════════════════
 
-    @commands.hybrid_command(name="slots", aliases=["سلوتس"],
-                             description="راهن ودور العجلة 🎰")
-    @app_commands.describe(bet="شحال بغيتي تراهن")
+    @commands.command(name="slots", aliases=["سلوتس"], hidden=True)
     @commands.cooldown(1, cfg.COOLDOWN_SLOTS, commands.BucketType.user)
     async def slots_cmd(self, ctx: commands.Context, bet: int):
         eco = self.economy()
