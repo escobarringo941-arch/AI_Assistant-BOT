@@ -247,18 +247,27 @@ class ShopPanelView(discord.ui.View):
         from cogs.economy import ShopView
 
         balance = eco.get_balance(interaction.guild.id, interaction.user.id)
+        discount = eco.get_shop_discount_percent(interaction.guild.id, interaction.user.id)
         embed = discord.Embed(
             title="🛒 المتجر",
-            description=f"الرصيد ديالك: **{balance:,}** {cfg.CURRENCY_EMOJI}",
+            description=(
+                f"الرصيد ديالك: **{balance:,}** {cfg.CURRENCY_EMOJI}"
+                + (f"\n⭐ Level Discount: **-{discount}%**" if discount else "")
+            ),
             color=discord.Color.blurple(),
         )
 
         for item in cfg.SHOP_ITEMS:
             if item["type"] == "temp_role" and not item.get("role_id"):
                 continue
-            ok = "✅" if balance >= item["price"] else "❌"
+            price = eco.get_shop_price(interaction.guild.id, interaction.user.id, item["price"])
+            ok = "✅" if balance >= price else "❌"
+            price_text = (
+                f"~~{item['price']:,}~~ → **{price:,}**"
+                if price != item["price"] else f"**{price:,}**"
+            )
             embed.add_field(
-                name=f"{item['emoji']} {item['name']} — {item['price']:,} 🪙 {ok}",
+                name=f"{item['emoji']} {item['name']} — {price_text} {cfg.CURRENCY_EMOJI} {ok}",
                 value=item["description"],
                 inline=False,
             )
