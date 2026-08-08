@@ -161,9 +161,32 @@ class RiskView(discord.ui.View):
         self.bet = bet
 
         for key_name, lvl in DICE_RISK_LEVELS.items():
-            btn = discord.ui.Button(label=lvl["label"], style=discord.ButtonStyle.primary)
+            btn = discord.ui.Button(
+                label=lvl["label"], style=discord.ButtonStyle.primary, row=0
+            )
             btn.callback = self._make_callback(key_name)
             self.add_item(btn)
+
+        change_bet = discord.ui.Button(
+            label="💰 زيد/نقص الرهان",
+            style=discord.ButtonStyle.secondary,
+            row=1,
+        )
+        change_bet.callback = self._change_bet
+        self.add_item(change_bet)
+
+        # نفس Dropdown ديال Session: يقدر يبدل اللعبة حتى قبل ما يرمي.
+        from cogs.gambling_panel import GameSwitchSelect
+        self.add_item(GameSwitchSelect(self.cog.bot, self.user, row=2))
+
+    async def _change_bet(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message("❌ ماشي ديالك.", ephemeral=True)
+            return
+        from cogs.gambling_panel import GameBetModal
+        await interaction.response.send_modal(
+            GameBetModal(self.cog.bot, self.user, "dice", current_bet=self.bet)
+        )
 
     def _make_callback(self, risk_key: str):
         async def callback(interaction: discord.Interaction):
@@ -208,8 +231,13 @@ async def run_roll(cog: Dice, interaction: discord.Interaction, user: discord.ab
         description=f"{lvl['label']} — الرهان: **{bet:,}** {cfg.CURRENCY_EMOJI}",
         color=discord.Color.blurple(),
     )
-    msg = await interaction.followup.send(embed=roll_embed, ephemeral=True, wait=True)
+    # نفس رسالة الـSession، بلا follow-up جديد.
+    msg = await interaction.original_response()
     roll_embed.add_field(name="النتيجة", value=DICE_ROLL_FRAMES[0], inline=False)
+    try:
+        await msg.edit(content=None, embed=roll_embed, view=None)
+    except discord.HTTPException:
+        pass
     for frame in DICE_ROLL_FRAMES:
         roll_embed.set_field_at(0, name="النتيجة", value=frame, inline=False)
         try:
@@ -257,7 +285,12 @@ async def run_roll(cog: Dice, interaction: discord.Interaction, user: discord.ab
     )
     cog.active.discard((guild_id, user_id))
 
-    await msg.edit(embed=final_embed, view=ReplayView(cog, user, bet))
+    from cogs.gambling_panel import GamblingRoundControls
+    await msg.edit(
+        content=None,
+        embed=final_embed,
+        view=GamblingRoundControls(cog.bot, user, "dice", bet),
+    )
 
 
 class ReplayView(discord.ui.View):
