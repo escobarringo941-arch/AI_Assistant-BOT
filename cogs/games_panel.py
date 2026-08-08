@@ -303,22 +303,76 @@ class LeaderboardSelect(discord.ui.Select):
             custom_id="ggmw9:leaderboard_panel:select",
         )
 
+    def _result_key(self, interaction: discord.Interaction):
+        """مفتاح فريد لكل عضو + نفس رسالة البانل.
+
+        هكذا كل عضو عندو غير نتيجة ephemeral وحدة مرتبطة بهاد البانل،
+        وكل اختيار جديد كيبدل نفس الرسالة بدل ما يزيد رسالة أخرى تحتها.
+        """
+        guild_id = interaction.guild.id if interaction.guild else 0
+        panel_message_id = interaction.message.id if interaction.message else 0
+        return (guild_id, panel_message_id, interaction.user.id)
+
+    async def _show_result(
+        self,
+        interaction: discord.Interaction,
+        *,
+        embed: discord.Embed = None,
+        content: str = None,
+    ):
+        # نخزنو آخر رسالة ephemeral لكل عضو على نفس البانل.
+        # التخزين فالـ bot كيخليه مشترك حتى إلا كان عندنا أكثر من instance ديال الـ View.
+        if not hasattr(self.bot, "_leaderboard_ephemeral_results"):
+            self.bot._leaderboard_ephemeral_results = {}
+
+        results = self.bot._leaderboard_ephemeral_results
+        key = self._result_key(interaction)
+        previous = results.get(key)
+
+        # خاصنا نجاوبو الـ interaction الحالية حتى إلا غادي نعدل رسالة قديمة.
+        await interaction.response.defer(ephemeral=True)
+
+        if previous is not None:
+            try:
+                await previous.edit(content=content, embed=embed)
+                return
+            except (discord.NotFound, discord.HTTPException):
+                # ممكن token ديال الرسالة القديمة سالا أو الرسالة تحيدات.
+                # فهاد الحالة نصاوبو نتيجة جديدة ونوليو نتبعوها.
+                results.pop(key, None)
+
+        try:
+            msg = await interaction.followup.send(
+                content=content,
+                embed=embed,
+                ephemeral=True,
+                wait=True,
+            )
+            results[key] = msg
+        except discord.HTTPException:
+            # fallback نادر: إلا Discord رفض يرجع WebhookMessage مع wait=True.
+            await interaction.followup.send(
+                content=content,
+                embed=embed,
+                ephemeral=True,
+            )
+
     async def callback(self, interaction: discord.Interaction):
         choice = self.values[0]
         lb = next((x for x in LEADERBOARDS if x["id"] == choice), None)
         if not lb:
-            await interaction.response.send_message("❌ ماكايناش هاد اللوحة.", ephemeral=True)
+            await self._show_result(interaction, content="❌ ماكايناش هاد اللوحة.")
             return
 
         cog = self.bot.get_cog(lb["cog"])
         if not cog or not hasattr(cog, lb["method"]):
-            await interaction.response.send_message(
-                "❌ هاد اللعبة ماشي متوفرة دابا.", ephemeral=True
+            await self._show_result(
+                interaction, content="❌ هاد اللعبة ماشي متوفرة دابا."
             )
             return
 
         embed = getattr(cog, lb["method"])(interaction.guild)
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await self._show_result(interaction, embed=embed)
 
 
 class LeaderboardPanelView(discord.ui.View):
