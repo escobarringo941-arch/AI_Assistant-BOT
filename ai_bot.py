@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 from discord.ext import commands, tasks
 from discord import app_commands
 from collections import defaultdict
+import games_config as cfg
 import sys as _sys, os as _os
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
 
@@ -275,14 +276,16 @@ XP_MAX_PER_MESSAGE = 25
 XP_COOLDOWN_SECONDS = 60   # ماخذيش XP مرة أخرى من نفس العضو قبل ما تعدي هاد المدة
 LEVEL_UP_CHANNEL_ID = 1532872432778743978    # ← channel فين كيتبعث "مبروك وصلتي لـ Level X" (0 = نفس channel لي هضر فيه العضو)
 LEVELS_INFO_CHANNEL_ID = 1532613980466446387  # ← channel فين غادي تبان رسالة شرح نظام الـ Leveling + لائحة كاع المستويات ورولاتهم
+OWNER_CONTROL_CHANNEL_ID = 1535635483302821938  # 🔐 Owner Control Center — Owner بوحدو
 
 # ═══════ Leaderboard أوتوماتيكي (كيتحدث بروحو فـ channel معين) ═══════
 LEADERBOARD_CHANNEL_ID = 1532613980466446387   # ← channel فين غادي تتبعث/تتحدث لائحة الشرف أوتوماتيكياً
 LEADERBOARD_UPDATE_MINUTES = 15                 # ← كل شحال ديال الدقايق كيتحدث
 
 # رولات أوتوماتيكية عند مستويات معينة: {level: role_id}
-# العضو كيحتفظ بكل الرولات السابقة (تراكمية، ماشي بديل)
-# ⚠️ بدل كل 0 برقم الـ Role ID الحقيقي ديالك (Server Settings → Roles → كليك يمين → Copy Role ID)
+# ✅ العضو عندو غير Role وحدة من LEVEL_ROLES: أعلى threshold وصل ليها.
+# مثال: Level 10 → Role 10، منين يوصل Level 15 كتتحيد Role 10 وكتتعطى Role 15.
+# البوت كيدير Self-Healing حتى بعد Restart باش يصلح أي رول ناقصة/قديمة.
 LEVEL_ROLES = {
     5: 1532874771287507135,
     10: 1532877605366268116,
@@ -294,30 +297,90 @@ LEVEL_ROLES = {
     40: 1532878137430380674,
     45: 1532878260428341390,
     50: 1532878348752261331,
-    60: 1532878501278126251,
-    70: 1532878632371097881,
+    60: 1532878501278125251,
+    70: 1532878632371138181,
     80: 1532878710745596064,
     90: 1532878803075076106,
     100: 1532878888986738869,
 }
 
-# ═══════ صلاحيات Discord حقيقية كتنحط مباشرة فرولات LEVEL_ROLES فوق (تراكمية:
-# كل مستوى كيرث الصلاحيات ديال اللي قبلو + كيزيد شي حاجة جديدة). كتطبق أوتوماتيكياً
-# على الرول ديال أعلى مستوى وصل ليه العضو (نفس الرول اللي كيعطيه sync_level_roles). ═══════
+# ═══════ Discord permissions آمنة فقط ═══════
+# ما كنعطيوش View Audit Log / Manage Threads / Manage Events / Manage Emojis...
+# حيت هادو صلاحيات إدارة وقد يخربقو السيرفر. الرولات العليا كتستافد أكثر من
+# Economy/Bank/Shop/Daily + الميزات الاجتماعية، ماشي من صلاحيات Moderation.
 LEVEL_PERK_ADDITIONS = {
-    5:   discord.Permissions(use_external_emojis=True, use_external_stickers=True),
-    10:  discord.Permissions(priority_speaker=True, use_soundboard=True),
-    15:  discord.Permissions(use_external_sounds=True, send_voice_messages=True),
-    20:  discord.Permissions(create_public_threads=True, create_private_threads=True,
-                              send_messages_in_threads=True),
-    25:  discord.Permissions(embed_links=True, attach_files=True, use_embedded_activities=True),
-    30:  discord.Permissions(request_to_speak=True),
-    40:  discord.Permissions(manage_events=True),
-    50:  discord.Permissions(stream=True),
-    60:  discord.Permissions(view_audit_log=True),
-    70:  discord.Permissions(manage_threads=True),
-    100: discord.Permissions(manage_emojis_and_stickers=True),
+    5:  discord.Permissions(use_external_emojis=True, use_external_stickers=True),
+    10: discord.Permissions(use_soundboard=True),
+    15: discord.Permissions(use_external_sounds=True, send_voice_messages=True),
+    20: discord.Permissions(embed_links=True, attach_files=True),
+    25: discord.Permissions(create_public_threads=True, send_messages_in_threads=True),
+    30: discord.Permissions(use_embedded_activities=True),
+    35: discord.Permissions(stream=True),
+    40: discord.Permissions(create_private_threads=True),
+    45: discord.Permissions(request_to_speak=True),
 }
+
+# ═══════ القيمة الحقيقية ديال كل Level Role ═══════
+# shop_discount_percent = تخفيض دائم فالمتجر.
+# daily_bonus_percent = بونيص فوق /daily، كيتخلص من Treasury باش ما نخلقوش تضخم.
+# loan_* = شروط البنك الأساسية قبل Credit Score وسيولة Treasury.
+LEVEL_ROLE_BENEFITS = {
+    5:   {"name": "🌱 Starter",     "shop_discount_percent": 1,  "daily_bonus_percent": 2,  "loan_base": 300,  "loan_interest": 15, "loan_days": 2, "feature": "😀 External Emojis + Stickers"},
+    10:  {"name": "🥉 Bronze I",    "shop_discount_percent": 2,  "daily_bonus_percent": 4,  "loan_base": 450,  "loan_interest": 14, "loan_days": 2, "feature": "🔊 Soundboard"},
+    15:  {"name": "🥉 Bronze II",   "shop_discount_percent": 3,  "daily_bonus_percent": 6,  "loan_base": 600,  "loan_interest": 13, "loan_days": 3, "feature": "🎙️ Voice Messages + External Sounds"},
+    20:  {"name": "🥈 Silver I",    "shop_discount_percent": 4,  "daily_bonus_percent": 8,  "loan_base": 800,  "loan_interest": 12, "loan_days": 3, "feature": "📎 Embeds/Attachments + Bio"},
+    25:  {"name": "🥈 Silver II",   "shop_discount_percent": 5,  "daily_bonus_percent": 10, "loan_base": 1000, "loan_interest": 11, "loan_days": 3, "feature": "🧵 Public Threads"},
+    30:  {"name": "💠 Sapphire I",  "shop_discount_percent": 6,  "daily_bonus_percent": 12, "loan_base": 1300, "loan_interest": 10, "loan_days": 3, "feature": "🎮 Discord Activities + XP Milestone Boost"},
+    35:  {"name": "💠 Sapphire II", "shop_discount_percent": 7,  "daily_bonus_percent": 14, "loan_base": 1600, "loan_interest": 10, "loan_days": 4, "feature": "📡 Go Live / Stream"},
+    40:  {"name": "🥇 Gold I",      "shop_discount_percent": 8,  "daily_bonus_percent": 16, "loan_base": 2000, "loan_interest": 9,  "loan_days": 4, "feature": "🔐 Private Threads + XP Milestone Boost"},
+    45:  {"name": "🥇 Gold II",     "shop_discount_percent": 9,  "daily_bonus_percent": 18, "loan_base": 2400, "loan_interest": 9,  "loan_days": 4, "feature": "🎤 Request to Speak + أقوى Economy Tier"},
+    50:  {"name": "💎 Platinum",    "shop_discount_percent": 10, "daily_bonus_percent": 20, "loan_base": 3000, "loan_interest": 8,  "loan_days": 5, "feature": "👑 Milestone Announcement + XP Boost"},
+    60:  {"name": "💎 Diamond",     "shop_discount_percent": 11, "daily_bonus_percent": 22, "loan_base": 3800, "loan_interest": 8,  "loan_days": 5, "feature": "🗳️ Create Poll + XP Boost"},
+    70:  {"name": "🌟 Elite",       "shop_discount_percent": 12, "daily_bonus_percent": 24, "loan_base": 4800, "loan_interest": 7,  "loan_days": 5, "feature": "🌟 Elite Badge + XP Boost"},
+    80:  {"name": "👑 Master",      "shop_discount_percent": 13, "daily_bonus_percent": 26, "loan_base": 6000, "loan_interest": 6,  "loan_days": 6, "feature": "💫 Master Economy Tier + XP Boost"},
+    90:  {"name": "🔱 Mythic",      "shop_discount_percent": 14, "daily_bonus_percent": 28, "loan_base": 7500, "loan_interest": 5,  "loan_days": 6, "feature": "🔱 Mythic Economy Tier + XP Boost"},
+    100: {"name": "🏆 Legend",      "shop_discount_percent": 15, "daily_bonus_percent": 30, "loan_base": 9500, "loan_interest": 4,  "loan_days": 7, "feature": "👑 Legend Personal Role + أفضل شروط البنك"},
+}
+
+
+def get_level_perks(level: int) -> dict:
+    """كترجع الامتيازات الحالية ديال أعلى LEVEL_ROLE threshold وصل ليها."""
+    level = max(0, int(level))
+    current = {
+        "threshold": 0,
+        "name": "👤 Member",
+        "shop_discount_percent": 0,
+        "daily_bonus_percent": 0,
+        "loan_base": 200,
+        "loan_interest": 16,
+        "loan_days": 2,
+        "feature": "طلع Level 5 باش تفتح أول امتيازات.",
+    }
+    for threshold, info in sorted(LEVEL_ROLE_BENEFITS.items()):
+        if level >= threshold:
+            current = {"threshold": threshold, **info}
+        else:
+            break
+    return dict(current)
+
+
+def get_next_level_perks(level: int) -> Optional[dict]:
+    level = max(0, int(level))
+    for threshold, info in sorted(LEVEL_ROLE_BENEFITS.items()):
+        if threshold > level:
+            return {"threshold": threshold, **info}
+    return None
+
+
+def format_level_perk_summary(level: int) -> str:
+    p = get_level_perks(level)
+    return (
+        f"{p['name']} • 🛒 **-{p['shop_discount_percent']}% Shop** • "
+        f"🎁 **+{p['daily_bonus_percent']}% Daily** • "
+        f"🏦 **{p['loan_base']:,} / {p['loan_interest']}% / {p['loan_days']}d** • "
+        f"{p['feature']}"
+    )
+
 
 
 def get_cumulative_level_permissions(level: int) -> discord.Permissions:
@@ -355,7 +418,7 @@ LEVEL_MILESTONES = {
     15: {"name": "🔥 نشيط بزاف", "color": 0xFF8C42, "hoist": False, "perk": None,
          "desc": "بادج 🔥"},
     20: {"name": "⭐ معروف", "color": 0xFFD700, "hoist": False, "perk": "bio",
-         "desc": "بادج + `/setbio` (بيو شخصي كيبان فـ `/rank`)"},
+         "desc": "بادج + 📝 Bio من Panel ديال #levels-info"},
     25: {"name": "💎 VIP صغير", "color": 0x00CFFF, "hoist": False, "perk": None,
          "desc": "بادج 💎"},
     30: {"name": "🎖️ متمرس", "color": 0xB388FF, "hoist": False, "perk": "xp_boost",
@@ -365,15 +428,15 @@ LEVEL_MILESTONES = {
     50: {"name": "👑 نص الطريق", "color": 0xFFC300, "hoist": True, "perk": "xp_boost+announce",
          "desc": "بادج + إعلان خاص فـ #general + بونيص XP"},
     60: {"name": "🛡️ Veteran", "color": 0x4CD9C0, "hoist": True, "perk": "poll+xp_boost",
-         "desc": "بادج + `/createpoll` + بونيص XP"},
+         "desc": "بادج + 🗳️ Create Poll من Panel ديال #levels-info + بونيص XP"},
     70: {"name": "🌟 نخبة", "color": 0xFF3F8E, "hoist": True, "perk": "xp_boost",
-         "desc": "بادج + بادج 🌟 كتبان فـ `/leaderboard` + بونيص XP"},
+         "desc": "بادج + 🌟 كيبان فالـLeaderboard Panel + بونيص XP"},
     80: {"name": "💫 أسطورة صاعدة", "color": 0x845EC2, "hoist": True, "perk": "xp_boost",
          "desc": "بادج + بونيص XP"},
     90: {"name": "🔱 قريب من القمة", "color": 0xD65DB1, "hoist": True, "perk": "xp_boost",
          "desc": "بادج + بونيص XP"},
     100: {"name": "👑 أسطورة السيرفر", "color": 0xFFD700, "hoist": True, "perk": "legend+announce",
-          "desc": "رول شخصي فريد قابل للتسمية (`/legendtitle`) + إعلان كبير فـ #general"},
+          "desc": "رول شخصي فريد قابل للتسمية من 👑 Legend Title فـ #levels-info + إعلان كبير"},
 }
 LEVEL_MILESTONE_XP_BOOST_PERCENT = 15     # ← نسبة البونيص المؤقت ديال XP (15 = +15%)
 LEVEL_MILESTONE_XP_BOOST_DAYS = 7         # ← شحال ديال الأيام كيدوم البونيص كل مرة كيتكسب
@@ -1005,6 +1068,37 @@ async def sync_level_roles(member: discord.Member, guild: discord.Guild, new_lev
     return roles_added, roles_removed
 
 
+async def sync_all_level_member_roles(guild: discord.Guild):
+    """Self-healing كامل:
+    - كل عضو عندو غير أعلى LEVEL_ROLE كتوافق Level الحقيقي ديالو.
+    - أي Role قديمة كتتحيد.
+    - أي Role ناقصة كتتعطى.
+    كيخدم بعد restart بلا ما نستناو العضو يكتب شي رسالة.
+    """
+    changed_members = 0
+    errors = 0
+    guild_levels = levels_db.get(str(guild.id), {})
+
+    for member in guild.members:
+        if member.bot:
+            continue
+        data = guild_levels.get(str(member.id), {"level": 0})
+        level = max(0, int(data.get("level", 0) or 0))
+        before_ids = {r.id for r in member.roles if r.id in set(LEVEL_ROLES.values())}
+        try:
+            added, removed = await sync_level_roles(member, guild, level)
+            if added or removed:
+                changed_members += 1
+        except Exception as e:
+            errors += 1
+            print(f"[LEVEL ROLE SYNC] خطأ مع {member} ({member.id}): {e}")
+
+    print(
+        f"[LEVEL ROLE SYNC] ✅ {guild.name}: تصلحو {changed_members} عضو"
+        + (f" | أخطاء: {errors}" if errors else "")
+    )
+
+
 # ═══════════════════════════════════════════════════════
 # ║   طبقة تخزين وإدارة رولات الـ Milestones (أوتوماتيكية) ║
 # ═══════════════════════════════════════════════════════
@@ -1146,13 +1240,13 @@ async def apply_level_milestones(member: discord.Member, guild: discord.Guild,
             line += f" — 🚀 بونيص +{LEVEL_MILESTONE_XP_BOOST_PERCENT}% XP لمدة {LEVEL_MILESTONE_XP_BOOST_DAYS} أيام"
 
         if "poll" in perk:
-            line += " — 🗳️ `/createpoll` متاح ليك دابا"
+            line += " — 🗳️ Create Poll تفتح ليك فـ #levels-info"
 
         if "bio" in perk:
-            line += " — 📝 `/setbio` متاح ليك دابا"
+            line += " — 📝 Bio تفتحات ليك فـ #levels-info"
 
         if "legend" in perk:
-            line += " — 👑 رول شخصي فريد! سميه بـ `/legendtitle`"
+            line += " — 👑 رول شخصي فريد! سميه من Legend Title فـ #levels-info"
 
         perk_lines.append(line)
 
@@ -1218,6 +1312,14 @@ async def grant_xp_and_announce(member: discord.Member, guild: discord.Guild, am
 
     save_levels()
 
+    # Self-healing صغير فكل XP event: إلا الرول تحيدات بالغلط، كترد مباشرة.
+    new_level = data["level"]
+    roles_added = []
+    try:
+        roles_added, _ = await sync_level_roles(member, guild, new_level)
+    except Exception as e:
+        print(f"[LEVEL ROLE SYNC] خطأ فـ grant_xp مع {member}: {e}")
+
     channel_id = getattr(fallback_channel, "id", None) if fallback_channel else None
     log_xp_event(guild.id, member.id, source, amount, channel_id=channel_id,
                  new_total_level=data["level"])
@@ -1228,9 +1330,6 @@ async def grant_xp_and_announce(member: discord.Member, guild: discord.Guild, am
 
     if not leveled_up:
         return
-
-    new_level = data["level"]
-    roles_added, _ = await sync_level_roles(member, guild, new_level)
 
     # ═══ Milestones (10 → 100) — أوتوماتيكي بالكامل ═══
     crossed_levels = [lvl for lvl in LEVEL_MILESTONES if prev_level < lvl <= new_level]
@@ -6847,11 +6946,7 @@ class RoomMuteToggleView(discord.ui.View):
             )
 
 
-@bot.hybrid_command(
-    name="roommutepanel",
-    description="صاوب بانل كامل: كتم الكل بلا استثناء / فك الكل / كتم-فك شخص معين، فروم صوتي معين (Owner فقط)"
-)
-@app_commands.default_permissions(administrator=True)
+@bot.command(name="roommutepanel", hidden=True)
 async def roommutepanel_cmd(ctx, channel: Optional[discord.VoiceChannel] = None):
     target_channel = channel
     if not target_channel:
@@ -7178,54 +7273,104 @@ async def voice_xp_loop_error(error):
 
 
 async def setup_levels_info_message(guild: discord.Guild):
-    """كتصاوب رسالة تشرح نظام الـ Leveling كامل + لائحة كاع المستويات
-    ورولاتهم، فـ LEVELS_INFO_CHANNEL_ID."""
+    """رسالة عامة كتشرح XP + الرولات + الفوائد. كتتعدل نفس الرسالة بعد كل deploy."""
     if not LEVELS_INFO_CHANNEL_ID:
         return
     channel = bot.get_channel(LEVELS_INFO_CHANNEL_ID)
     if not channel:
         return
-    async for message in channel.history(limit=10):
-        if message.author == bot.user and message.embeds and message.embeds[0].title and "نظام المستويات" in message.embeds[0].title:
-            return
+
+    existing = None
+    try:
+        async for message in channel.history(limit=20):
+            if (
+                message.author == bot.user
+                and message.embeds
+                and message.embeds[0].title
+                and "نظام المستويات" in message.embeds[0].title
+            ):
+                existing = message
+                break
+    except discord.Forbidden:
+        return
 
     embed = discord.Embed(
-        title="📊 نظام المستويات (Leveling System)",
+        title="📊 نظام المستويات — XP عندو قيمة حقيقية",
         description=(
-            f"💬 **الشات:** كل ما تهضر، كتربح **XP** ({xp_settings['chat_min']}-{xp_settings['chat_max']} نقطة فكل رسالة)، "
-            f"مع فترة انتظار {xp_settings['chat_cooldown']} ثانية بين كل رسالة وأخرى (باش محدش يقدر يسبام باش يربح نقط).\n\n"
-            f"🎙️ **الفويس:** كتربح **{xp_settings['voice_per_interval']} XP** كل {xp_settings['voice_interval_minutes']} دقايق "
-            f"(خاص يكونو على الأقل {xp_settings['voice_min_humans']} ديال البشر فنفس الروم).\n\n"
-            f"📡 **اللايفستريم:** ملي تدير Go Live، كتربح **{xp_settings['stream_per_interval']} XP** كل {xp_settings['voice_interval_minutes']} دقايق — أكثر من الفويس العادي حيت المجهود أكبر.\n\n"
-            f"💤 **الـ AFK:** حتى إلا سديتي المايك ولا درتي Deafen، باقي كتربح XP ولكن أقل:\n"
-            f"• مريح فالروم ديال **AFK** → **{xp_settings['afk_channel_per_interval']} XP** كل {xp_settings['voice_interval_minutes']} دقايق\n"
-            f"• مايك مسدود فروم عادية → **{xp_settings['afk_muted_per_interval']} XP** كل {xp_settings['voice_interval_minutes']} دقايق\n"
-            f"(علاش الروم ديال AFK كتعطي أكثر؟ باش الرومات النشيطة يبقاو خاوية للي باغي يهضر 😉)\n\n"
-            f"كل ما تجمع XP كفاية، كتطلع **Level** جديد. من **Level 30** لفوق، كل مستوى كيصعب أكثر بشكل ملحوظ — "
-            f"يعني الوصول لمستويات عالية كيستاهل جهد حقيقي! 💪\n\n"
-            f"**الأوامر:**\n"
-            f"`/rank [@user]` — شوف المستوى والـ XP ديالك ولا ديال عضو آخر\n"
-            f"`/leaderboard` — أفضل 10 أعضاء نشيطين فالسيرفر"
+            f"💬 **الشات:** {xp_settings['chat_min']}-{xp_settings['chat_max']} XP لكل رسالة مؤهلة، "
+            f"Cooldown **{xp_settings['chat_cooldown']}ث**.\n"
+            f"🎙️ **الفويس:** **{xp_settings['voice_per_interval']} XP** كل "
+            f"{xp_settings['voice_interval_minutes']} دقايق.\n"
+            f"📡 **Go Live:** **{xp_settings['stream_per_interval']} XP** كل "
+            f"{xp_settings['voice_interval_minutes']} دقايق.\n\n"
+            "## 🔄 كيفاش كتخدم Level Role؟\n"
+            "**عندك غير Role وحدة ديال Level.** مثال: وصلتي Level 10 → كتجيك Role 10. "
+            "منين توصل Level 15 → البوت كيحيد Role 10 وكيعطي Role 15 أوتوماتيكياً. "
+            "حتى بعد Restart كيدير Self-Healing للرولات.\n\n"
+            "## 🎁 علاش نطلع XP؟\n"
+            "كل Role جديدة كتفتح **Shop Discount أكبر، Daily Bonus أكبر، قرض أقوى بفائدة أقل "
+            "ومدة أطول**، ومع Levels معينة كتفتح Discord/Social perks آمنة.\n\n"
+            "## 🖱️ ما تحتاج تكتب حتى Command\n"
+            "استعمل الـPanel اللي تحت: **Rank ديالك، Rank ديال أي عضو، Leaderboard، Roadmap، Bio، Poll وLegend Title**. "
+            "المعلومات الشخصية كتبان غير ليك باش الشانيل يبقى نقي."
         ),
         color=discord.Color.gold(),
-        timestamp=datetime.now()
+        timestamp=datetime.now(),
     )
 
-    if LEVEL_ROLES:
-        sorted_levels = sorted(LEVEL_ROLES.items(), key=lambda x: int(x[0]))
-        lines = []
-        for lvl, role_id in sorted_levels:
-            role = guild.get_role(role_id) if role_id else None
-            role_display = role.mention if role else "⚠️ الرول ماعادش معطي بعد"
-            lines.append(f"**Level {lvl}** → {role_display}")
-        embed.add_field(name="🎁 الرولات حسب المستوى (تراكمية)", value="\n".join(lines), inline=False)
+    lines = []
+    for lvl, role_id in sorted(LEVEL_ROLES.items()):
+        role = guild.get_role(role_id) if role_id else None
+        role_display = role.mention if role else f"`Level {lvl}`"
+        p = LEVEL_ROLE_BENEFITS.get(lvl, {})
+        lines.append(
+            f"{role_display} **Lv {lvl} — {p.get('name', '')}**\n"
+            f"> 🛒 -{p.get('shop_discount_percent', 0)}% • "
+            f"🎁 Daily +{p.get('daily_bonus_percent', 0)}% • "
+            f"🏦 {int(p.get('loan_base', 0)):,} / {p.get('loan_interest', 0)}% / {p.get('loan_days', 0)}d\n"
+            f"> {p.get('feature', '—')}"
+        )
 
-    embed.set_footer(text=f"{SERVER_NAME} | Leveling System")
-    await channel.send(embed=embed)
+    # Discord embed field عندو limit؛ نقسم roadmap لعدة fields.
+    chunks, current = [], []
+    current_len = 0
+    for line in lines:
+        if current and current_len + len(line) + 2 > 980:
+            chunks.append(current)
+            current, current_len = [], 0
+        current.append(line)
+        current_len += len(line) + 2
+    if current:
+        chunks.append(current)
+
+    for idx, chunk in enumerate(chunks, 1):
+        embed.add_field(
+            name="🪜 Roadmap ديال Level Roles" if idx == 1 else "🪜 Roadmap (تكملة)",
+            value="\n\n".join(chunk),
+            inline=False,
+        )
+
+    embed.add_field(
+        name="🛡️ ملاحظة على الصلاحيات",
+        value=(
+            "Level Roles **ما كتعطيش صلاحيات إدارة خطيرة**. "
+            "ماكاين لا View Audit Log لا Manage Threads لا Manage Events لا Manage Emojis. "
+            "القيمة كتجي من امتيازات آمنة واقتصادية."
+        ),
+        inline=False,
+    )
+    embed.set_footer(text=f"{SERVER_NAME} | Role وحدة ديال Level • طلع XP وفتح مزايا أقوى")
+
+    try:
+        if existing:
+            await existing.edit(embed=embed, view=LevelsInfoView())
+        else:
+            await channel.send(embed=embed, view=LevelsInfoView())
+    except (discord.Forbidden, discord.HTTPException) as e:
+        print(f"[LEVEL INFO] ما قدرتش نحدّث الرسالة: {e}")
 
 
-@bot.hybrid_command(name="setuplevels")
-@app_commands.default_permissions(administrator=True)
+@bot.command(name="setuplevels", hidden=True)
 @owner_only()
 async def setuplevels_cmd(ctx):
     """كيصاوب/يعاود يصاوب رسالة شرح نظام الـ Leveling فـ LEVELS_INFO_CHANNEL_ID (Admin)"""
@@ -7731,11 +7876,18 @@ async def on_member_join(member):
         discord.Color.orange()
     )
 
+    # إذا كان عضو قديم ورجع، XP القديمة ديالو باقية:
+    # Leaderboard كتعاود ترتبو فوراً حسب XP ديالو.
+    try:
+        await refresh_xp_leaderboard_now()
+    except Exception as e:
+        print(f"[LEADERBOARD] refresh بعد رجوع عضو فشل: {e}")
+
 
 @bot.event
 async def on_member_remove(member):
-    # كنسجلو الرولات ديالو قبل ما يخرج (كيك، بان، ولا خرج بنفسو) باش
-    # يقدر يرجع ليهم تلقائياً ملي يرجع للسيرفر.
+    # كنسجلو الرولات ديالو قبل ما يخرج (كيك، بان، ولا خرج بنفسو).
+    # XP ما كنمسحوهاش: كتبقى محفوظة إلا رجع من بعد.
     remember_member_roles(member)
     await log_action(
         member.guild,
@@ -7744,6 +7896,12 @@ async def on_member_remove(member):
         f"**ID:** `{member.id}`",
         discord.Color.greyple()
     )
+
+    # خرج من السيرفر → يتحيد فوراً من Top ويتحركو اللي تحتو لفوق.
+    try:
+        await refresh_xp_leaderboard_now()
+    except Exception as e:
+        print(f"[LEADERBOARD] refresh بعد خروج عضو فشل: {e}")
 
 
 translated_messages_cache = {}  # {(message_id, lang_en): النص المترجم} — كيفادي إعادة الترجمة إلا رد بزاف ناس بنفس العلم
@@ -8859,8 +9017,7 @@ class XPPanelView(discord.ui.View):
         await interaction.response.edit_message(embed=_xp_panel_embed(), view=self)
 
 
-@bot.hybrid_command(name="xppanel", description="لوحة تحكم تفاعلية ديال إعدادات XP (Owner)")
-@app_commands.default_permissions(administrator=True)
+@bot.command(name="xppanel", hidden=True)
 @owner_only()
 async def xppanel_cmd(ctx):
     """لوحة تحكم تفاعلية باش تبدل شحال ديال XP كياخدو الأعضاء من الشات، الفويس، اللايفستريم، وصعوبة المستويات — Admin"""
@@ -8908,12 +9065,7 @@ async def adjust_user_xp(member: discord.Member, guild: discord.Guild, amount: i
     }
 
 
-@bot.hybrid_command(name="xpadjust")
-@app_commands.describe(
-    member="العضو اللي بغيتي تبدل ليه XP",
-    amount="شحال (رقم موجب باش تزيد، سالب باش تنقص — مثلا -500)",
-    reason="السبب (اختياري)"
-)
+@bot.command(name="xpadjust", hidden=True)
 async def xpadjust_cmd(ctx, member: discord.Member, amount: int, *, reason: str = "بلا سبب محدد"):
     """زيد ولا نقص XP لعضو معين مباشرة، والمستوى كيتبدل أوتوماتيكياً حسب المجموع الجديد — Owner بوحدو"""
     if not (OWNER_ID and ctx.author.id == OWNER_ID):
@@ -8966,18 +9118,11 @@ SOURCE_LABELS_AR = {
 }
 
 
-@bot.hybrid_command(name="xpaudit")
-@app_commands.default_permissions(administrator=True)
-@owner_only()
-@app_commands.describe(member="العضو اللي بغيتي تشيك عليه")
-async def xpaudit_cmd(ctx, member: discord.Member):
-    """كيوري من فين جا كل XP ديال عضو معين (شات/فويس/afk) وآخر events ديالو — Admin"""
-    await ctx.defer()
-    summary = get_xp_audit_summary(ctx.guild.id, member.id)
-
+def build_xp_audit_embed(guild: discord.Guild, member: discord.Member) -> Optional[discord.Embed]:
+    """نفس /xpaudit القديم ولكن قابل للاستعمال من Owner Panel."""
+    summary = get_xp_audit_summary(guild.id, member.id)
     if summary["total_events"] == 0:
-        await ctx.send(f"❌ ماكاينش أي سجل XP لـ {member.mention} حتى دابا (يمكن الميزة ماكانتش مفعلة ملي ربح XP، أو ماشي فهاد السيرفر).")
-        return
+        return None
 
     embed = discord.Embed(
         title=f"🔍 XP Audit — {member.display_name}",
@@ -8986,11 +9131,14 @@ async def xpaudit_cmd(ctx, member: discord.Member):
     )
     embed.set_thumbnail(url=member.display_avatar.url)
 
-    data = get_user_level_data(ctx.guild.id, member.id)
+    data = get_user_level_data(guild.id, member.id)
     embed.add_field(
         name="📊 الوضع الحالي",
-        value=f"Level **{data['level']}** • {data['xp']}/{xp_needed_for_level(data['level'])} XP للمستوى الجاي\n"
-              f"مجموع XP إجمالي (منذ البداية): **{total_xp_earned(data)}**",
+        value=(
+            f"Level **{data['level']}** • "
+            f"{data['xp']}/{xp_needed_for_level(data['level'])} XP للمستوى الجاي\n"
+            f"مجموع XP إجمالي: **{total_xp_earned(data)}**"
+        ),
         inline=False
     )
 
@@ -8999,7 +9147,7 @@ async def xpaudit_cmd(ctx, member: discord.Member):
         label = SOURCE_LABELS_AR.get(src, src)
         dist_lines.append(f"{label}: **{info['total']}** XP ({info['count']} events)")
     embed.add_field(
-        name=f"📈 التوزيع حسب المصدر ({summary['total_events']} events مسجلين إجمالي)",
+        name=f"📈 التوزيع حسب المصدر ({summary['total_events']} events)",
         value="\n".join(dist_lines) if dist_lines else "—",
         inline=False
     )
@@ -9017,7 +9165,6 @@ async def xpaudit_cmd(ctx, member: discord.Member):
         inline=False
     )
 
-    # ═══ كشف سريع: واش الفارقات بين الرسائل قريبة بزاف من cooldown (علامة بوت/سكريبت) ═══
     chat_events = [e for e in summary["recent"] if e.get("source") == "chat"]
     if len(chat_events) >= 5:
         gaps = []
@@ -9030,16 +9177,33 @@ async def xpaudit_cmd(ctx, member: discord.Member):
                 pass
         if gaps:
             avg_gap = sum(gaps) / len(gaps)
-            tight = sum(1 for g in gaps if xp_settings["chat_cooldown"] <= g <= xp_settings["chat_cooldown"] + 3)
+            tight = sum(
+                1 for g in gaps
+                if xp_settings["chat_cooldown"] <= g <= xp_settings["chat_cooldown"] + 3
+            )
             ratio = tight / len(gaps)
             if ratio >= 0.7 and avg_gap < xp_settings["chat_cooldown"] + 5:
                 embed.add_field(
                     name="⚠️ ملاحظة",
-                    value=f"{ratio*100:.0f}% من رسائلو الأخيرة جايين بفارق قريب بزاف من cooldown ({xp_settings['chat_cooldown']}ث) "
-                          f"— هادشي ممكن يكون نشاط عادي مكثف، ولكن يستاهل تشيك يدوي (سكريبت/أوتو-كليكر).",
+                    value=(
+                        f"{ratio*100:.0f}% من رسائلو الأخيرة قريبين بزاف من "
+                        f"cooldown ({xp_settings['chat_cooldown']}ث). "
+                        "يمكن نشاط عادي، ولكن يستاهل تشيك."
+                    ),
                     inline=False
                 )
 
+    return embed
+
+
+# Hidden prefix fallback فقط — ما بقاش Slash Command.
+@bot.command(name="xpaudit", hidden=True)
+@owner_only()
+async def xpaudit_cmd(ctx, member: discord.Member):
+    embed = build_xp_audit_embed(ctx.guild, member)
+    if not embed:
+        await ctx.send(f"❌ ماكاين حتى XP Audit مسجل لـ {member.mention}.")
+        return
     await ctx.send(embed=embed)
 
 
@@ -9388,8 +9552,7 @@ class MainPanelView(PanelPermissionView):
         await interaction.response.edit_message(embed=_xp_panel_embed(), view=XPPanelView())
 
 
-@bot.hybrid_command(name="botpanel")
-@app_commands.default_permissions(administrator=True)
+@bot.command(name="botpanel", hidden=True)
 @owner_only()
 async def botpanel_cmd(ctx):
     """لوحة تحكم شاملة فأغلب إعدادات البوت (Anti-Raid، التحذيرات، Auto-Info، مميزات عامة، وXP) — Owner"""
@@ -9406,25 +9569,47 @@ def _progress_bar(current: int, needed: int, length: int = 20) -> str:
     return "🟩" * filled + "⬛" * (length - filled)
 
 
-@bot.hybrid_command(name="rank")
-async def rank_cmd(ctx, member: Optional[discord.Member] = None):
-    """كيبين المستوى والـ XP ديال عضو (نتا ولا شخص آخر)"""
-    if not bot_settings['leveling_enabled']:
-        await ctx.send("❌ نظام Leveling معطل دابا. شعلو من `/botpanel` (Admin).", delete_after=6)
-        return
+def get_current_member_xp_ranking(guild: discord.Guild):
+    """
+    Ranking ديال XP كيشمل غير الأعضاء اللي مازالين داخل السيرفر دابا.
 
-    member = member or ctx.author
-    data = get_user_level_data(ctx.guild.id, member.id)
+    مهم:
+    - ما كنمسحوش levels_db ديال اللي خرج.
+    - غير كنخبيه من الترتيب وهو خارج.
+    - إلا رجع، نفس XP المحفوظة كتردو للمركز اللي كيستحق حسب XP.
+    """
+    guild_data = levels_db.get(str(guild.id), {})
+    if not guild_data:
+        return []
+
+    # intents.members=True عند البوت، لذلك guild.members هو source واضح للأعضاء الحاليين.
+    current_member_ids = {
+        str(member.id)
+        for member in guild.members
+        if not member.bot
+    }
+
+    return sorted(
+        (
+            (uid, data)
+            for uid, data in guild_data.items()
+            if uid in current_member_ids
+        ),
+        key=lambda item: total_xp_earned(item[1]),
+        reverse=True,
+    )
+
+
+def build_rank_embed(guild: discord.Guild, member: discord.Member) -> discord.Embed:
+    """نفس Rank ديال /rank، قابل للاستعمال من الـ Levels Info Panel بلا كتابة."""
+    data = get_user_level_data(guild.id, member.id)
     needed = xp_needed_for_level(data["level"])
 
-    # ═══════ حساب الترتيب (Rank) بين كل الأعضاء ═══════
-    guild_data = levels_db.get(str(ctx.guild.id), {})
-    ranking = sorted(
-        guild_data.items(),
-        key=lambda item: total_xp_earned(item[1]),
-        reverse=True
+    ranking = get_current_member_xp_ranking(guild)
+    rank_position = next(
+        (i + 1 for i, (uid, _) in enumerate(ranking) if uid == str(member.id)),
+        None
     )
-    rank_position = next((i + 1 for i, (uid, _) in enumerate(ranking) if uid == str(member.id)), None)
 
     badge = ""
     if data["level"] >= 100:
@@ -9439,25 +9624,82 @@ async def rank_cmd(ctx, member: Optional[discord.Member] = None):
     )
     embed.set_thumbnail(url=member.display_avatar.url)
     embed.add_field(name="🏆 Level", value=str(data["level"]), inline=True)
-    embed.add_field(name="🥇 الترتيب", value=f"#{rank_position}" if rank_position else "—", inline=True)
+    embed.add_field(
+        name="🥇 الترتيب",
+        value=f"#{rank_position}" if rank_position else "—",
+        inline=True
+    )
     embed.add_field(name="✨ XP", value=f"{data['xp']} / {needed}", inline=True)
-    embed.add_field(name="التقدم", value=_progress_bar(data["xp"], needed), inline=False)
+    embed.add_field(
+        name="التقدم",
+        value=_progress_bar(data["xp"], needed),
+        inline=False
+    )
+
+    active_perks = get_level_perks(data["level"])
+    embed.add_field(
+        name="🎁 الامتيازات الحالية",
+        value=(
+            f"**{active_perks['name']}**\n"
+            f"🛒 Shop: **-{active_perks['shop_discount_percent']}%** • "
+            f"🎁 Daily: **+{active_perks['daily_bonus_percent']}%**\n"
+            f"🏦 Loan Base: **{active_perks['loan_base']:,}** • "
+            f"Interest **{active_perks['loan_interest']}%** • "
+            f"**{active_perks['loan_days']}d**\n"
+            f"{active_perks['feature']}"
+        ),
+        inline=False,
+    )
+
+    next_perks = get_next_level_perks(data["level"])
+    if next_perks:
+        embed.add_field(
+            name="🚀 الهدف الجاي",
+            value=(
+                f"Level **{next_perks['threshold']}** — **{next_perks['name']}**\n"
+                f"🛒 -{next_perks['shop_discount_percent']}% • "
+                f"🎁 +{next_perks['daily_bonus_percent']}% • "
+                f"🏦 {next_perks['loan_base']:,} / "
+                f"{next_perks['loan_interest']}% / {next_perks['loan_days']}d"
+            ),
+            inline=False,
+        )
+
     if get_active_xp_multiplier(data) > 1.0:
         try:
             expires_dt = datetime.fromisoformat(data["xp_boost_expires"])
-            embed.add_field(name="🚀 بونيص XP نشط",
-                             value=f"+{LEVEL_MILESTONE_XP_BOOST_PERCENT}% حتى <t:{int(expires_dt.timestamp())}:R>",
-                             inline=False)
+            embed.add_field(
+                name="🚀 بونيص XP نشط",
+                value=(
+                    f"+{LEVEL_MILESTONE_XP_BOOST_PERCENT}% حتى "
+                    f"<t:{int(expires_dt.timestamp())}:R>"
+                ),
+                inline=False
+            )
         except Exception:
             pass
+
     if data.get("bio"):
         embed.add_field(name="📝 بيو", value=data["bio"][:200], inline=False)
+
     embed.set_footer(text=f"{SERVER_NAME} | Leveling System")
-    await ctx.send(embed=embed)
+    return embed
 
 
-@bot.hybrid_command(name="setbio", description="بدل البيو الشخصي ديالك اللي كيبان فـ /rank (Level 20+)")
-@app_commands.describe(text="النص ديال البيو (حد أقصى 200 حرف) — سيبو فارغ باش تمسحو")
+@bot.command(name="rank", hidden=True)
+async def rank_cmd(ctx, member: Optional[discord.Member] = None):
+    """كيبين المستوى والـ XP ديال عضو (نتا ولا شخص آخر)"""
+    if not bot_settings['leveling_enabled']:
+        await ctx.send(
+            "❌ نظام Leveling معطل دابا. شعلو من `/botpanel` (Admin).",
+            delete_after=6
+        )
+        return
+    member = member or ctx.author
+    await ctx.send(embed=build_rank_embed(ctx.guild, member))
+
+
+@bot.command(name="setbio", hidden=True)
 async def setbio_cmd(ctx, *, text: str = ""):
     """بدل البيو الشخصي ديالك اللي كيبان فـ /rank — متاحة من Level 20 (Milestone perk)"""
     data = get_user_level_data(ctx.guild.id, ctx.author.id)
@@ -9502,9 +9744,317 @@ class SimplePollView(discord.ui.View):
         return btn
 
 
-@bot.hybrid_command(name="createpoll", description="صاوب استفتاء بأزرار (Level 60+)")
-@app_commands.describe(question="السؤال ديال الاستفتاء",
-                        options="الخيارات، مفصولين بـ | (مثال: بيتزا | تاكوس | سوشي) — حد أقصى 5")
+
+# ═══════════════════════════════════════════════════════
+# ║   📊 Levels Info Center — كلشي Click بلا Commands      ║
+# ═══════════════════════════════════════════════════════
+
+class XPBioModal(discord.ui.Modal, title="📝 البيو ديالك"):
+    bio_text = discord.ui.TextInput(
+        label="البيو",
+        placeholder="كتب bio قصيرة... وخليها خاوية باش تمسحها",
+        style=discord.TextStyle.paragraph,
+        required=False,
+        max_length=200,
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        data = get_user_level_data(interaction.guild.id, interaction.user.id)
+        if data["level"] < 20:
+            await interaction.response.send_message(
+                "🔒 Bio كتفتح فـ **Level 20**.",
+                ephemeral=True,
+            )
+            return
+        data["bio"] = str(self.bio_text.value).strip()[:200]
+        save_levels()
+        if data["bio"]:
+            await interaction.response.send_message(
+                f"✅ تبدلات الـBio ديالك لـ:\n> {data['bio']}",
+                ephemeral=True,
+            )
+        else:
+            await interaction.response.send_message(
+                "✅ تمسحات الـBio ديالك.",
+                ephemeral=True,
+            )
+
+
+class XPLegendTitleModal(discord.ui.Modal, title="👑 Legend Title"):
+    title_text = discord.ui.TextInput(
+        label="سمية الرول الشخصية",
+        placeholder="مثال: GGMW9 King",
+        required=True,
+        max_length=90,
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        data = get_user_level_data(interaction.guild.id, interaction.user.id)
+        if data["level"] < 100:
+            await interaction.response.send_message(
+                "🔒 Legend Title كتفتح غير فـ **Level 100**.",
+                ephemeral=True,
+            )
+            return
+
+        role = await get_or_create_legend_role(interaction.guild, interaction.user)
+        if not role:
+            await interaction.response.send_message(
+                "❌ ما قدرتش نصاوب/نلقى Legend Role ديالك. شيك صلاحيات البوت.",
+                ephemeral=True,
+            )
+            return
+
+        new_name = f"👑 {str(self.title_text.value).strip()}"[:100]
+        try:
+            await role.edit(
+                name=new_name,
+                reason=f"Levels Info Panel — Legend title — {interaction.user}",
+            )
+            await interaction.response.send_message(
+                f"✅ Legend Role ديالك ولات: **{new_name}**",
+                ephemeral=True,
+            )
+        except (discord.Forbidden, discord.HTTPException) as e:
+            await interaction.response.send_message(
+                f"❌ ما قدرتش نبدل السمية: {e}",
+                ephemeral=True,
+            )
+
+
+class XPCreatePollModal(discord.ui.Modal, title="🗳️ صاوب Poll"):
+    question = discord.ui.TextInput(
+        label="السؤال",
+        placeholder="شنو بغيتي تسول الناس؟",
+        required=True,
+        max_length=200,
+    )
+    options_text = discord.ui.TextInput(
+        label="الاختيارات — فرق بينهم بـ |",
+        placeholder="مثال: PS5 | Xbox | PC",
+        required=True,
+        max_length=500,
+    )
+
+    def __init__(self, user_id: int, target_channel):
+        super().__init__()
+        self.user_id = user_id
+        self.target_channel = target_channel
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("❌ ماشي ديالك.", ephemeral=True)
+            return
+
+        data = get_user_level_data(interaction.guild.id, interaction.user.id)
+        if data["level"] < 60:
+            await interaction.response.send_message(
+                "🔒 إنشاء Poll كيتفتح فـ **Level 60**.",
+                ephemeral=True,
+            )
+            return
+
+        opts = [
+            o.strip()
+            for o in str(self.options_text.value).split("|")
+            if o.strip()
+        ][:5]
+        if len(opts) < 2:
+            await interaction.response.send_message(
+                "❌ خاص على الأقل جوج اختيارات مفصولين بـ `|`.",
+                ephemeral=True,
+            )
+            return
+
+        embed = discord.Embed(
+            title=f"🗳️ {str(self.question.value).strip()}",
+            description="\n".join(f"**{o}** — 0 صوت" for o in opts),
+            color=discord.Color.blurple(),
+            timestamp=datetime.now(),
+        )
+        embed.set_footer(
+            text=f"صاوبها {interaction.user.display_name} | {SERVER_NAME}"
+        )
+        try:
+            sent = await self.target_channel.send(
+                embed=embed,
+                view=SimplePollView(opts),
+            )
+            await interaction.response.send_message(
+                f"✅ الـPoll تنشرات فـ {self.target_channel.mention}.\n{sent.jump_url}",
+                ephemeral=True,
+            )
+        except (discord.Forbidden, discord.HTTPException) as e:
+            await interaction.response.send_message(
+                f"❌ ما قدرتش نبعث فالشانيل المختارة: {e}",
+                ephemeral=True,
+            )
+
+
+class XPPollChannelSelect(discord.ui.ChannelSelect):
+    def __init__(self, user_id: int):
+        self.user_id = user_id
+        super().__init__(
+            placeholder="📍 اختار الشانيل اللي غادي تنشر فيه الـPoll",
+            channel_types=[discord.ChannelType.text, discord.ChannelType.news],
+            min_values=1,
+            max_values=1,
+            row=0,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("❌ ماشي ديالك.", ephemeral=True)
+            return
+        target = self.values[0]
+        await interaction.response.send_modal(
+            XPCreatePollModal(interaction.user.id, target)
+        )
+
+
+class XPPollDestinationView(discord.ui.View):
+    def __init__(self, user_id: int):
+        super().__init__(timeout=120)
+        self.add_item(XPPollChannelSelect(user_id))
+
+
+class XPRankMemberSelect(discord.ui.UserSelect):
+    def __init__(self):
+        super().__init__(
+            placeholder="👤 اختار عضو باش تشوف Rank ديالو",
+            min_values=1,
+            max_values=1,
+            custom_id="ggmw9:levels:member_rank",
+            row=1,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        if not bot_settings["leveling_enabled"]:
+            await interaction.response.send_message(
+                "❌ نظام XP معطل دابا.",
+                ephemeral=True,
+            )
+            return
+        member = self.values[0]
+        await interaction.response.send_message(
+            embed=build_rank_embed(interaction.guild, member),
+            ephemeral=True,
+        )
+
+
+class LevelsInfoView(discord.ui.View):
+    """Persistent XP Center. الشانيل يبقى clean؛ أغلب النتائج ephemeral."""
+
+    def __init__(self):
+        super().__init__(timeout=None)
+        self.add_item(XPRankMemberSelect())
+
+    @discord.ui.button(
+        label="Rank ديالي",
+        emoji="📊",
+        style=discord.ButtonStyle.success,
+        custom_id="ggmw9:levels:my_rank",
+        row=0,
+    )
+    async def my_rank(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not bot_settings["leveling_enabled"]:
+            await interaction.response.send_message(
+                "❌ نظام XP معطل دابا.",
+                ephemeral=True,
+            )
+            return
+        await interaction.response.send_message(
+            embed=build_rank_embed(interaction.guild, interaction.user),
+            ephemeral=True,
+        )
+
+    @discord.ui.button(
+        label="Leaderboard",
+        emoji="🏆",
+        style=discord.ButtonStyle.primary,
+        custom_id="ggmw9:levels:leaderboard",
+        row=0,
+    )
+    async def leaderboard(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed = build_leaderboard_embed(interaction.guild)
+        if not embed:
+            await interaction.response.send_message(
+                "ℹ️ ماكاين حتى XP مسجل دابا.",
+                ephemeral=True,
+            )
+            return
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @discord.ui.button(
+        label="Roadmap",
+        emoji="🪜",
+        style=discord.ButtonStyle.secondary,
+        custom_id="ggmw9:levels:roadmap",
+        row=0,
+    )
+    async def roadmap(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(
+            embed=build_levelroadmap_embed(),
+            ephemeral=True,
+        )
+
+    @discord.ui.button(
+        label="بدل Bio",
+        emoji="📝",
+        style=discord.ButtonStyle.secondary,
+        custom_id="ggmw9:levels:bio",
+        row=2,
+    )
+    async def bio(self, interaction: discord.Interaction, button: discord.ui.Button):
+        data = get_user_level_data(interaction.guild.id, interaction.user.id)
+        if data["level"] < 20:
+            await interaction.response.send_message(
+                f"🔒 Bio كتفتح فـ **Level 20**. نتا دابا Level **{data['level']}**.",
+                ephemeral=True,
+            )
+            return
+        await interaction.response.send_modal(XPBioModal())
+
+    @discord.ui.button(
+        label="صاوب Poll",
+        emoji="🗳️",
+        style=discord.ButtonStyle.secondary,
+        custom_id="ggmw9:levels:create_poll",
+        row=2,
+    )
+    async def create_poll(self, interaction: discord.Interaction, button: discord.ui.Button):
+        data = get_user_level_data(interaction.guild.id, interaction.user.id)
+        if data["level"] < 60:
+            await interaction.response.send_message(
+                f"🔒 Poll كتفتح فـ **Level 60**. نتا دابا Level **{data['level']}**.",
+                ephemeral=True,
+            )
+            return
+        await interaction.response.send_message(
+            "📍 اختار الشانيل اللي بغيتي تنشر فيها الـPoll:",
+            view=XPPollDestinationView(interaction.user.id),
+            ephemeral=True,
+        )
+
+    @discord.ui.button(
+        label="Legend Title",
+        emoji="👑",
+        style=discord.ButtonStyle.secondary,
+        custom_id="ggmw9:levels:legend_title",
+        row=2,
+    )
+    async def legend_title(self, interaction: discord.Interaction, button: discord.ui.Button):
+        data = get_user_level_data(interaction.guild.id, interaction.user.id)
+        if data["level"] < 100:
+            await interaction.response.send_message(
+                f"🔒 Legend Title كتفتح فـ **Level 100**. نتا دابا Level **{data['level']}**.",
+                ephemeral=True,
+            )
+            return
+        await interaction.response.send_modal(XPLegendTitleModal())
+
+
+@bot.command(name="createpoll", hidden=True)
 async def createpoll_cmd(ctx, question: str, *, options: str):
     """صاوب استفتاء بأزرار تفاعلية (بلا حاجة لـ Admin) — متاحة من Level 60 (Milestone perk)"""
     data = get_user_level_data(ctx.guild.id, ctx.author.id)
@@ -9526,8 +10076,7 @@ async def createpoll_cmd(ctx, question: str, *, options: str):
     await ctx.send(embed=embed, view=SimplePollView(opts))
 
 
-@bot.hybrid_command(name="legendtitle", description="سمي الرول الشخصي ديالك ديال Level 100 (Legend)")
-@app_commands.describe(title="السمية الجديدة (بلا الإيموجي 👑 — كيتزاد أوتوماتيك)")
+@bot.command(name="legendtitle", hidden=True)
 async def legendtitle_cmd(ctx, *, title: str):
     """بدل سمية الرول الشخصي الفريد ديالك — متاحة غير لمن وصل Level 100"""
     data = get_user_level_data(ctx.guild.id, ctx.author.id)
@@ -9546,42 +10095,63 @@ async def legendtitle_cmd(ctx, *, title: str):
         await ctx.send(f"❌ ما قدرتش نبدل السمية: {e}", ephemeral=True)
 
 
-@bot.hybrid_command(name="levelroadmap", aliases=["milestones"], description="بين كل مكافآت الـ Levels من 10 لـ 100")
-async def levelroadmap_cmd(ctx):
-    """كيبين لائحة كاملة بكل الـ Milestones والمكافآت ديالهم من Level 10 حتى 100"""
+def build_levelroadmap_embed() -> discord.Embed:
     lines = []
-    for lvl in sorted(LEVEL_MILESTONES.keys()):
-        info = LEVEL_MILESTONES[lvl]
-        lines.append(f"**Lv.{lvl}** — {info['name']}\n> {info['desc']}")
+    for lvl in sorted(LEVEL_ROLES.keys()):
+        p = LEVEL_ROLE_BENEFITS[lvl]
+        lines.append(
+            f"**Lv.{lvl} — {p['name']}**\n"
+            f"> 🛒 -{p['shop_discount_percent']}% Shop • "
+            f"🎁 +{p['daily_bonus_percent']}% Daily • "
+            f"🏦 {p['loan_base']:,} / {p['loan_interest']}% / {p['loan_days']}d\n"
+            f"> {p['feature']}"
+        )
     embed = discord.Embed(
-        title="🪜 خارطة طريق المستويات (Level 10 → 100)",
-        description="\n\n".join(lines),
+        title="🪜 خارطة طريق Level Roles (5 → 100)",
+        description="\n\n".join(lines)[:4000],
         color=discord.Color.gold()
     )
-    embed.set_footer(text=f"{SERVER_NAME} | كل رول تراكمي — كتبقى بيه للأبد")
-    await ctx.send(embed=embed)
+    embed.set_footer(
+        text=f"{SERVER_NAME} | عندك غير أعلى Level Role — القديمة كتتحيد أوتوماتيكياً"
+    )
+    return embed
+
+
+@bot.command(name="levelroadmap", aliases=["milestones"], hidden=True)
+async def levelroadmap_cmd(ctx):
+    """كيبين لائحة كاملة بكل Level Roles والمكافآت ديالهم."""
+    await ctx.send(embed=build_levelroadmap_embed())
 
 
 def build_leaderboard_embed(guild: discord.Guild) -> Optional[discord.Embed]:
-    """كتصاوب embed لائحة الشرف (أفضل 10) لسيرفر معين. كترجع None إلا ماكاين حتى عضو ربح XP بعد."""
-    guild_data = levels_db.get(str(guild.id), {})
-    if not guild_data:
-        return None
+    """
+    أفضل 10 من الأعضاء الحاليين فقط.
 
-    ranking = sorted(
-        guild_data.items(),
-        key=lambda item: total_xp_earned(item[1]),
-        reverse=True
-    )[:10]
+    XP ديال العضو اللي خرج كتبقى محفوظة فـ levels_db:
+    - وهو خارج: ما كيبانش فالLeaderboard.
+    - إلا رجع: كيرجع أوتوماتيكياً للمركز اللي كتستحق XP ديالو.
+    """
+    ranking = get_current_member_xp_ranking(guild)[:10]
+    if not ranking:
+        return None
 
     medals = ["🥇", "🥈", "🥉"]
     lines = []
     for i, (user_id, data) in enumerate(ranking):
-        prefix = medals[i] if i < len(medals) else f"#{i + 1}"
         member = guild.get_member(int(user_id))
-        name = member.mention if member else f"<@{user_id}> (خرج من السيرفر)"
+        if not member:
+            # حماية إضافية ضد أي cache race نادر.
+            continue
+
+        prefix = medals[i] if i < len(medals) else f"#{i + 1}"
         badge = "👑 " if data["level"] >= 100 else ("🌟 " if data["level"] >= 70 else "")
-        lines.append(f"{prefix} {badge}{name} — Level {data['level']} ({total_xp_earned(data)} XP)")
+        lines.append(
+            f"{prefix} {badge}{member.mention} — "
+            f"Level {data['level']} ({total_xp_earned(data)} XP)"
+        )
+
+    if not lines:
+        return None
 
     embed = discord.Embed(
         title="🏆 لائحة الشرف (Leaderboard)",
@@ -9589,11 +10159,13 @@ def build_leaderboard_embed(guild: discord.Guild) -> Optional[discord.Embed]:
         color=discord.Color.gold(),
         timestamp=datetime.now()
     )
-    embed.set_footer(text=f"{SERVER_NAME} | Leveling System")
+    embed.set_footer(
+        text=f"{SERVER_NAME} | غير الأعضاء الحاليين • XP كتبقى محفوظة إلا خرجتي"
+    )
     return embed
 
 
-@bot.hybrid_command(name="leaderboard", aliases=["lb", "top"])
+@bot.command(name="leaderboard", aliases=["lb", "top"], hidden=True)
 async def leaderboard_cmd(ctx):
     """كيبين أفضل 10 أعضاء نشيطين فالسيرفر (الأكثر XP)"""
     if not bot_settings['leveling_enabled']:
@@ -9607,23 +10179,28 @@ async def leaderboard_cmd(ctx):
     await ctx.send(embed=embed)
 
 
-@tasks.loop(minutes=LEADERBOARD_UPDATE_MINUTES)
-async def update_leaderboard():
-    """كتحدث رسالة لائحة الشرف أوتوماتيكياً فـ LEADERBOARD_CHANNEL_ID كل LEADERBOARD_UPDATE_MINUTES
-    (كتبدل نفس الرسالة، ماكتبعثش وحدة جديدة كل مرة)."""
+async def refresh_xp_leaderboard_now():
+    """Refresh فوري للرسالة العامة ديال Leaderboard."""
     if not bot_settings['leveling_enabled'] or not LEADERBOARD_CHANNEL_ID:
         return
     channel = bot.get_channel(LEADERBOARD_CHANNEL_ID)
     if not channel:
-        print(f"[LEADERBOARD] ❌ ماكاينش channel بـ ID {LEADERBOARD_CHANNEL_ID}")
         return
 
     guild = channel.guild
     embed = build_leaderboard_embed(guild)
-    if not embed:
-        return  # ماكاين حتى عضو ربح XP بعد، منتظرين
-
     msg_id = leaderboard_message_ids.get(str(guild.id))
+
+    # إذا ما بقا حتى عضو مؤهل، نبدلو نفس الرسالة بدل نخلي Top قديم.
+    if not embed:
+        embed = discord.Embed(
+            title="🏆 لائحة الشرف (Leaderboard)",
+            description="ماكاين حتى عضو حالي عندو XP مسجلة دابا.",
+            color=discord.Color.gold(),
+            timestamp=datetime.now(),
+        )
+        embed.set_footer(text=f"{SERVER_NAME} | Leveling System")
+
     if msg_id:
         try:
             msg = await channel.fetch_message(int(msg_id))
@@ -9632,14 +10209,21 @@ async def update_leaderboard():
         except (discord.NotFound, discord.Forbidden):
             pass
         except Exception as e:
-            print(f"[LEADERBOARD] خطأ فـ التعديل: {e}")
+            print(f"[LEADERBOARD] refresh فوري فشل: {e}")
 
     try:
         new_msg = await channel.send(embed=embed)
         leaderboard_message_ids[str(guild.id)] = new_msg.id
         save_leaderboard_message_ids()
     except Exception as e:
-        print(f"[LEADERBOARD] خطأ فـ البعث: {e}")
+        print(f"[LEADERBOARD] refresh فوري — خطأ فالبعث: {e}")
+
+
+@tasks.loop(minutes=LEADERBOARD_UPDATE_MINUTES)
+async def update_leaderboard():
+    """كتحدث رسالة لائحة الشرف أوتوماتيكياً فـ LEADERBOARD_CHANNEL_ID كل LEADERBOARD_UPDATE_MINUTES
+    (كتبدل نفس الرسالة، ماكتبعثش وحدة جديدة كل مرة)."""
+    await refresh_xp_leaderboard_now()
 
 
 @update_leaderboard.before_loop
@@ -9655,8 +10239,7 @@ async def update_leaderboard_error(error):
         update_leaderboard.restart()
 
 
-@bot.hybrid_command(name="setlevel")
-@app_commands.default_permissions(administrator=True)
+@bot.command(name="setlevel", hidden=True)
 @owner_only()
 async def setlevel_cmd(ctx, member: discord.Member, level: int):
     """كيحط عضو مباشرة فمستوى معين (Admin) — مفيد إلا بغيتي تصحح غلط ولا تعطي مستوى بداية.
@@ -10663,6 +11246,636 @@ async def on_command_error(ctx, error):
         print(f"[ERROR] {error}")
 
 
+# ═══════════════════════════════════════════════════════
+# ║   🔐 GGMW9 OWNER CONTROL CENTER                    ║
+# ═══════════════════════════════════════════════════════
+
+def _owner_control_embed(guild: discord.Guild) -> discord.Embed:
+    eco_cog = bot.get_cog("Economy")
+    treasury = jackpot = events = 0
+    if eco_cog:
+        try:
+            sys = eco_cog._system(guild.id)
+            treasury = int(sys.get("treasury", 0) or 0)
+            jackpot = int(sys.get("jackpot", 0) or 0)
+            events = int(sys.get("events", 0) or 0)
+        except Exception:
+            pass
+
+    embed = discord.Embed(
+        title="🔐 GGMW9 — Owner Control Center",
+        description=(
+            "هاد الـPanel هي المركز الخاص بالـOwner. ما تحتاجش تكتب أوامر الإدارة فالشات.\n\n"
+            "📊 **XP & Levels** — Settings / Adjust XP / Set Level / Audit / Sync Roles\n"
+            "💰 **Economy** — Give/Remove Coins / Member Account / Economy Stats / Bank Refresh\n"
+            "⚙️ **Bot Settings** — Anti-Raid / Warns / Auto-Info / Features / XP Settings\n"
+            "🖥️ **Refresh Panels** — Levels / Leaderboard / Games / Shop / Gambling / Bank\n"
+            "🔊 **Voice Tools** — صاوب Room Mute Panel باختيار Voice Channel\n\n"
+            "🔒 كل Interaction كتتأكد من **OWNER_ID** حتى إلا شاف شي حد الرسالة بالغلط."
+        ),
+        color=discord.Color.dark_gold(),
+        timestamp=datetime.now(),
+    )
+    embed.add_field(name="🏛️ Treasury", value=f"**{treasury:,}**", inline=True)
+    embed.add_field(name="🎰 Jackpot", value=f"**{jackpot:,}**", inline=True)
+    embed.add_field(name="🎉 Events", value=f"**{events:,}**", inline=True)
+    embed.set_footer(text="GGMW9 Owner Center • Persistent • No public admin commands needed")
+    return embed
+
+
+class OwnerOnlyView(discord.ui.View):
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if not (OWNER_ID and interaction.user.id == OWNER_ID):
+            if not interaction.response.is_done():
+                await interaction.response.send_message(
+                    "❌ هاد الـControl Center خاص غير بالـOwner.",
+                    ephemeral=True,
+                )
+            return False
+        return True
+
+
+class OwnerXPAdjustModal(discord.ui.Modal, title="🛠️ تعديل XP"):
+    def __init__(self, member: discord.Member):
+        super().__init__()
+        self.member = member
+        self.amount = discord.ui.TextInput(
+            label="XP (+ زيادة / - نقصان)",
+            placeholder="مثال: 500 أو -300",
+            required=True,
+            max_length=12,
+        )
+        self.reason = discord.ui.TextInput(
+            label="السبب",
+            placeholder="اختياري",
+            required=False,
+            max_length=150,
+        )
+        self.add_item(self.amount)
+        self.add_item(self.reason)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if not (OWNER_ID and interaction.user.id == OWNER_ID):
+            await interaction.response.send_message("❌ Owner فقط.", ephemeral=True)
+            return
+        raw = str(self.amount.value).strip().replace(",", "").replace(" ", "")
+        try:
+            amount = int(raw)
+        except ValueError:
+            await interaction.response.send_message("❌ دخل رقم صحيح.", ephemeral=True)
+            return
+        if amount == 0:
+            await interaction.response.send_message("❌ المبلغ ما يكونش 0.", ephemeral=True)
+            return
+
+        result = await adjust_user_xp(self.member, interaction.guild, amount)
+        reason = str(self.reason.value).strip() or "Owner Control Center"
+
+        verb = "زدت" if amount > 0 else "نقصت"
+        level_change = (
+            "➡️" if result["old_level"] == result["new_level"]
+            else ("⬆️" if result["new_level"] > result["old_level"] else "⬇️")
+        )
+        embed = discord.Embed(
+            title="🛠️ تعديل XP تم",
+            description=f"{verb} **{abs(amount):,} XP** لـ {self.member.mention}",
+            color=discord.Color.gold() if amount > 0 else discord.Color.orange(),
+        )
+        embed.add_field(
+            name="Level",
+            value=f"{result['old_level']} {level_change} **{result['new_level']}**",
+            inline=True,
+        )
+        embed.add_field(
+            name="Total XP",
+            value=f"{result['old_total']:,} → **{result['new_total']:,}**",
+            inline=True,
+        )
+        if result["roles_added"]:
+            embed.add_field(name="🎖️ Role جديدة", value=", ".join(result["roles_added"]), inline=False)
+        if result["roles_removed"]:
+            embed.add_field(name="🗑️ Roles تحيدو", value=", ".join(result["roles_removed"]), inline=False)
+        embed.add_field(name="السبب", value=reason, inline=False)
+
+        await log_action(
+            interaction.guild,
+            "🛠️ XP Adjustment — Owner Panel",
+            (
+                f"**العضو:** {self.member.mention}\n"
+                f"**التغيير:** {amount:+,} XP\n"
+                f"**Level:** {result['old_level']} → {result['new_level']}\n"
+                f"**السبب:** {reason}\n"
+                f"**Owner:** {interaction.user.mention}"
+            ),
+            discord.Color.gold() if amount > 0 else discord.Color.orange(),
+        )
+        await refresh_xp_leaderboard_now()
+        await interaction.response.edit_message(embed=embed, content=None, view=OwnerXPView())
+
+
+class OwnerSetLevelModal(discord.ui.Modal, title="🎚️ Set Level"):
+    def __init__(self, member: discord.Member):
+        super().__init__()
+        self.member = member
+        self.level_input = discord.ui.TextInput(
+            label="Level الجديد (0 - 100)",
+            placeholder="مثال: 50",
+            required=True,
+            max_length=3,
+        )
+        self.add_item(self.level_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if not (OWNER_ID and interaction.user.id == OWNER_ID):
+            await interaction.response.send_message("❌ Owner فقط.", ephemeral=True)
+            return
+        try:
+            level = int(str(self.level_input.value).strip())
+        except ValueError:
+            await interaction.response.send_message("❌ دخل Level صحيح.", ephemeral=True)
+            return
+        if not 0 <= level <= 100:
+            await interaction.response.send_message("❌ Level خاصها تكون بين 0 و100.", ephemeral=True)
+            return
+
+        data = get_user_level_data(interaction.guild.id, self.member.id)
+        old_level = int(data.get("level", 0) or 0)
+        data["level"] = level
+        data["xp"] = 0
+        save_levels()
+        roles_added, roles_removed = await sync_level_roles(
+            self.member, interaction.guild, level
+        )
+        await refresh_xp_leaderboard_now()
+
+        embed = discord.Embed(
+            title="🎚️ Set Level تم",
+            description=f"{self.member.mention}: **Level {old_level} → {level}**",
+            color=discord.Color.blurple(),
+        )
+        if roles_added:
+            embed.add_field(name="🎖️ Role جديدة", value=", ".join(roles_added), inline=False)
+        if roles_removed:
+            embed.add_field(name="🗑️ Roles تحيدو", value=", ".join(roles_removed), inline=False)
+
+        await log_action(
+            interaction.guild,
+            "🎚️ Set Level — Owner Panel",
+            (
+                f"**العضو:** {self.member.mention}\n"
+                f"**Level:** {old_level} → {level}\n"
+                f"**Owner:** {interaction.user.mention}"
+            ),
+            discord.Color.blurple(),
+        )
+        await interaction.response.edit_message(embed=embed, content=None, view=OwnerXPView())
+
+
+class OwnerCoinsAdjustModal(discord.ui.Modal, title="💰 تعديل الرصيد"):
+    def __init__(self, member: discord.Member):
+        super().__init__()
+        self.member = member
+        self.amount = discord.ui.TextInput(
+            label="+ باش تزيد / - باش تحيد",
+            placeholder="مثال: 1000 أو -500",
+            required=True,
+            max_length=14,
+        )
+        self.add_item(self.amount)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if not (OWNER_ID and interaction.user.id == OWNER_ID):
+            await interaction.response.send_message("❌ Owner فقط.", ephemeral=True)
+            return
+        raw = str(self.amount.value).strip().replace(",", "").replace(" ", "")
+        try:
+            amount = int(raw)
+        except ValueError:
+            await interaction.response.send_message("❌ دخل رقم صحيح.", ephemeral=True)
+            return
+        if amount == 0:
+            await interaction.response.send_message("❌ المبلغ ما يكونش 0.", ephemeral=True)
+            return
+
+        eco_cog = bot.get_cog("Economy")
+        if not eco_cog:
+            await interaction.response.send_message("❌ Economy Cog ماشي محمّل.", ephemeral=True)
+            return
+        result = await eco_cog.owner_adjust_balance(
+            interaction.guild,
+            self.member,
+            amount,
+            actor=interaction.user,
+        )
+        color = discord.Color.green() if result["applied"] >= 0 else discord.Color.orange()
+        embed = discord.Embed(
+            title="💰 Owner Balance Adjustment",
+            description=(
+                f"**العضو:** {self.member.mention}\n"
+                f"**التغيير الفعلي:** {result['applied']:+,} {cfg.CURRENCY_EMOJI}\n"
+                f"**قبل:** {result['before']:,}\n"
+                f"**دابا:** **{result['after']:,}**"
+            ),
+            color=color,
+        )
+        if not result["dm_sent"]:
+            embed.add_field(name="⚠️ DM", value="العضو ساد الـDM.", inline=False)
+        await interaction.response.edit_message(embed=embed, content=None, view=OwnerEconomyView())
+
+
+class OwnerMemberSelect(discord.ui.UserSelect):
+    def __init__(self, action: str):
+        self.action = action
+        labels = {
+            "xp_adjust": "اختار العضو باش تبدل XP",
+            "set_level": "اختار العضو باش تدير Set Level",
+            "xp_audit": "اختار العضو باش تشوف XP Audit",
+            "coins": "اختار العضو باش تزيد/تحيد Coins",
+            "economy_account": "اختار العضو باش تشوف حسابو",
+        }
+        super().__init__(
+            placeholder=labels.get(action, "اختار عضو"),
+            min_values=1,
+            max_values=1,
+            row=0,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        if not (OWNER_ID and interaction.user.id == OWNER_ID):
+            await interaction.response.send_message("❌ Owner فقط.", ephemeral=True)
+            return
+
+        selected = self.values[0]
+        member = interaction.guild.get_member(selected.id)
+        if not member:
+            try:
+                member = await interaction.guild.fetch_member(selected.id)
+            except Exception:
+                member = None
+        if not member:
+            await interaction.response.send_message("❌ ما قدرتش نجيب هاد العضو.", ephemeral=True)
+            return
+        if member.bot:
+            await interaction.response.send_message("❌ اختار عضو بشري، ماشي Bot.", ephemeral=True)
+            return
+
+        if self.action == "xp_adjust":
+            await interaction.response.send_modal(OwnerXPAdjustModal(member))
+            return
+        if self.action == "set_level":
+            await interaction.response.send_modal(OwnerSetLevelModal(member))
+            return
+        if self.action == "xp_audit":
+            embed = build_xp_audit_embed(interaction.guild, member)
+            if not embed:
+                await interaction.response.edit_message(
+                    content=f"ℹ️ ماكاين حتى XP Audit مسجل لـ {member.mention}.",
+                    embed=None,
+                    view=OwnerXPView(),
+                )
+            else:
+                await interaction.response.edit_message(
+                    content=None, embed=embed, view=OwnerXPView()
+                )
+            return
+        if self.action == "coins":
+            await interaction.response.send_modal(OwnerCoinsAdjustModal(member))
+            return
+        if self.action == "economy_account":
+            eco_cog = bot.get_cog("Economy")
+            if not eco_cog:
+                await interaction.response.edit_message(
+                    content="❌ Economy Cog ماشي محمّل.",
+                    embed=None,
+                    view=OwnerEconomyView(),
+                )
+                return
+            embeds = [
+                eco_cog.build_user_account_embed(interaction.guild, member),
+                eco_cog.build_user_transactions_embed(interaction.guild, member),
+            ]
+            await interaction.response.edit_message(
+                content=None,
+                embeds=embeds,
+                view=OwnerEconomyView(),
+            )
+
+
+class OwnerMemberSelectView(OwnerOnlyView):
+    def __init__(self, action: str):
+        super().__init__(timeout=180)
+        self.add_item(OwnerMemberSelect(action))
+
+
+class OwnerXPView(OwnerOnlyView):
+    def __init__(self):
+        super().__init__(timeout=300)
+
+    @discord.ui.button(label="XP Settings", emoji="⚙️", style=discord.ButtonStyle.primary)
+    async def xp_settings(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(embed=_xp_panel_embed(), view=XPPanelView())
+
+    @discord.ui.button(label="Adjust XP", emoji="🛠️", style=discord.ButtonStyle.success)
+    async def adjust_xp(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            content="👤 اختار العضو:",
+            embed=None,
+            view=OwnerMemberSelectView("xp_adjust"),
+        )
+
+    @discord.ui.button(label="Set Level", emoji="🎚️", style=discord.ButtonStyle.primary)
+    async def set_level(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            content="👤 اختار العضو:",
+            embed=None,
+            view=OwnerMemberSelectView("set_level"),
+        )
+
+    @discord.ui.button(label="XP Audit", emoji="🔍", style=discord.ButtonStyle.secondary)
+    async def xp_audit(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            content="👤 اختار العضو:",
+            embed=None,
+            view=OwnerMemberSelectView("xp_audit"),
+        )
+
+    @discord.ui.button(label="Sync Roles", emoji="🔄", style=discord.ButtonStyle.secondary)
+    async def sync_roles(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        await sync_level_role_permissions(interaction.guild)
+        await sync_all_level_member_roles(interaction.guild)
+        await interaction.followup.send("✅ Level Roles كاملين تراجعو وتصالحو.", ephemeral=True)
+
+    @discord.ui.button(label="Refresh XP Center", emoji="📊", style=discord.ButtonStyle.secondary, row=1)
+    async def refresh_xp_center(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        await setup_levels_info_message(interaction.guild)
+        await refresh_xp_leaderboard_now()
+        await interaction.followup.send("✅ Levels Info + XP Leaderboard تحدثو.", ephemeral=True)
+
+
+class OwnerEconomyView(OwnerOnlyView):
+    def __init__(self):
+        super().__init__(timeout=300)
+
+    @discord.ui.button(label="Give / Remove Coins", emoji="💰", style=discord.ButtonStyle.success)
+    async def coins(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            content="👤 اختار العضو:",
+            embed=None,
+            view=OwnerMemberSelectView("coins"),
+        )
+
+    @discord.ui.button(label="Member Account", emoji="👤", style=discord.ButtonStyle.primary)
+    async def member_account(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            content="👤 اختار العضو:",
+            embed=None,
+            view=OwnerMemberSelectView("economy_account"),
+        )
+
+    @discord.ui.button(label="Economy Stats", emoji="📊", style=discord.ButtonStyle.secondary)
+    async def stats(self, interaction: discord.Interaction, button: discord.ui.Button):
+        eco_cog = bot.get_cog("Economy")
+        if not eco_cog:
+            await interaction.response.send_message("❌ Economy Cog ماشي محمّل.", ephemeral=True)
+            return
+        await interaction.response.edit_message(
+            content=None,
+            embed=eco_cog.build_global_economy_embed(interaction.guild),
+            view=OwnerEconomyView(),
+        )
+
+    @discord.ui.button(label="Refresh Bank", emoji="🏦", style=discord.ButtonStyle.secondary)
+    async def refresh_bank(self, interaction: discord.Interaction, button: discord.ui.Button):
+        eco_cog = bot.get_cog("Economy")
+        if not eco_cog:
+            await interaction.response.send_message("❌ Economy Cog ماشي محمّل.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        await eco_cog.ensure_bank_panel(interaction.guild)
+        await eco_cog.refresh_economy_stats(interaction.guild)
+        await interaction.followup.send("✅ Bank Panel + Economy Stats تحدثو.", ephemeral=True)
+
+    @discord.ui.button(label="Richest", emoji="🏆", style=discord.ButtonStyle.secondary)
+    async def richest(self, interaction: discord.Interaction, button: discord.ui.Button):
+        eco_cog = bot.get_cog("Economy")
+        if not eco_cog:
+            await interaction.response.send_message("❌ Economy Cog ماشي محمّل.", ephemeral=True)
+            return
+        await interaction.response.edit_message(
+            content=None,
+            embed=eco_cog.build_richest_embed(interaction.guild),
+            view=OwnerEconomyView(),
+        )
+
+
+class OwnerVoiceChannelSelect(discord.ui.ChannelSelect):
+    def __init__(self):
+        super().__init__(
+            placeholder="🔊 اختار Voice Channel",
+            channel_types=[discord.ChannelType.voice],
+            min_values=1,
+            max_values=1,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        if not (OWNER_ID and interaction.user.id == OWNER_ID):
+            await interaction.response.send_message("❌ Owner فقط.", ephemeral=True)
+            return
+
+        selected = self.values[0]
+        channel = interaction.guild.get_channel(selected.id)
+        if not isinstance(channel, discord.VoiceChannel):
+            await interaction.response.send_message("❌ اختار Voice Channel صحيحة.", ephemeral=True)
+            return
+
+        muted = channel.id in room_mute_db.get("muted_channels", [])
+        embed = build_room_mute_embed(channel, muted)
+        msg = await interaction.channel.send(
+            embed=embed,
+            view=RoomMuteToggleView(muted, channel),
+        )
+        room_mute_db.setdefault("panels", {})[str(msg.id)] = channel.id
+        save_room_mute()
+
+        await log_action(
+            interaction.guild,
+            "🎛️ Room Mute Panel — Owner Center",
+            (
+                f"**الروم:** {channel.mention}\n"
+                f"**Panel:** {msg.jump_url}\n"
+                f"**Owner:** {interaction.user.mention}"
+            ),
+            discord.Color.blue(),
+        )
+        await interaction.response.edit_message(
+            content=f"✅ Room Mute Panel تصاوبات لـ {channel.mention}.",
+            view=None,
+        )
+
+
+class OwnerVoiceSelectView(OwnerOnlyView):
+    def __init__(self):
+        super().__init__(timeout=120)
+        self.add_item(OwnerVoiceChannelSelect())
+
+
+class OwnerControlCenterView(OwnerOnlyView):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="XP & Levels", emoji="📊", style=discord.ButtonStyle.success,
+        custom_id="ggmw9:owner:xp", row=0
+    )
+    async def xp(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed = discord.Embed(
+            title="📊 Owner — XP & Levels",
+            description="اختار العملية اللي بغيتي. كل النتائج خاصة بيك.",
+            color=discord.Color.gold(),
+        )
+        await interaction.response.send_message(embed=embed, view=OwnerXPView(), ephemeral=True)
+
+    @discord.ui.button(
+        label="Economy", emoji="💰", style=discord.ButtonStyle.success,
+        custom_id="ggmw9:owner:economy", row=0
+    )
+    async def economy(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed = discord.Embed(
+            title="💰 Owner — Economy",
+            description="Coins / Accounts / Bank / Economy Stats.",
+            color=discord.Color.gold(),
+        )
+        await interaction.response.send_message(embed=embed, view=OwnerEconomyView(), ephemeral=True)
+
+    @discord.ui.button(
+        label="Bot Settings", emoji="⚙️", style=discord.ButtonStyle.primary,
+        custom_id="ggmw9:owner:bot_settings", row=0
+    )
+    async def bot_settings_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(
+            embed=_main_panel_embed(),
+            view=MainPanelView(),
+            ephemeral=True,
+        )
+
+    @discord.ui.button(
+        label="Refresh Panels", emoji="🖥️", style=discord.ButtonStyle.secondary,
+        custom_id="ggmw9:owner:refresh_panels", row=0
+    )
+    async def refresh_panels(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        errors = []
+
+        try:
+            await setup_levels_info_message(interaction.guild)
+            await refresh_xp_leaderboard_now()
+        except Exception as e:
+            errors.append(f"XP: {e}")
+
+        games_cog = bot.get_cog("GamesPanel")
+        if games_cog:
+            try:
+                await games_cog.on_ready()
+            except Exception as e:
+                errors.append(f"Games: {e}")
+
+        gambling_cog = bot.get_cog("GamblingPanel")
+        if gambling_cog:
+            try:
+                await gambling_cog.on_ready()
+            except Exception as e:
+                errors.append(f"Gambling: {e}")
+
+        eco_cog = bot.get_cog("Economy")
+        if eco_cog:
+            try:
+                await eco_cog.ensure_bank_panel(interaction.guild)
+                await eco_cog.refresh_economy_stats(interaction.guild)
+            except Exception as e:
+                errors.append(f"Economy: {e}")
+
+        if errors:
+            await interaction.followup.send(
+                "⚠️ Refresh كمل ولكن لقيت:\n" + "\n".join(f"• {x}" for x in errors),
+                ephemeral=True,
+            )
+        else:
+            await interaction.followup.send(
+                "✅ Levels / Leaderboards / Games / Shop / Gambling / Bank كاملين تراجعو.",
+                ephemeral=True,
+            )
+
+    @discord.ui.button(
+        label="Voice Tools", emoji="🔊", style=discord.ButtonStyle.secondary,
+        custom_id="ggmw9:owner:voice", row=0
+    )
+    async def voice_tools(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(
+            "🔊 اختار Voice Channel باش نصاوب ليها Room Mute Panel فهاد الشانيل:",
+            view=OwnerVoiceSelectView(),
+            ephemeral=True,
+        )
+
+    @discord.ui.button(
+        label="Security / Logs", emoji="🧾", style=discord.ButtonStyle.secondary,
+        custom_id="ggmw9:owner:logs", row=1
+    )
+    async def logs(self, interaction: discord.Interaction, button: discord.ui.Button):
+        eco_cog = bot.get_cog("Economy")
+        eco_log_id = 0
+        try:
+            if eco_cog:
+                import games_config as _gcfg
+                eco_log_id = int(getattr(_gcfg, "ECONOMY_LOGS_CHANNEL_ID", 0) or 0)
+        except Exception:
+            pass
+        embed = discord.Embed(
+            title="🧾 Owner — Logs & Security",
+            description=(
+                f"🛡️ Mod Logs: <#{MOD_LOGS_CHANNEL_ID}>\n"
+                + (f"💰 Economy Logs: <#{eco_log_id}>\n" if eco_log_id else "")
+                + f"👑 Owner ID: `{OWNER_ID}`\n"
+                f"🔐 Owner Center: <#{OWNER_CONTROL_CHANNEL_ID}>"
+            ),
+            color=discord.Color.blurple(),
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+async def setup_owner_control_panel(guild: discord.Guild):
+    """كيضمن رسالة Owner Control واحدة فالقناة الخاصة."""
+    if not OWNER_CONTROL_CHANNEL_ID:
+        return
+    channel = guild.get_channel(OWNER_CONTROL_CHANNEL_ID)
+    if not channel:
+        return
+
+    existing = None
+    try:
+        async for msg in channel.history(limit=30):
+            if (
+                msg.author == bot.user
+                and msg.embeds
+                and msg.embeds[0].title
+                and "Owner Control Center" in msg.embeds[0].title
+            ):
+                existing = msg
+                break
+    except discord.Forbidden:
+        return
+
+    embed = _owner_control_embed(guild)
+    try:
+        if existing:
+            await existing.edit(embed=embed, view=OwnerControlCenterView())
+        else:
+            await channel.send(embed=embed, view=OwnerControlCenterView())
+    except (discord.Forbidden, discord.HTTPException) as e:
+        print(f"[OWNER CENTER] ما قدرتش نصاوب/نحدث Panel: {e}")
+
+
 @bot.event
 async def on_ready():
     print(f"✅ GGMW9 شغال!")
@@ -10752,11 +11965,12 @@ async def on_ready():
         except Exception as e:
             print(f"[TEMP-VOICE] خطأ فـ reconcile: {e}")
 
-        # ═══ Self-healing: صلاحيات رولات LEVEL_ROLES نفسها (5→100) مزبوطة تراكمياً ═══
+        # ═══ Self-healing: Level Roles — صلاحيات آمنة + Role الصحيحة لكل عضو ═══
         try:
             await sync_level_role_permissions(guild)
+            await sync_all_level_member_roles(guild)
         except Exception as e:
-            print(f"[LEVEL PERKS] خطأ فـ sync صلاحيات LEVEL_ROLES: {e}")
+            print(f"[LEVEL PERKS] خطأ فـ sync LEVEL_ROLES: {e}")
 
         # ═══ Self-healing: نتأكدو بلي صلاحيات رولات الـ Milestones (10/15/25...) مزبوطة ═══
         # حتى للرولات اللي تصاوبو من قبل (قبل ما نزيدو الصلاحيات الجداد) — بلا ما نحتاجو
@@ -10778,6 +11992,8 @@ async def on_ready():
             await setup_applications_panel(guild)
         if LEVELS_INFO_CHANNEL_ID:
             await setup_levels_info_message(guild)
+        if OWNER_CONTROL_CHANNEL_ID:
+            await setup_owner_control_panel(guild)
         if SUGGESTIONS_CHANNEL_ID:
             await setup_suggestions_info(guild)
 
@@ -10821,7 +12037,8 @@ async def on_ready():
 bot.gg = {
     "DATA_DIR": DATA_DIR,
     "OWNER_ID": OWNER_ID,
-    "get_user_level_data": get_user_level_data,   # ← باش XP Boost ديال الـ shop يخدم
+    "get_user_level_data": get_user_level_data,   # ← Economy/Shop/Bank كيقرا Level الحقيقي
+    "get_level_perks": get_level_perks,            # ← Shop discount + Daily bonus + Level benefits
     "save_levels": save_levels,
     "log_action": log_action,
     "is_exempt": is_exempt,
@@ -10870,6 +12087,11 @@ async def setup_hook():
     """discord.py كيسمي هادي **قبل** on_ready — يعني قبل sync ديال الأوامر.
     وهادشي بالضبط اللي بغينا: الـ cogs خاصهم يتحمّلو قبل ما يتزامنو الـ slash
     commands، وإلا الأوامر الجداد ما غاديش يبانو فديسكورد."""
+
+    # Persistent public/private control centers.
+    bot.add_view(LevelsInfoView())
+    bot.add_view(OwnerControlCenterView())
+
     for ext in GAMES_COGS:
         try:
             await bot.load_extension(ext)
