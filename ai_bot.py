@@ -7311,7 +7311,7 @@ async def setup_levels_info_message(guild: discord.Guild):
             "كل Role جديدة كتفتح **Shop Discount أكبر، Daily Bonus أكبر، قرض أقوى بفائدة أقل "
             "ومدة أطول**، ومع Levels معينة كتفتح Discord/Social perks آمنة.\n\n"
             "## 🖱️ ما تحتاج تكتب حتى Command\n"
-            "استعمل الـPanel اللي تحت: **Rank ديالك، Rank ديال أي عضو، Leaderboard، Roadmap، Bio، Poll وLegend Title**. "
+            "استعمل الـPanel اللي تحت: **Rank ديالك، Rank ديال عضو، Leaderboard، Roadmap، Bio، Poll وLegend Title**. "
             "المعلومات الشخصية كتبان غير ليك باش الشانيل يبقى نقي."
         ),
         color=discord.Color.gold(),
@@ -9919,35 +9919,58 @@ class XPPollDestinationView(discord.ui.View):
 
 
 class XPRankMemberSelect(discord.ui.UserSelect):
+    """Transient User Select: كيبان داخل ephemeral response فقط."""
+
     def __init__(self):
         super().__init__(
             placeholder="👤 اختار عضو باش تشوف Rank ديالو",
             min_values=1,
             max_values=1,
-            custom_id="ggmw9:levels:member_rank",
-            row=1,
         )
 
     async def callback(self, interaction: discord.Interaction):
         if not bot_settings["leveling_enabled"]:
-            await interaction.response.send_message(
-                "❌ نظام XP معطل دابا.",
-                ephemeral=True,
+            await interaction.response.edit_message(
+                content="❌ نظام XP معطل دابا.",
+                embed=None,
+                view=None,
             )
             return
-        member = self.values[0]
-        await interaction.response.send_message(
+
+        selected = self.values[0]
+        member = interaction.guild.get_member(selected.id)
+        if not member:
+            try:
+                member = await interaction.guild.fetch_member(selected.id)
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                member = None
+
+        if not member:
+            await interaction.response.edit_message(
+                content="❌ ما قدرتش نجيب معلومات هاد العضو.",
+                embed=None,
+                view=None,
+            )
+            return
+
+        await interaction.response.edit_message(
+            content=None,
             embed=build_rank_embed(interaction.guild, member),
-            ephemeral=True,
+            view=None,
         )
 
 
+class XPRankMemberView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=120)
+        self.add_item(XPRankMemberSelect())
+
+
 class LevelsInfoView(discord.ui.View):
-    """Persistent XP Center. الشانيل يبقى clean؛ أغلب النتائج ephemeral."""
+    """Persistent XP Center. Root فيها غير components ثابتين."""
 
     def __init__(self):
         super().__init__(timeout=None)
-        self.add_item(XPRankMemberSelect())
 
     @discord.ui.button(
         label="Rank ديالي",
@@ -9965,6 +9988,26 @@ class LevelsInfoView(discord.ui.View):
             return
         await interaction.response.send_message(
             embed=build_rank_embed(interaction.guild, interaction.user),
+            ephemeral=True,
+        )
+
+    @discord.ui.button(
+        label="Rank ديال عضو",
+        emoji="👤",
+        style=discord.ButtonStyle.primary,
+        custom_id="ggmw9:levels:member_rank_button",
+        row=0,
+    )
+    async def member_rank(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not bot_settings["leveling_enabled"]:
+            await interaction.response.send_message(
+                "❌ نظام XP معطل دابا.",
+                ephemeral=True,
+            )
+            return
+        await interaction.response.send_message(
+            "👤 اختار العضو اللي بغيتي تشوف Rank ديالو:",
+            view=XPRankMemberView(),
             ephemeral=True,
         )
 
@@ -12097,7 +12140,9 @@ async def setup_hook():
             await bot.load_extension(ext)
             print(f"✅ Cog محمّل: {ext}")
         except Exception as e:
+            import traceback
             print(f"❌ فشل تحميل {ext}: {type(e).__name__}: {e}")
+            traceback.print_exc()
 
 
 if __name__ == "__main__":
