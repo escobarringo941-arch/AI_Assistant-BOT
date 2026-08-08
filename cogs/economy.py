@@ -391,6 +391,85 @@ class Economy(commands.Cog):
         except Exception:
             return 0
 
+
+    def get_level_perks(self, guild_id: int, user_id: int) -> dict:
+        """كيجيب نفس source of truth ديال Level benefits من ai_bot."""
+        level = self.get_user_level(guild_id, user_id)
+        bridge = getattr(self.bot, "gg", None) or {}
+        getter = bridge.get("get_level_perks")
+        if callable(getter):
+            try:
+                return dict(getter(level) or {})
+            except Exception:
+                pass
+        return {
+            "threshold": 0,
+            "name": "👤 Member",
+            "shop_discount_percent": 0,
+            "daily_bonus_percent": 0,
+            "loan_base": 200,
+            "loan_interest": 16,
+            "loan_days": 2,
+            "feature": "—",
+        }
+
+    def get_shop_discount_percent(self, guild_id: int, user_id: int) -> int:
+        perks = self.get_level_perks(guild_id, user_id)
+        return max(0, min(50, int(perks.get("shop_discount_percent", 0) or 0)))
+
+    def get_shop_price(self, guild_id: int, user_id: int, base_price: int) -> int:
+        base_price = max(0, int(base_price))
+        if base_price <= 0:
+            return 0
+        discount = self.get_shop_discount_percent(guild_id, user_id)
+        # ceil-like safe integer: المنتوج ما يولي 0 بالغلط.
+        discounted = (base_price * (100 - discount) + 99) // 100
+        return max(1, discounted)
+
+    async def grant_level_daily_bonus(
+        self,
+        guild: discord.Guild,
+        user: discord.abc.User,
+        base_daily_amount: int,
+    ) -> tuple:
+        """Level Daily Bonus كيتخلص من Treasury، يعني ما كيخلقش فلوس جديدة."""
+        perks = self.get_level_perks(guild.id, user.id)
+        pct = max(0, int(perks.get("daily_bonus_percent", 0) or 0))
+        wanted = max(0, int(base_daily_amount) * pct // 100)
+        if wanted <= 0:
+            return 0, pct, 0
+
+        sys = self._system(guild.id)
+        available = max(0, int(sys.get("treasury", 0) or 0))
+        granted = min(wanted, available)
+        if granted <= 0:
+            return 0, pct, wanted
+
+        sys["treasury"] -= granted
+        self.system_db.save()
+        tx_id = self._record_transaction(
+            guild.id,
+            user_id=user.id,
+            kind="level_daily_bonus",
+            amount=granted,
+            source=f"level:{self.get_user_level(guild.id, user.id)}",
+            description=f"Level Daily Bonus +{pct}%",
+            splits={"treasury": -granted},
+        )
+        await self._economy_log(
+            guild,
+            f"🎁 Level Daily Bonus — TX #{tx_id}",
+            (
+                f"**العضو:** {user.mention}\n"
+                f"⭐ Level: **{self.get_user_level(guild.id, user.id)}**\n"
+                f"**Bonus:** **+{granted:,}** {cfg.CURRENCY_EMOJI} ({pct}%)\n"
+                f"🏛️ ممول من Treasury"
+            ),
+            discord.Color.green(),
+        )
+        await self.refresh_economy_stats(guild)
+        return granted, pct, wanted
+
     def get_xp_loan_tier(self, guild_id: int, user_id: int) -> dict:
         level = self.get_user_level(guild_id, user_id)
         tiers = getattr(cfg, "LOAN_XP_TIERS", []) or []
@@ -1146,6 +1225,7 @@ class Economy(commands.Cog):
             "loan_issued": "💳",
             "loan_repayment": "💸",
             "loan_paid": "✅",
+            "level_daily_bonus": "⭐",
             "admin_adjustment": "🛡️",
         }
         lines = []
@@ -1351,12 +1431,7 @@ class Economy(commands.Cog):
     # أوامر /balance /daily /richest
     # ════════════════════════════════════════════════
 
-    @commands.hybrid_command(
-        name="balance",
-        aliases=["bal", "فلوسي"],
-        description="شوف شحال عندك من الدراهم 🪙",
-    )
-    @app_commands.describe(member="العضو اللي بغيتي تشوف الرصيد ديالو (اختياري)")
+    @commands.command(name="balance", aliases=["bal", "فلوسي"], hidden=True)
     async def balance_cmd(
         self, ctx: commands.Context, member: Optional[discord.Member] = None
     ):
@@ -1428,26 +1503,50 @@ class Economy(commands.Cog):
         )
         total = cfg.COINS_DAILY + bonus
 
+        # Level Bonus حقيقي وممول من Treasury.
+        level_bonus, level_bonus_pct, level_bonus_wanted = await self.grant_level_daily_bonus(
+            ctx.guild, ctx.author, total
+        )
+        final_total = total + level_bonus
+
         acc["daily_last"] = now.isoformat()
         self.db.save()
 
         self.add_coins(
             ctx.guild.id,
             ctx.author.id,
-            total,
+            final_total,
             source="daily",
             respect_cap=False,
         )
 
         embed = discord.Embed(
             title="🎁 المكافأة اليومية",
-            description=f"خديتي **{total}** {currency_word(total)} {cfg.CURRENCY_EMOJI}",
+            description=f"خديتي **{final_total}** {currency_word(final_total)} {cfg.CURRENCY_EMOJI}",
             color=discord.Color.green(),
         )
         if bonus > 0:
             embed.add_field(
                 name="🔥 بونوس Streak",
                 value=f"+{bonus} (نهار {acc['daily_streak']} متتالي)",
+                inline=False,
+            )
+        if level_bonus > 0:
+            embed.add_field(
+                name="⭐ بونوس Level",
+                value=(
+                    f"+**{level_bonus:,}** {cfg.CURRENCY_EMOJI} "
+                    f"(+{level_bonus_pct}%، ممول من Treasury)"
+                ),
+                inline=False,
+            )
+        elif level_bonus_pct > 0 and level_bonus_wanted > 0:
+            embed.add_field(
+                name="⭐ بونوس Level",
+                value=(
+                    f"عندك **+{level_bonus_pct}%** مفتوحة، ولكن Treasury ما فيهاش "
+                    "سيولة كافية للبونوس دابا."
+                ),
                 inline=False,
             )
         embed.add_field(
@@ -1501,13 +1600,87 @@ class Economy(commands.Cog):
             f"{cfg.CURRENCY_EMOJI}"
         )
 
+    async def owner_adjust_balance(
+        self,
+        guild: discord.Guild,
+        member: discord.Member,
+        amount: int,
+        *,
+        actor: Optional[discord.abc.User] = None,
+    ) -> dict:
+        """Source of truth واحد لـ Owner Panel وfallback command."""
+        amount = int(amount)
+        before = self.get_balance(guild.id, member.id)
+
+        if amount >= 0:
+            applied = self.add_coins(
+                guild.id,
+                member.id,
+                amount,
+                source="owner_adjustment",
+                respect_cap=False,
+                count_as_earned=False,
+            )
+        else:
+            remove = min(before, abs(amount))
+            acc = self._acc(guild.id, member.id)
+            acc["coins"] = max(0, before - remove)
+            self.db.save()
+            applied = -remove
+
+        after = self.get_balance(guild.id, member.id)
+
+        dm_sent = True
+        try:
+            if applied >= 0:
+                await member.send(
+                    f"💰 تزادو ليك **{applied:,}** {cfg.CURRENCY_EMOJI} من إدارة السيرفر.\\n"
+                    f"الرصيد دابا: **{after:,}** {cfg.CURRENCY_EMOJI}"
+                )
+            else:
+                await member.send(
+                    f"💸 تحيدو من رصيدك **{abs(applied):,}** {cfg.CURRENCY_EMOJI} من إدارة السيرفر.\\n"
+                    f"الرصيد دابا: **{after:,}** {cfg.CURRENCY_EMOJI}"
+                )
+        except (discord.Forbidden, discord.HTTPException):
+            dm_sent = False
+
+        tx_id = self._record_transaction(
+            guild.id,
+            user_id=member.id,
+            kind="admin_adjustment",
+            amount=abs(applied),
+            source="owner_control",
+            description="Owner balance adjustment",
+            splits={"delta": applied, "before": before, "after": after},
+        )
+        actor_text = actor.mention if actor else "Owner"
+        await self._economy_log(
+            guild,
+            f"🛡️ Owner Balance Adjustment — TX #{tx_id}",
+            (
+                f"**العضو:** {member.mention}\\n"
+                f"**التغيير الفعلي:** **{applied:+,}** {cfg.CURRENCY_EMOJI}\\n"
+                f"**قبل:** **{before:,}** → **بعد:** **{after:,}**\\n"
+                f"**من طرف:** {actor_text}"
+            ),
+            discord.Color.blurple(),
+        )
+        await self.refresh_economy_stats(guild)
+        return {
+            "before": before,
+            "after": after,
+            "applied": applied,
+            "dm_sent": dm_sent,
+            "tx_id": tx_id,
+        }
+
+
     # ════════════════════════════════════════════════
     # SHOP
     # ════════════════════════════════════════════════
 
-    @commands.hybrid_command(
-        name="shop", aliases=["متجر"], description="المتجر — شري بالدراهم 🛒"
-    )
+    @commands.command(name="shop", aliases=["متجر"], hidden=True)
     async def shop_cmd(self, ctx: commands.Context):
         balance = self.get_balance(ctx.guild.id, ctx.author.id)
 
@@ -1520,15 +1693,22 @@ class Economy(commands.Cog):
             color=discord.Color.blurple(),
         )
 
+        discount = self.get_shop_discount_percent(ctx.guild.id, ctx.author.id)
+        if discount:
+            embed.description += f"\n⭐ Level Discount ديالك: **-{discount}%**"
+
         for item in cfg.SHOP_ITEMS:
             if item["type"] == "temp_role" and not item.get("role_id"):
                 continue
-            affordable = "✅" if balance >= item["price"] else "❌"
+            final_price = self.get_shop_price(ctx.guild.id, ctx.author.id, item["price"])
+            affordable = "✅" if balance >= final_price else "❌"
+            price_text = (
+                f"~~{item['price']:,}~~ → **{final_price:,}**"
+                if final_price != item["price"]
+                else f"**{final_price:,}**"
+            )
             embed.add_field(
-                name=(
-                    f"{item['emoji']} {item['name']} — "
-                    f"{item['price']:,} {cfg.CURRENCY_EMOJI} {affordable}"
-                ),
+                name=f"{item['emoji']} {item['name']} — {price_text} {cfg.CURRENCY_EMOJI} {affordable}",
                 value=item["description"],
                 inline=False,
             )
@@ -1540,319 +1720,25 @@ class Economy(commands.Cog):
     # أمر givecoins — Owner فقط
     # ════════════════════════════════════════════════
 
-    @commands.hybrid_command(
-        name="givecoins",
-        description="(Owner فقط) عطي/حيّد دراهم لعضو",
-    )
-    @app_commands.describe(
-        member="العضو اللي بغيتي تعطيه الفلوس",
-        amount="العدد (موجب = تزاد، سالب = يتحيد)",
-    )
+    @commands.command(name="givecoins", hidden=True)
     async def givecoins_cmd(
         self, ctx: commands.Context, member: discord.Member, amount: int
     ):
-        # Owner فقط (OWNER_ID كيوصل عبر bot.gg، البريدج المعرف فـ ai_bot.py)
-        OWNER_ID = getattr(self.bot, "gg", {}).get("OWNER_ID")
-
-        if not OWNER_ID or ctx.author.id != OWNER_ID:
-            # ما نخرجو حتى جواب علني: Slash = ephemeral، Prefix fallback = DM.
-            if ctx.interaction:
-                await ctx.send(
-                    "❌ هاد الأمر خاص غير بـ Owner الحقيقي للسيرفر.",
-                    ephemeral=True,
-                )
-            else:
-                try:
-                    await ctx.author.send("❌ هاد الأمر خاص غير بـ Owner الحقيقي للسيرفر.")
-                except discord.HTTPException:
-                    pass
+        """Hidden prefix fallback. Owner workflow الحقيقي كاين فـ Owner Control Center."""
+        owner_id = getattr(self.bot, "gg", {}).get("OWNER_ID")
+        if not owner_id or ctx.author.id != owner_id:
             return
-
-        # طبّق التغيير فالفلوس، ولكن بلا حتى رسالة عامة فالسيرفر.
-        self.admin_give(ctx.guild, member, amount)
-        new_balance = self.get_balance(ctx.guild.id, member.id)
-
-        # غير العضو المستفيد كيتوصل بإشعار خاص فـ DM.
-        if amount >= 0:
-            dm_text = (
-                f"💰 وصلك **{amount:,}** {currency_word(amount)} {cfg.CURRENCY_EMOJI}!\n"
-                f"الرصيد ديالك دابا: **{new_balance:,}** {cfg.CURRENCY_EMOJI}"
-            )
-        else:
-            dm_text = (
-                f"💸 تحيدو من رصيدك **{abs(amount):,}** {currency_word(amount)} {cfg.CURRENCY_EMOJI}.\n"
-                f"الرصيد ديالك دابا: **{new_balance:,}** {cfg.CURRENCY_EMOJI}"
-            )
-
-        dm_sent = True
+        result = await self.owner_adjust_balance(
+            ctx.guild, member, amount, actor=ctx.author
+        )
         try:
-            await member.send(dm_text)
-        except (discord.Forbidden, discord.HTTPException):
-            dm_sent = False
-
-        tx_id = self._record_transaction(
-            ctx.guild.id,
-            user_id=member.id,
-            kind="admin_adjustment",
-            amount=abs(amount),
-            source="givecoins",
-            description=("إضافة Owner" if amount >= 0 else "خصم Owner"),
-        )
-        await self._economy_log(
-            ctx.guild,
-            f"🛡️ Owner Balance Adjustment — TX #{tx_id}",
-            f"**العضو:** {member.mention}\n**التغيير:** **{amount:+,}** {cfg.CURRENCY_EMOJI}\n"
-            f"**الرصيد الجديد:** **{new_balance:,}**",
-            discord.Color.blurple(),
-        )
-
-        # تأكيد سري للـ Owner فقط؛ ما كيبان لحتى واحد آخر فالسيرفر.
-        owner_confirmation = (
-            f"✅ تم تعديل رصيد {member.mention} بسرية. "
-            f"الرصيد الجديد: **{new_balance:,}** {cfg.CURRENCY_EMOJI}"
-        )
-        if not dm_sent:
-            owner_confirmation += "\n⚠️ العضو ساد الـ DM، لذلك ما قدرش يتوصل بالإشعار الخاص."
-
-        if ctx.interaction:
-            await ctx.send(owner_confirmation, ephemeral=True)
-        else:
-            try:
-                await ctx.author.send(owner_confirmation)
-            except discord.HTTPException:
-                pass
-
-
-class BankAmountModal(discord.ui.Modal):
-    def __init__(self, cog: "Economy", action: str):
-        title = "🏦 إيداع فالبنك" if action == "deposit" else "💸 سحب من البنك"
-        super().__init__(title=title)
-        self.cog = cog
-        self.action = action
-        self.amount = discord.ui.TextInput(
-            label="المبلغ",
-            placeholder="مثلا 500",
-            min_length=1,
-            max_length=12,
-            required=True,
-        )
-        self.add_item(self.amount)
-
-    async def on_submit(self, interaction: discord.Interaction):
-        raw = str(self.amount.value).strip().replace(",", "").replace(" ", "")
-        if not raw.isdigit() or int(raw) <= 0:
-            await interaction.response.send_message("❌ دخل مبلغ صحيح أكبر من 0.", ephemeral=True)
-            return
-        amount = int(raw)
-        if self.action == "deposit":
-            ok, msg = await self.cog.bank_deposit(interaction.guild, interaction.user, amount)
-        else:
-            ok, msg = await self.cog.bank_withdraw(interaction.guild, interaction.user, amount)
-        await interaction.response.send_message(msg, ephemeral=True)
-
-
-
-class LoanRequestModal(discord.ui.Modal):
-    def __init__(self, cog: "Economy", guild_id: int, user_id: int):
-        terms = cog.get_loan_terms(guild_id, user_id)
-        limit = int(terms["effective_limit"])
-        super().__init__(title="💳 طلب قرض من GGMW9 Bank")
-        self.cog = cog
-        self.amount = discord.ui.TextInput(
-            label="شحال بغيتي تسلف؟",
-            placeholder=f"من {getattr(cfg, 'LOAN_MIN_AMOUNT', 100)} حتى {limit}",
-            min_length=1,
-            max_length=12,
-            required=True,
-        )
-        self.add_item(self.amount)
-
-    async def on_submit(self, interaction: discord.Interaction):
-        raw = str(self.amount.value).strip().replace(",", "").replace(" ", "")
-        if not raw.isdigit() or int(raw) <= 0:
-            await interaction.response.send_message("❌ دخل مبلغ صحيح.", ephemeral=True)
-            return
-        ok, msg = await self.cog.request_loan(
-            interaction.guild, interaction.user, int(raw)
-        )
-        await interaction.response.send_message(msg, ephemeral=True)
-
-
-class LoanRepayModal(discord.ui.Modal):
-    def __init__(self, cog: "Economy", loan: dict):
-        super().__init__(title=f"💸 أداء Loan #{loan.get('id')}")
-        self.cog = cog
-        self.amount = discord.ui.TextInput(
-            label="شحال بغيتي تخلص دابا؟",
-            placeholder=f"الباقي {int(loan.get('remaining', 0))}",
-            min_length=1,
-            max_length=12,
-            required=True,
-        )
-        self.add_item(self.amount)
-
-    async def on_submit(self, interaction: discord.Interaction):
-        raw = str(self.amount.value).strip().replace(",", "").replace(" ", "")
-        if not raw.isdigit() or int(raw) <= 0:
-            await interaction.response.send_message("❌ دخل مبلغ صحيح.", ephemeral=True)
-            return
-        ok, msg = await self.cog.repay_loan(
-            interaction.guild, interaction.user, int(raw)
-        )
-        await interaction.response.send_message(msg, ephemeral=True)
-
-
-class EconomyBankPanelView(discord.ui.View):
-    """Central Bank Panel دائم — كاع الوظائف هنا Buttons/Modals، بلا حتى Slash جديد."""
-
-    def __init__(self, cog: "Economy"):
-        super().__init__(timeout=None)
-        self.cog = cog
-
-    @discord.ui.button(
-        label="💳 حسابي", style=discord.ButtonStyle.primary,
-        custom_id="ggmw9:economy:account", row=0
-    )
-    async def account_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message(
-            embed=self.cog.build_user_account_embed(interaction.guild, interaction.user),
-            ephemeral=True,
-        )
-
-    @discord.ui.button(
-        label="🏦 إيداع", style=discord.ButtonStyle.success,
-        custom_id="ggmw9:economy:deposit", row=0
-    )
-    async def deposit_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(BankAmountModal(self.cog, "deposit"))
-
-    @discord.ui.button(
-        label="💸 سحب", style=discord.ButtonStyle.secondary,
-        custom_id="ggmw9:economy:withdraw", row=0
-    )
-    async def withdraw_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(BankAmountModal(self.cog, "withdraw"))
-
-    @discord.ui.button(
-        label="🏛️ الخزينة", style=discord.ButtonStyle.secondary,
-        custom_id="ggmw9:economy:treasury", row=0
-    )
-    async def treasury_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        sys = self.cog._system(interaction.guild.id)
-        embed = discord.Embed(
-            title="🏛️ خزينة السيرفر",
-            description=(
-                f"🏛️ **Treasury:** {sys['treasury']:,} {cfg.CURRENCY_EMOJI}\n"
-                f"🎉 **Events Fund:** {sys['events']:,} {cfg.CURRENCY_EMOJI}\n"
-                f"🔥 **Burned من البداية:** {sys['burned']:,} {cfg.CURRENCY_EMOJI}\n\n"
-                "الخزينة وصندوق Events فلوس حقيقية خارجة من الاقتصاد ديال اللاعبين؛ "
-                "الـBurn هو اللي كيتحيد نهائياً ضد التضخم."
-            ),
-            color=discord.Color.gold(),
-        )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
-    @discord.ui.button(
-        label="🎰 Jackpot", style=discord.ButtonStyle.danger,
-        custom_id="ggmw9:economy:jackpot", row=1
-    )
-    async def jackpot_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        sys = self.cog._system(interaction.guild.id)
-        embed = discord.Embed(
-            title="🎰 Global Jackpot",
-            description=(
-                f"# **{sys['jackpot']:,}** {cfg.CURRENCY_EMOJI}\n\n"
-                "كيكبر من جزء من الرهانات اللي **تخسرو فعلاً**.\n"
-                "🏆 كيتصرف كامل تلقائياً ملي يجي Jackpot حقيقي فـ:\n"
-                "• 🎰 Slots — `7️⃣ | 7️⃣ | 7️⃣`\n"
-                "• 🎫 Scratch — رمز `💰` الفائز\n"
-                "• 🎟️ Lottery — تطابق كامل"
-            ),
-            color=discord.Color.gold(),
-        )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
-    @discord.ui.button(
-        label="📊 الاقتصاد", style=discord.ButtonStyle.primary,
-        custom_id="ggmw9:economy:stats", row=1
-    )
-    async def stats_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message(
-            embed=self.cog.build_global_economy_embed(interaction.guild),
-            ephemeral=True,
-        )
-
-    @discord.ui.button(
-        label="🧾 معاملاتي", style=discord.ButtonStyle.secondary,
-        custom_id="ggmw9:economy:transactions", row=1
-    )
-    async def transactions_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message(
-            embed=self.cog.build_user_transactions_embed(interaction.guild, interaction.user),
-            ephemeral=True,
-        )
-
-
-    @discord.ui.button(
-        label="💳 طلب قرض", style=discord.ButtonStyle.success,
-        custom_id="ggmw9:economy:loan_request", row=1
-    )
-    async def loan_request_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        loan = self.cog.get_active_loan(interaction.guild.id, interaction.user.id)
-        if loan:
-            state = "⚠️ متأخر" if self.cog._loan_is_overdue(loan) else "🟢 خدام"
-            await interaction.response.send_message(
-                (
-                    f"💳 عندك Loan **#{loan.get('id')}** {state}.\\n"
-                    f"الباقي: **{int(loan.get('remaining', 0)):,}** {cfg.CURRENCY_EMOJI}\\n"
-                    f"الأجل: <t:{self.cog._loan_due_unix(loan)}:F> "
-                    f"(<t:{self.cog._loan_due_unix(loan)}:R>)\\n"
-                    "خاصك تساليه قبل قرض جديد."
-                ),
-                ephemeral=True,
+            await ctx.author.send(
+                f"✅ {member} | {result['applied']:+,} {cfg.CURRENCY_EMOJI} | "
+                f"Balance: {result['after']:,}"
             )
-            return
-        terms = self.cog.get_loan_terms(interaction.guild.id, interaction.user.id)
-        min_amount = int(getattr(cfg, "LOAN_MIN_AMOUNT", 100) or 100)
-        if int(terms["effective_limit"]) < min_amount:
-            await interaction.response.send_message(
-                (
-                    f"❌ الحد ديالك ماكافيش لقرض دابا.\n"
-                    f"⭐ Level **{terms['level']}** — {terms['tier_name']}\n"
-                    f"💳 Credit **{terms['credit_score']}/100**\n"
-                    f"🏛️ الحد الفعلي: **{terms['effective_limit']:,}** {cfg.CURRENCY_EMOJI}\n\n"
-                    "ضغط **⭐ امتيازات XP** باش تشوف الطريق للـTier الجاي."
-                ),
-                ephemeral=True,
-            )
-            return
-        await interaction.response.send_modal(
-            LoanRequestModal(self.cog, interaction.guild.id, interaction.user.id)
-        )
+        except discord.HTTPException:
+            pass
 
-    @discord.ui.button(
-        label="💸 خلص القرض", style=discord.ButtonStyle.primary,
-        custom_id="ggmw9:economy:loan_repay", row=1
-    )
-    async def loan_repay_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        loan = self.cog.get_active_loan(interaction.guild.id, interaction.user.id)
-        if not loan:
-            await interaction.response.send_message(
-                "ℹ️ ماعندك حتى قرض خدام دابا.", ephemeral=True
-            )
-            return
-        await interaction.response.send_modal(LoanRepayModal(self.cog, loan))
-
-
-    @discord.ui.button(
-        label="⭐ امتيازات XP", style=discord.ButtonStyle.secondary,
-        custom_id="ggmw9:economy:xp_perks", row=2
-    )
-    async def xp_perks_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message(
-            embed=self.cog.build_xp_bank_perks_embed(interaction.guild, interaction.user),
-            ephemeral=True,
-        )
 
 
 class ShopView(discord.ui.View):
@@ -1862,12 +1748,17 @@ class ShopView(discord.ui.View):
         self.user = user
 
         options = []
+        guild = getattr(user, "guild", None)
         for item in cfg.SHOP_ITEMS:
             if item["type"] == "temp_role" and not item.get("role_id"):
                 continue
+            shown_price = (
+                cog.get_shop_price(guild.id, user.id, item["price"])
+                if guild else item["price"]
+            )
             options.append(
                 discord.SelectOption(
-                    label=f"{item['name']} — {item['price']} 🪙",
+                    label=f"{item['name']} — {shown_price} 🪙",
                     value=item["id"],
                     emoji=item["emoji"],
                     description=item["description"][:100],
@@ -1898,26 +1789,37 @@ class ShopSelect(discord.ui.Select):
             )
             return
 
+        price = self.cog.get_shop_price(
+            interaction.guild.id, interaction.user.id, item["price"]
+        )
+        discount = self.cog.get_shop_discount_percent(
+            interaction.guild.id, interaction.user.id
+        )
         balance = self.cog.get_balance(interaction.guild.id, interaction.user.id)
-        if balance < item["price"]:
+        if balance < price:
             await interaction.response.send_message(
-                f"❌ ماكافيوش — خاصك **{item['price'] - balance:,}** "
+                f"❌ ماكافيوش — خاصك **{price - balance:,}** "
                 f"{cfg.CURRENCY_EMOJI} زيادة.",
                 ephemeral=True,
             )
             return
 
+        priced_item = dict(item)
+        priced_item["_final_price"] = price
+
         if item["type"] == "role_color":
             await interaction.response.send_message(
                 f"🎨 اختار اللون اللي بغيتي "
-                f"({item['price']} {cfg.CURRENCY_EMOJI}):",
-                view=ColorPickView(self.cog, interaction.user, item),
+                f"(**{price}** {cfg.CURRENCY_EMOJI}"
+                + (f" بعد -{discount}% Level Discount" if discount else "")
+                + "):",
+                view=ColorPickView(self.cog, interaction.user, priced_item),
                 ephemeral=True,
             )
             return
 
         if item["type"] == "custom_role":
-            await interaction.response.send_modal(CustomRoleModal(self.cog, item))
+            await interaction.response.send_modal(CustomRoleModal(self.cog, priced_item))
             return
 
         await interaction.response.defer(ephemeral=True)
@@ -1925,17 +1827,19 @@ class ShopSelect(discord.ui.Select):
             self.cog, interaction.guild, interaction.user, item
         )
         if ok:
-            if not self.cog.spend(interaction.guild.id, interaction.user.id, item["price"]):
+            if not self.cog.spend(interaction.guild.id, interaction.user.id, price):
                 await interaction.followup.send("❌ الرصيد تبدل قبل ما يكمل الشراء.", ephemeral=True)
                 return
             await self.cog.route_shop_purchase(
-                interaction.guild, interaction.user, item["price"], item
+                interaction.guild, interaction.user, price, item
             )
             new_balance = self.cog.get_balance(
                 interaction.guild.id, interaction.user.id
             )
+            saved = max(0, int(item["price"]) - int(price))
+            discount_note = f"\n⭐ Level Discount: وفرتي **{saved:,}**" if saved else ""
             await interaction.followup.send(
-                f"✅ {msg}\n💰 الرصيد الجديد: **{new_balance:,}** {cfg.CURRENCY_EMOJI}",
+                f"✅ {msg}{discount_note}\n💰 الرصيد الجديد: **{new_balance:,}** {cfg.CURRENCY_EMOJI}",
                 ephemeral=True,
             )
         else:
@@ -1972,13 +1876,16 @@ class ColorPickView(discord.ui.View):
             self.cog, interaction.guild, interaction.user, item
         )
         if ok:
-            if not self.cog.spend(interaction.guild.id, interaction.user.id, item["price"]):
+            final_price = int(item.get("_final_price", item["price"]))
+            if not self.cog.spend(interaction.guild.id, interaction.user.id, final_price):
                 await interaction.followup.send("❌ الرصيد تبدل قبل ما يكمل الشراء.", ephemeral=True)
                 return
             await self.cog.route_shop_purchase(
-                interaction.guild, interaction.user, item["price"], item
+                interaction.guild, interaction.user, final_price, item
             )
-            await interaction.followup.send(f"✅ {msg}", ephemeral=True)
+            saved = max(0, int(item["price"]) - final_price)
+            note = f"\n⭐ Level Discount: وفرتي **{saved:,}**" if saved else ""
+            await interaction.followup.send(f"✅ {msg}{note}", ephemeral=True)
         else:
             await interaction.followup.send(f"❌ {msg}", ephemeral=True)
 
@@ -2001,13 +1908,16 @@ class CustomRoleModal(discord.ui.Modal, title="🏷️ الرول المخصص �
             self.cog, interaction.guild, interaction.user, item
         )
         if ok:
-            if not self.cog.spend(interaction.guild.id, interaction.user.id, item["price"]):
+            final_price = int(item.get("_final_price", item["price"]))
+            if not self.cog.spend(interaction.guild.id, interaction.user.id, final_price):
                 await interaction.followup.send("❌ الرصيد تبدل قبل ما يكمل الشراء.", ephemeral=True)
                 return
             await self.cog.route_shop_purchase(
-                interaction.guild, interaction.user, item["price"], item
+                interaction.guild, interaction.user, final_price, item
             )
-            await interaction.followup.send(f"✅ {msg}", ephemeral=True)
+            saved = max(0, int(item["price"]) - final_price)
+            note = f"\n⭐ Level Discount: وفرتي **{saved:,}**" if saved else ""
+            await interaction.followup.send(f"✅ {msg}{note}", ephemeral=True)
         else:
             await interaction.followup.send(f"❌ {msg}", ephemeral=True)
 
