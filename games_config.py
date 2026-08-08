@@ -122,6 +122,23 @@ CURRENCY_NAME_PLURAL = "دولار"
 CURRENCY_EMOJI = "💵"
 MONEY_SCALE = 100
 
+# Display-only FX conversion. The actual GGMW9 ledger ALWAYS stays in USD cents.
+# Members can choose how balances are displayed; bets, transfers and accounting remain USD.
+DISPLAY_CURRENCIES = {
+    "USD": {"emoji": "🇺🇸", "symbol": "$",  "name": "US Dollar",        "decimals": 2},
+    "MAD": {"emoji": "🇲🇦", "symbol": "DH", "name": "Moroccan Dirham", "decimals": 2},
+    "EUR": {"emoji": "🇪🇺", "symbol": "€",  "name": "Euro",             "decimals": 2},
+    "DZD": {"emoji": "🇩🇿", "symbol": "DA", "name": "Algerian Dinar",   "decimals": 2},
+}
+FX_API_URL = "https://api.frankfurter.dev/v2/rates?base=USD&quotes=EUR,MAD,DZD"
+FX_REFRESH_MINUTES = 360  # cache daily reference rates; 6h refresh is more than enough
+
+# Large-win feed. 0 means the bot will auto-create/find a public read-only
+# channel named 💎・big-wins inside GGMW9 ECONOMY.
+CASINO_BIG_WIN_CHANNEL_ID = 0
+CASINO_BIG_WIN_MIN_PROFIT = 25000       # $250 net profit in one wager
+CASINO_BIG_WIN_MIN_PAYOUT_MULTIPLIER = 10.0
+
 
 def fmt_money(cents: int, *, signed: bool = False) -> str:
     """Format internal integer cents as USD, e.g. 200000 -> $2,000.00."""
@@ -311,7 +328,7 @@ LOTTERY_PICK_COUNT = 4
 LOTTERY_PAYOUTS = {2: 3, 3: 20, 4: 250}  # 76.16% base RTP + funded Global Jackpot on 4/4
 
 # Casino fairness / anti-abuse. Odds never change per user.
-CASINO_MAX_BET_WALLET_PERCENT = 10   # per-round bankroll protection
+CASINO_MAX_BET_WALLET_PERCENT = 25   # default max wager = 25% of Wallet; same rule for everybody
 CASINO_MAX_ROUNDS_30M = 60           # anti-bot/session guard
 CASINO_PROFILE_WINDOW_MINUTES = 30
 CASINO_FAIRNESS_VERSION = "GGMW9 Fair RNG v1"

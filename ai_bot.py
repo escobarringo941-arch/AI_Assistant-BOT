@@ -38,6 +38,94 @@ sys.stderr.reconfigure(line_buffering=True)
 DATA_DIR = "/app/data"
 os.makedirs(DATA_DIR, exist_ok=True)
 
+# ═══════ Public Panels — language preference + one-message private sessions ═══════
+# Darija هي اللغة العامة/default. اختيار EN/FR شخصي لكل عضو وما كيبدلش البانل على الآخرين.
+PANEL_LANGUAGES_FILE = os.path.join(DATA_DIR, "panel_languages.json")
+PANEL_LANGUAGES = {}
+try:
+    if os.path.exists(PANEL_LANGUAGES_FILE):
+        with open(PANEL_LANGUAGES_FILE, "r", encoding="utf-8") as _f:
+            _loaded_panel_langs = json.load(_f)
+            if isinstance(_loaded_panel_langs, dict):
+                PANEL_LANGUAGES = _loaded_panel_langs
+except Exception as _e:
+    print(f"[PANEL-LANG] load failed: {_e}")
+
+
+def _panel_lang_key(guild_id: int, user_id: int) -> str:
+    return f"{int(guild_id or 0)}:{int(user_id)}"
+
+
+def get_panel_language(guild_id: int, user_id: int) -> str:
+    lang = str(PANEL_LANGUAGES.get(_panel_lang_key(guild_id, user_id), "darija") or "darija").lower()
+    return lang if lang in {"darija", "en", "fr"} else "darija"
+
+
+def set_panel_language(guild_id: int, user_id: int, lang: str) -> str:
+    lang = str(lang or "darija").lower()
+    if lang not in {"darija", "en", "fr"}:
+        lang = "darija"
+    PANEL_LANGUAGES[_panel_lang_key(guild_id, user_id)] = lang
+    try:
+        with open(PANEL_LANGUAGES_FILE, "w", encoding="utf-8") as _f:
+            json.dump(PANEL_LANGUAGES, _f, ensure_ascii=False, indent=2)
+    except Exception as _e:
+        print(f"[PANEL-LANG] save failed: {_e}")
+    return lang
+
+
+async def upsert_ephemeral_panel(
+    interaction: discord.Interaction,
+    session_key: str,
+    *,
+    content=None,
+    embed=None,
+    embeds=None,
+    view=None,
+):
+    """One private panel message per guild+user+session.
+
+    Public buttons never pile ephemeral messages: a later click edits the previous
+    private panel when Discord's webhook token is still valid, otherwise it safely
+    creates a fresh one. Submenus can keep using interaction.response.edit_message.
+    """
+    if not hasattr(bot, "_ggmw9_panel_sessions"):
+        bot._ggmw9_panel_sessions = {}
+    guild_id = interaction.guild.id if interaction.guild else 0
+    key = (int(guild_id), int(interaction.user.id), str(session_key))
+    sessions = bot._ggmw9_panel_sessions
+
+    if not interaction.response.is_done():
+        await interaction.response.defer(ephemeral=True)
+
+    kwargs = {"content": content, "view": view}
+    if embeds is not None:
+        kwargs["embeds"] = embeds
+    elif embed is not None:
+        kwargs["embed"] = embed
+    else:
+        kwargs["embeds"] = []
+
+    previous = sessions.get(key)
+    if previous is not None:
+        try:
+            await previous.edit(**kwargs)
+            return previous
+        except (discord.NotFound, discord.HTTPException):
+            sessions.pop(key, None)
+
+    send_kwargs = dict(kwargs)
+    send_kwargs["ephemeral"] = True
+    send_kwargs["wait"] = True
+    try:
+        msg = await interaction.followup.send(**send_kwargs)
+        sessions[key] = msg
+        return msg
+    except discord.HTTPException:
+        send_kwargs.pop("wait", None)
+        await interaction.followup.send(**send_kwargs)
+        return None
+
 TARGET_CHANNEL_ID = 1526384339670270012
 WELCOME_CHANNEL_ID = 1524957892925456545
 
@@ -4545,11 +4633,95 @@ class SupportReportMemberSelectView(discord.ui.View):
         self.add_item(SupportReportMemberSelect())
 
 
+def _panel_language_guide_embed(kind: str, lang: str) -> discord.Embed:
+    lang = lang if lang in {"darija", "en", "fr"} else "darija"
+    if kind == "support":
+        if lang == "en":
+            title = "🆘 Support Center — English"
+            desc = (
+                "Your language is now **English** for supported GGMW9 panels.\n\n"
+                "🚨 **Report member** — report a specific member privately.\n"
+                "⚠️ **General report** — report an issue not tied to one member.\n"
+                "🎫 **Open Ticket** — private conversation with staff.\n"
+                "❓ **Get Help** — describe a problem and open a detailed ticket."
+            )
+        elif lang == "fr":
+            title = "🆘 Centre d'assistance — Français"
+            desc = (
+                "Ta langue est maintenant **Français** pour les panneaux GGMW9 compatibles.\n\n"
+                "🚨 **Signaler un membre** — signalement privé d'un membre.\n"
+                "⚠️ **Signalement général** — problème sans membre précis.\n"
+                "🎫 **Ouvrir un ticket** — discussion privée avec le staff.\n"
+                "❓ **Demander de l'aide** — explique le problème et ouvre un ticket détaillé."
+            )
+        else:
+            title = "🆘 Support Center — الدارجة"
+            desc = (
+                "الدارجة هي **اللغة الأساسية** ديال GGMW9.\n\n"
+                "🚨 **بلغ على عضو** — بلاغ خاص على عضو محدد.\n"
+                "⚠️ **بلاغ عام** — مشكل ما مرتبطش بعضو معين.\n"
+                "🎫 **فتح Ticket** — محادثة خاصة مع الإدارة.\n"
+                "❓ **طلب مساعدة** — شرح المشكل وفتح Ticket بالتفاصيل."
+            )
+    else:
+        if lang == "en":
+            title = "⭐ Levels & XP — English"
+            desc = (
+                "Your language is now **English** for supported GGMW9 panels.\n\n"
+                "📊 **My Rank** • 👤 **Member Rank** • 🏆 **Leaderboard** • 🪜 **Roadmap**\n"
+                "📝 **Bio** unlocks at Lv20 • 🗳️ **Poll** at Lv60 • 👑 **Legend Title** at Lv100."
+            )
+        elif lang == "fr":
+            title = "⭐ Niveaux & XP — Français"
+            desc = (
+                "Ta langue est maintenant **Français** pour les panneaux GGMW9 compatibles.\n\n"
+                "📊 **Mon rang** • 👤 **Rang d'un membre** • 🏆 **Classement** • 🪜 **Progression**\n"
+                "📝 **Bio** au niv.20 • 🗳️ **Sondage** au niv.60 • 👑 **Titre Legend** au niv.100."
+            )
+        else:
+            title = "⭐ Levels & XP — الدارجة"
+            desc = (
+                "الدارجة هي **اللغة الأساسية** ديال GGMW9.\n\n"
+                "📊 **Rank ديالي** • 👤 **Rank ديال عضو** • 🏆 **Leaderboard** • 🪜 **Roadmap**\n"
+                "📝 **Bio** فـLv20 • 🗳️ **Poll** فـLv60 • 👑 **Legend Title** فـLv100."
+            )
+    embed = discord.Embed(title=title, description=desc, color=discord.Color.blurple())
+    embed.set_footer(text="🌐 Language preference is personal — ما كتبدلش البانل على الأعضاء الآخرين")
+    return embed
+
+
+class GlobalPanelLanguageSelect(discord.ui.Select):
+    def __init__(self, kind: str, *, row: int = 1):
+        self.kind = kind
+        options = [
+            discord.SelectOption(label="Darija", value="darija", emoji="🇲🇦", description="اللغة الأساسية / Default"),
+            discord.SelectOption(label="English", value="en", emoji="🇬🇧", description="English interface"),
+            discord.SelectOption(label="Français", value="fr", emoji="🇫🇷", description="Interface française"),
+        ]
+        super().__init__(
+            placeholder="🌐 اللغة / Language / Langue",
+            options=options,
+            min_values=1, max_values=1,
+            custom_id=f"ggmw9:{kind}:language",
+            row=row,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        lang = set_panel_language(interaction.guild.id if interaction.guild else 0, interaction.user.id, self.values[0])
+        await upsert_ephemeral_panel(
+            interaction,
+            self.kind,
+            embed=_panel_language_guide_embed(self.kind, lang),
+            view=None,
+        )
+
+
 class SupportCenterView(discord.ui.View):
     """الواجهة العامة الوحيدة ديال Reports + Tickets."""
 
     def __init__(self):
         super().__init__(timeout=None)
+        self.add_item(GlobalPanelLanguageSelect("support", row=1))
 
     @discord.ui.button(
         label="بلغ على عضو",
@@ -4559,11 +4731,14 @@ class SupportCenterView(discord.ui.View):
         row=0,
     )
     async def report_member(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message(
-            "👤 اختار العضو اللي بغيتي تبلغ عليه.\n"
-            "💡 إلا ما بانش فاللائحة، كتب سميتو فـSearch.",
-            view=SupportReportMemberSelectView(),
-            ephemeral=True,
+        lang = get_panel_language(interaction.guild.id, interaction.user.id)
+        prompt = (
+            "👤 Choose the member you want to report.\n💡 If they are not suggested, search their name." if lang == "en" else
+            "👤 Choisis le membre à signaler.\n💡 S'il n'apparaît pas, recherche son nom." if lang == "fr" else
+            "👤 اختار العضو اللي بغيتي تبلغ عليه.\n💡 إلا ما بانش فاللائحة، كتب سميتو فـSearch."
+        )
+        await upsert_ephemeral_panel(
+            interaction, "support", content=prompt, view=SupportReportMemberSelectView()
         )
 
     @discord.ui.button(
@@ -4678,7 +4853,8 @@ async def setup_support_center(guild: discord.Guild):
             "🔒 **البلاغات ما كيبانوش للناس:** كيمشيو مباشرة لقناة الإدارة.\n"
             "💬 **Tickets خاصة:** غير نتا والإدارة كتشوفوها.\n"
             "📎 إلا عندك دليل، دير **Copy Message Link** وحطو فالبلاغ، "
-            "أو زيد الصور داخل Ticket."
+            "أو زيد الصور داخل Ticket.\n\n"
+            "🌐 **اللغات:** الدارجة Default • 🇬🇧 English • 🇫🇷 Français — اختار لغتك من اللائحة تحت البانل."
         ),
         color=discord.Color.blurple(),
         timestamp=datetime.now(),
@@ -7731,7 +7907,8 @@ async def setup_levels_info_message(guild: discord.Guild):
             "ومدة أطول**، ومع Levels معينة كتفتح Discord/Social perks آمنة.\n\n"
             "## 🖱️ ما تحتاج تكتب حتى Command\n"
             "استعمل الـPanel اللي تحت: **Rank ديالك، Rank ديال عضو، Leaderboard، Roadmap، Bio، Poll وLegend Title**. "
-            "المعلومات الشخصية كتبان غير ليك باش الشانيل يبقى نقي."
+            "المعلومات الشخصية كتبان غير ليك باش الشانيل يبقى نقي.\n\n"
+            "🌐 **اللغات:** الدارجة Default • 🇬🇧 English • 🇫🇷 Français — اختيار اللغة شخصي لكل عضو."
         ),
         color=discord.Color.gold(),
         timestamp=datetime.now(),
@@ -10374,6 +10551,7 @@ class LevelsInfoView(discord.ui.View):
 
     def __init__(self):
         super().__init__(timeout=None)
+        self.add_item(GlobalPanelLanguageSelect("levels", row=1))
 
     @discord.ui.button(
         label="Rank ديالي",
@@ -12812,6 +12990,9 @@ async def on_ready():
 bot.gg = {
     "DATA_DIR": DATA_DIR,
     "OWNER_ID": OWNER_ID,
+    "get_panel_language": get_panel_language,
+    "set_panel_language": set_panel_language,
+    "upsert_ephemeral_panel": upsert_ephemeral_panel,
     "get_user_level_data": get_user_level_data,   # ← Economy/Shop/Bank كيقرا Level الحقيقي
     "get_level_perks": get_level_perks,            # ← Shop discount + Daily bonus + Level benefits
     "save_levels": save_levels,
