@@ -38,8 +38,8 @@ sys.stderr.reconfigure(line_buffering=True)
 DATA_DIR = "/app/data"
 os.makedirs(DATA_DIR, exist_ok=True)
 
-# ═══════ Public Panels — language preference + one-message private sessions ═══════
-# Darija هي اللغة العامة/default. اختيار EN/FR شخصي لكل عضو وما كيبدلش البانل على الآخرين.
+# ═══════ Public Panels — fixed Darija + fresh private language sessions ═══════
+# Public messages stay Darija. A language choice ALWAYS opens a fresh ephemeral panel; private selectors edit that same ephemeral message.
 PANEL_LANGUAGES_FILE = os.path.join(DATA_DIR, "panel_languages.json")
 PANEL_LANGUAGES = {}
 try:
@@ -3715,9 +3715,122 @@ class RolePickerView(discord.ui.View):
                 self.add_item(RoleCategorySelect(category_name, valid))
 
 
+
+def _rules_body(lang: str = "darija") -> str:
+    """Return only one language section from SERVER_RULES without changing verify logic."""
+    lang = lang if lang in {"darija", "en", "fr"} else "darija"
+    markers = {
+        "darija": "**🇲🇦 بالدارجة:**",
+        "en": "**🇬🇧 English:**",
+        "fr": "**🇫🇷 Français :**",
+    }
+    order = ["darija", "en", "fr"]
+    raw = SERVER_RULES
+    marker = markers[lang]
+    start = raw.find(marker)
+    if start < 0:
+        return raw
+    start += len(marker)
+    end = len(raw)
+    idx = order.index(lang)
+    for nxt in order[idx + 1:]:
+        pos = raw.find(markers[nxt], start)
+        if pos >= 0:
+            end = min(end, pos)
+    return raw[start:end].strip()
+
+
+def _build_rules_translation_embed(guild: discord.Guild, lang: str = "darija") -> discord.Embed:
+    lang = lang if lang in {"darija", "en", "fr"} else "darija"
+    if lang == "en":
+        title = "📜 Server Rules — English"
+        note = "This is your private translation. Verification still uses the ✅ Agree / ❌ Refuse buttons on the original public Rules panel."
+        footer = "Private translation • You can switch language as often as you want"
+    elif lang == "fr":
+        title = "📜 Règles du serveur — Français"
+        note = "Ceci est ta traduction privée. La vérification utilise toujours les boutons ✅ Accepter / ❌ Refuser sur le panneau public original."
+        footer = "Traduction privée • Tu peux changer de langue autant de fois que tu veux"
+    else:
+        title = "📜 قوانين السيرفر — الدارجة"
+        note = "هادي النسخة الخاصة ديالك. التفعيل كيبقى من أزرار ✅ كنوافق / ❌ كنرفض فالرسالة الأصلية ديال Rules."
+        footer = "ترجمة خاصة • تقدر تبدل اللغة بلا حد"
+    embed = discord.Embed(
+        title=title,
+        description=f"{_rules_body(lang)}\n\n> {note}",
+        color=discord.Color.blue(),
+        timestamp=datetime.now(),
+    )
+    if guild and guild.icon:
+        embed.set_thumbnail(url=guild.icon.url)
+    embed.set_footer(text=footer)
+    return embed
+
+
+class RulesPrivateLanguageSelect(discord.ui.Select):
+    def __init__(self, user_id: int, lang: str = "darija"):
+        self.user_id = int(user_id)
+        self.lang = lang if lang in {"darija", "en", "fr"} else "darija"
+        super().__init__(
+            placeholder="🌐 اللغة / Language / Langue",
+            options=[
+                discord.SelectOption(label="Darija", value="darija", emoji="🇲🇦", default=self.lang == "darija"),
+                discord.SelectOption(label="English", value="en", emoji="🇬🇧", default=self.lang == "en"),
+                discord.SelectOption(label="Français", value="fr", emoji="🇫🇷", default=self.lang == "fr"),
+            ],
+            min_values=1,
+            max_values=1,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("❌ هاد الترجمة ماشي ديالك.", ephemeral=True)
+            return
+        lang = set_panel_language(interaction.guild.id if interaction.guild else 0, interaction.user.id, self.values[0])
+        await interaction.response.edit_message(
+            embed=_build_rules_translation_embed(interaction.guild, lang),
+            view=RulesPrivateLanguageView(interaction.user.id, lang),
+        )
+
+
+class RulesPrivateLanguageView(discord.ui.View):
+    def __init__(self, user_id: int, lang: str = "darija"):
+        super().__init__(timeout=1800)
+        self.add_item(RulesPrivateLanguageSelect(user_id, lang))
+
+
+class RulesLanguageSelect(discord.ui.Select):
+    """Public mini selector. Every use opens a BRAND-NEW private translation.
+
+    We intentionally do not cache the ephemeral message. If the member presses
+    Dismiss, the next selection on the public Rules message works immediately.
+    """
+    def __init__(self):
+        super().__init__(
+            placeholder="🌐 ترجمة القوانين / Rules language / Langue",
+            options=[
+                discord.SelectOption(label="Darija", value="darija", emoji="🇲🇦"),
+                discord.SelectOption(label="English", value="en", emoji="🇬🇧"),
+                discord.SelectOption(label="Français", value="fr", emoji="🇫🇷"),
+            ],
+            min_values=1,
+            max_values=1,
+            custom_id="ggmw9:rules:language",
+            row=1,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        lang = set_panel_language(interaction.guild.id if interaction.guild else 0, interaction.user.id, self.values[0])
+        await interaction.response.send_message(
+            embed=_build_rules_translation_embed(interaction.guild, lang),
+            view=RulesPrivateLanguageView(interaction.user.id, lang),
+            ephemeral=True,
+        )
+
+
 class RulesVerifyView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)  # باش يبقى خدام للأبد (persistent view)
+        self.add_item(RulesLanguageSelect())
 
     def _is_exempt(self, member: discord.Member) -> bool:
         if member.id == OWNER_ID:
@@ -3865,24 +3978,24 @@ class RulesVerifyView(discord.ui.View):
 
 
 async def setup_rules_message(guild: discord.Guild):
-    """Refresh the one official Rules panel in-place; never require manual deletion."""
+    """Refresh the one official Rules panel in-place. Public content stays Darija."""
     rules_channel = bot.get_channel(RULES_CHANNEL_ID)
     if not rules_channel:
         return False
 
     embed = discord.Embed(
-        title="📜 قوانين السيرفر | Server Rules | Règles du serveur",
+        title="📜 قوانين السيرفر",
         description=(
-            f"{SERVER_RULES}\n\n"
-            f"⚠️ **بالضغط ✅ كتوافق على القوانين وكيتم التفعيل ديالك اوتوماتيكيا | By clicking ✅ you agree to the terms and your activation will be done automatically | "
-            f"En cliquant sur ✅, vous acceptez les conditions et votre activation se fait automatiquement**\n"
-            f"**الرفض ❌ = طرد أوتوماتيكي | Refusing ❌ = automatic kick | Refuser ❌ = exclusion automatique**"
+            f"{_rules_body('darija')}\n\n"
+            "⚠️ **بالضغط على ✅ كتوافق على القوانين وكيتم التفعيل ديالك أوتوماتيكياً.**\n"
+            "**الرفض ❌ = طرد أوتوماتيكي من السيرفر.**\n\n"
+            "🌐 إلا بغيتي ترجمة، اختار اللغة من اللائحة لتحت. الترجمة كتبان غير ليك وما كتبدلش الرسالة العامة."
         ),
         color=discord.Color.blue(),
         timestamp=datetime.now()
     )
     embed.set_thumbnail(url=guild.icon.url if guild.icon else None)
-    embed.set_footer(text="GGMW9 | Rules & Verification")
+    embed.set_footer(text="GGMW9 | Rules & Verification • Darija default")
 
     matches = []
     try:
@@ -4030,13 +4143,16 @@ class BlacklistPrivateLanguageView(discord.ui.View):
 
 
 class BlacklistLanguageSelect(discord.ui.Select):
-    def __init__(self):
+    """Public Darija selector — opens a fresh private translation every time."""
+    def __init__(self, lang: str = "darija"):
+        lang = lang if lang in {"darija", "en", "fr"} else "darija"
+        self.lang = lang
         super().__init__(
-            placeholder="🌐 قرا القوانين بلغتك / Read in your language",
+            placeholder="🌐 اللغة / Language / Langue",
             options=[
-                discord.SelectOption(label="Darija", value="darija", emoji="🇲🇦", description="النسخة الأساسية"),
-                discord.SelectOption(label="English", value="en", emoji="🇬🇧", description="Private English translation"),
-                discord.SelectOption(label="Français", value="fr", emoji="🇫🇷", description="Traduction française privée"),
+                discord.SelectOption(label="Darija", value="darija", emoji="🇲🇦", default=lang == "darija"),
+                discord.SelectOption(label="English", value="en", emoji="🇬🇧", default=lang == "en"),
+                discord.SelectOption(label="Français", value="fr", emoji="🇫🇷", default=lang == "fr"),
             ],
             min_values=1,
             max_values=1,
@@ -4044,24 +4160,28 @@ class BlacklistLanguageSelect(discord.ui.Select):
         )
 
     async def callback(self, interaction: discord.Interaction):
-        lang = set_panel_language(interaction.guild.id if interaction.guild else 0, interaction.user.id, self.values[0])
-        await upsert_ephemeral_panel(
-            interaction,
-            "blacklist",
-            content=None,
+        lang = set_panel_language(
+            interaction.guild.id if interaction.guild else 0,
+            interaction.user.id,
+            self.values[0],
+        )
+        # Always create a fresh private translation. Dismiss never poisons the public selector.
+        await interaction.response.send_message(
             embed=_build_blacklist_embed(lang),
             view=BlacklistPrivateLanguageView(interaction.user.id, lang),
+            ephemeral=True,
         )
 
 
 class BlacklistLanguageView(discord.ui.View):
-    def __init__(self):
+    def __init__(self, lang: str = "darija"):
         super().__init__(timeout=None)
-        self.add_item(BlacklistLanguageSelect())
+        self.lang = lang if lang in {"darija", "en", "fr"} else "darija"
+        self.add_item(BlacklistLanguageSelect(self.lang))
 
 
 async def setup_blacklist_message(guild: discord.Guild):
-    """Keep ONE public Darija rules message and remove old EN/FR duplicates."""
+    """Keep ONE public Darija blacklist message; translations are always private and fresh."""
     channel = bot.get_channel(BLACKLIST_CHANNEL_ID)
     if not channel:
         return
@@ -4080,16 +4200,20 @@ async def setup_blacklist_message(guild: discord.Guild):
     except discord.Forbidden:
         return
 
-    keep = darija_messages[0] if darija_messages else None
+    # Keep the SAME existing message regardless of its current language.
+    all_panels = darija_messages + translated_messages
+    all_panels.sort(key=lambda m: m.id)
+    keep = all_panels[0] if all_panels else None
     try:
         if keep:
-            # Do NOT rewrite the public Darija text; only attach/refresh the language mini-panel.
-            await keep.edit(view=BlacklistLanguageView())
+            await keep.edit(content=None, embed=_build_blacklist_embed("darija"), view=BlacklistLanguageView("darija"))
         else:
-            keep = await channel.send(embed=_build_blacklist_embed("darija"), view=BlacklistLanguageView())
+            keep = await channel.send(embed=_build_blacklist_embed("darija"), view=BlacklistLanguageView("darija"))
 
-        # Clean duplicated public translations + extra Darija panels.
-        for old in translated_messages + darija_messages[1:]:
+        # Clean only true duplicates; never delete the kept original message.
+        for old in all_panels:
+            if keep and old.id == keep.id:
+                continue
             try:
                 await old.delete()
             except (discord.Forbidden, discord.NotFound, discord.HTTPException):
@@ -4637,19 +4761,50 @@ class GlobalPrivateLanguageSelect(discord.ui.Select):
 
 
 class GlobalPanelLanguageSelect(discord.ui.Select):
-    """Persistent selector on the public Darija message; opens a PERSONAL localized panel."""
-    def __init__(self, kind: str, *, row: int = 1):
+    """Public selector that opens a fresh private localized panel.
+
+    No ephemeral message is cached, so Dismiss is always safe: selecting a
+    language again from the public Darija panel creates a new clean session.
+    """
+    def __init__(self, kind: str, lang: str = "darija", *, row: int = 1):
         self.kind = kind
-        super().__init__(placeholder="🌐 اللغة / Language / Langue",options=[
-            discord.SelectOption(label="Darija", value="darija", emoji="🇲🇦", description="اللغة الأساسية / Default"),
-            discord.SelectOption(label="English", value="en", emoji="🇬🇧", description="English interface"),
-            discord.SelectOption(label="Français", value="fr", emoji="🇫🇷", description="Interface française"),
-        ],min_values=1,max_values=1,custom_id=f"ggmw9:{kind}:language",row=row)
+        self.lang = lang if lang in {"darija", "en", "fr"} else "darija"
+        super().__init__(
+            placeholder="🌐 اللغة / Language / Langue",
+            options=[
+                discord.SelectOption(label="Darija", value="darija", emoji="🇲🇦", default=self.lang == "darija"),
+                discord.SelectOption(label="English", value="en", emoji="🇬🇧", default=self.lang == "en"),
+                discord.SelectOption(label="Français", value="fr", emoji="🇫🇷", default=self.lang == "fr"),
+            ],
+            min_values=1,
+            max_values=1,
+            custom_id=f"ggmw9:{kind}:language",
+            row=row,
+        )
 
     async def callback(self, interaction: discord.Interaction):
-        lang=set_panel_language(interaction.guild.id if interaction.guild else 0,interaction.user.id,self.values[0])
-        view=SupportPrivateView(interaction.user.id,lang) if self.kind=="support" else LevelsPrivateView(interaction.user.id,lang)
-        await upsert_ephemeral_panel(interaction,self.kind,content=None,embed=_panel_language_guide_embed(self.kind,lang),view=view)
+        lang = set_panel_language(
+            interaction.guild.id if interaction.guild else 0,
+            interaction.user.id,
+            self.values[0],
+        )
+        if self.kind == "support":
+            embed = build_support_center_embed(lang)
+            view = SupportPrivateView(interaction.user.id, lang)
+        elif self.kind == "levels":
+            embed = build_levels_info_embed(interaction.guild, lang)
+            view = LevelsPrivateView(interaction.user.id, lang)
+        else:
+            await interaction.response.send_message("❌ Unknown panel.", ephemeral=True)
+            return
+
+        # Fresh response on EVERY public selection. No cached webhook/message reference.
+        await interaction.response.send_message(
+            content=None,
+            embed=embed,
+            view=view,
+            ephemeral=True,
+        )
 
 
 class SupportPrivateView(discord.ui.View):
@@ -4683,29 +4838,46 @@ class SupportPrivateView(discord.ui.View):
 
 
 class SupportCenterView(discord.ui.View):
-    """Shared public panel stays Darija; member language lives in a private full panel."""
-    def __init__(self):
+    """Persistent public Support Center. Public message stays Darija; language opens a private session."""
+    def __init__(self, lang: str = "darija"):
         super().__init__(timeout=None)
-        self.add_item(GlobalPanelLanguageSelect("support",row=1))
+        self.lang = lang if lang in {"darija", "en", "fr"} else "darija"
 
-    @discord.ui.button(label="بلغ على عضو",emoji="🚨",style=discord.ButtonStyle.danger,custom_id="ggmw9:support:report_member",row=0)
-    async def report_member(self,interaction,button):
-        lang=get_panel_language(interaction.guild.id,interaction.user.id)
-        await upsert_ephemeral_panel(interaction,"support",content=_support_t(lang,"member_prompt"),embed=None,view=SupportReportMemberSelectView(interaction.user.id,lang))
+        items = [
+            ("ggmw9:support:report_member", "🚨", _support_t(self.lang, "report_member"), discord.ButtonStyle.danger, self.report_member),
+            ("ggmw9:support:general_report", "⚠️", _support_t(self.lang, "general"), discord.ButtonStyle.secondary, self.general_report),
+            ("ggmw9:support:ticket", "🎫", _support_t(self.lang, "ticket"), discord.ButtonStyle.success, self.open_ticket),
+            ("ggmw9:support:help", "❓", _support_t(self.lang, "help"), discord.ButtonStyle.primary, self.help_ticket),
+        ]
+        for custom_id, emoji, label, style, cb in items:
+            b = discord.ui.Button(label=label[:80], emoji=emoji, style=style, custom_id=custom_id, row=0)
+            b.callback = cb
+            self.add_item(b)
+        self.add_item(GlobalPanelLanguageSelect("support", self.lang, row=1))
 
-    @discord.ui.button(label="بلاغ عام",emoji="⚠️",style=discord.ButtonStyle.secondary,custom_id="ggmw9:support:general_report",row=0)
-    async def general_report(self,interaction,button):
-        lang=get_panel_language(interaction.guild.id,interaction.user.id); await interaction.response.send_modal(SupportGeneralReportModal(lang))
+    def _sync_user_lang(self, interaction: discord.Interaction) -> str:
+        return get_panel_language(interaction.guild.id if interaction.guild else 0, interaction.user.id)
 
-    @discord.ui.button(label="فتح Ticket",emoji="🎫",style=discord.ButtonStyle.success,custom_id="ggmw9:support:ticket",row=0)
-    async def open_ticket(self,interaction,button):
-        lang=get_panel_language(interaction.guild.id,interaction.user.id)
-        kind="General Support" if lang=="en" else "Support général" if lang=="fr" else "دعم عام"
-        await create_support_ticket(interaction,ticket_kind=kind)
+    async def report_member(self, interaction: discord.Interaction):
+        lang = self._sync_user_lang(interaction)
+        await upsert_ephemeral_panel(
+            interaction, "support",
+            content=_support_t(lang, "member_prompt"), embed=None,
+            view=SupportReportMemberSelectView(interaction.user.id, lang),
+        )
 
-    @discord.ui.button(label="طلب مساعدة",emoji="❓",style=discord.ButtonStyle.primary,custom_id="ggmw9:support:help",row=0)
-    async def help_ticket(self,interaction,button):
-        lang=get_panel_language(interaction.guild.id,interaction.user.id); await interaction.response.send_modal(SupportHelpTicketModal(lang))
+    async def general_report(self, interaction: discord.Interaction):
+        lang = self._sync_user_lang(interaction)
+        await interaction.response.send_modal(SupportGeneralReportModal(lang))
+
+    async def open_ticket(self, interaction: discord.Interaction):
+        lang = self._sync_user_lang(interaction)
+        kind = "General Support" if lang == "en" else "Support général" if lang == "fr" else "دعم عام"
+        await create_support_ticket(interaction, ticket_kind=kind)
+
+    async def help_ticket(self, interaction: discord.Interaction):
+        lang = self._sync_user_lang(interaction)
+        await interaction.response.send_modal(SupportHelpTicketModal(lang))
 
 
 class TicketPanelView(discord.ui.View):
@@ -4750,34 +4922,43 @@ async def cleanup_legacy_ticket_panel(guild: discord.Guild):
         pass
 
 
-async def setup_support_center(guild: discord.Guild):
-    if not SUPPORT_CENTER_CHANNEL_ID:
-        return
-
-    channel = guild.get_channel(SUPPORT_CENTER_CHANNEL_ID)
-    if not isinstance(channel, discord.TextChannel):
-        print(f"[SUPPORT] ❌ Support Center channel {SUPPORT_CENTER_CHANNEL_ID} ما لقيتهاش.")
-        return
-
-    await cleanup_legacy_ticket_panel(guild)
-
-    existing = None
-    try:
-        async for message in channel.history(limit=30):
-            if (
-                message.author == bot.user
-                and message.embeds
-                and message.embeds[0].title
-                and "Support Center" in message.embeds[0].title
-            ):
-                existing = message
-                break
-    except discord.Forbidden:
-        return
-
-    embed = discord.Embed(
-        title="🆘 GGMW9 Support Center",
-        description=(
+def build_support_center_embed(lang: str = "darija") -> discord.Embed:
+    lang = lang if lang in {"darija", "en", "fr"} else "darija"
+    if lang == "en":
+        title = "🆘 GGMW9 Support Center"
+        desc = (
+            "All support and reporting tools are organized here.\n\n"
+            "🚨 **Report Member** — report a specific member and explain what happened.\n"
+            "⚠️ **General Report** — report an issue not tied to one member.\n"
+            "🎫 **Open Ticket** — private conversation with staff.\n"
+            "❓ **Get Help** — describe your issue and create a detailed ticket.\n\n"
+            "🔒 Reports go directly to staff and are not posted publicly.\n"
+            "💬 Tickets are private between you and staff.\n"
+            "📎 For evidence, use **Copy Message Link** or attach images inside the ticket.\n\n"
+            "🌐 Choose a language below to open your **private translated panel**. If you Dismiss it, choose a language here again anytime."
+        )
+        field_name = "💡 Which option should I use?"
+        field_value = "**Report** for cases staff can review quickly.\n**Ticket** for questions, appeals, private issues, or anything that needs a conversation."
+        footer = f"{SERVER_NAME} | Support • Reports • Tickets • English"
+    elif lang == "fr":
+        title = "🆘 Centre d'assistance GGMW9"
+        desc = (
+            "Tous les outils d'assistance et de signalement sont réunis ici.\n\n"
+            "🚨 **Signaler un membre** — signaler une personne précise et expliquer le problème.\n"
+            "⚠️ **Signalement général** — signaler un problème global.\n"
+            "🎫 **Ouvrir un Ticket** — discussion privée avec le staff.\n"
+            "❓ **Demander de l'aide** — expliquer ton problème et créer un ticket détaillé.\n\n"
+            "🔒 Les signalements vont directement au staff et ne sont pas publics.\n"
+            "💬 Les tickets sont privés entre toi et le staff.\n"
+            "📎 Pour une preuve, utilise **Copier le lien du message** ou joins des images dans le ticket.\n\n"
+            "🌐 Choisis une langue ci-dessous pour ouvrir ton **panneau privé traduit**. Si tu le fermes, choisis simplement une langue ici à nouveau."
+        )
+        field_name = "💡 Que choisir ?"
+        field_value = "**Signalement** pour les cas que le staff peut vérifier rapidement.\n**Ticket** pour les questions, appels, problèmes privés ou les cas nécessitant une discussion."
+        footer = f"{SERVER_NAME} | Support • Reports • Tickets • Français"
+    else:
+        title = "🆘 GGMW9 Support Center"
+        desc = (
             "كلشي ديال الدعم والتبليغ مجموع هنا باش السيرفر يبقى منظم.\n\n"
             "🚨 **بلغ على عضو** — مخالفة مرتبطة بشخص؛ كتختارو وكتشرح شنو وقع.\n"
             "⚠️ **بلاغ عام** — مشكل ما مرتبطش بعضو محدد.\n"
@@ -4785,28 +4966,45 @@ async def setup_support_center(guild: discord.Guild):
             "❓ **طلب مساعدة** — كتب الموضوع والمشكل، والبوت كيفتح Ticket بالتفاصيل.\n\n"
             "🔒 **البلاغات ما كيبانوش للناس:** كيمشيو مباشرة لقناة الإدارة.\n"
             "💬 **Tickets خاصة:** غير نتا والإدارة كتشوفوها.\n"
-            "📎 إلا عندك دليل، دير **Copy Message Link** وحطو فالبلاغ، "
-            "أو زيد الصور داخل Ticket.\n\n"
-            "🌐 **اللغات:** الدارجة Default • 🇬🇧 English • 🇫🇷 Français — اختار لغتك من اللائحة تحت البانل."
-        ),
-        color=discord.Color.blurple(),
-        timestamp=datetime.now(),
-    )
-    embed.add_field(
-        name="💡 شنو نختار؟",
-        value=(
-            "**Report** للحالات اللي الإدارة تقدر تراجعها بلا نقاش طويل.\n"
-            "**Ticket** للأسئلة، المشاكل الخاصة، Appeals، أو الحالات اللي خاص فيها حوار."
-        ),
-        inline=False,
-    )
-    embed.set_footer(text=f"{SERVER_NAME} | Support • Reports • Tickets")
+            "📎 إلا عندك دليل، دير **Copy Message Link** وحطو فالبلاغ، أو زيد الصور داخل Ticket.\n\n"
+            "🌐 اختار اللغة من اللائحة لتحت باش تحل **نسختك الخاصة**. إلا درتي Dismiss، رجع اختار أي لغة من هنا وغادي تتحل من جديد."
+        )
+        field_name = "💡 شنو نختار؟"
+        field_value = "**Report** للحالات اللي الإدارة تقدر تراجعها بلا نقاش طويل.\n**Ticket** للأسئلة، المشاكل الخاصة، Appeals، أو الحالات اللي خاص فيها حوار."
+        footer = f"{SERVER_NAME} | Support • Reports • Tickets • Darija"
+    e = discord.Embed(title=title, description=desc, color=discord.Color.blurple(), timestamp=datetime.now())
+    e.add_field(name=field_name, value=field_value, inline=False)
+    e.set_footer(text=footer)
+    return e
 
+
+async def setup_support_center(guild: discord.Guild):
+    if not SUPPORT_CENTER_CHANNEL_ID:
+        return
+    channel = guild.get_channel(SUPPORT_CENTER_CHANNEL_ID)
+    if not isinstance(channel, discord.TextChannel):
+        print(f"[SUPPORT] ❌ Support Center channel {SUPPORT_CENTER_CHANNEL_ID} ما لقيتهاش.")
+        return
+
+    await cleanup_legacy_ticket_panel(guild)
+    existing = None
+    try:
+        async for message in channel.history(limit=30):
+            if message.author != bot.user or not message.embeds:
+                continue
+            title = message.embeds[0].title or ""
+            if "Support Center" in title or "Centre d'assistance" in title:
+                existing = message
+                break
+    except discord.Forbidden:
+        return
+
+    embed = build_support_center_embed("darija")
     try:
         if existing:
-            await existing.edit(embed=embed, view=SupportCenterView())
+            await existing.edit(content=None, embed=embed, view=SupportCenterView("darija"))
         else:
-            await channel.send(embed=embed, view=SupportCenterView())
+            await channel.send(embed=embed, view=SupportCenterView("darija"))
     except (discord.Forbidden, discord.HTTPException) as e:
         print(f"[SUPPORT] ❌ ما قدرتش نصاوب/نحدث Support Center: {e}")
 
@@ -4911,27 +5109,60 @@ class ApplicationPrivateView(discord.ui.View):
 
 
 class ApplicationLanguageSelect(discord.ui.Select):
-    def __init__(self):
-        super().__init__(placeholder="🌐 اللغة / Language / Langue",options=[discord.SelectOption(label="Darija",value="darija",emoji="🇲🇦"),discord.SelectOption(label="English",value="en",emoji="🇬🇧"),discord.SelectOption(label="Français",value="fr",emoji="🇫🇷")],min_values=1,max_values=1,custom_id="ggmw9:applications:language",row=1)
-    async def callback(self,interaction):
-        lang=set_panel_language(interaction.guild.id,interaction.user.id,self.values[0]); await upsert_ephemeral_panel(interaction,"applications",content=_application_t(lang,"saved"),embed=_application_home_embed(lang),view=ApplicationPrivateView(interaction.user.id,lang))
+    """Public Darija selector; opens a fresh private localized Application panel."""
+    def __init__(self, lang: str = "darija"):
+        self.lang = lang if lang in {"darija", "en", "fr"} else "darija"
+        super().__init__(
+            placeholder="🌐 اللغة / Language / Langue",
+            options=[
+                discord.SelectOption(label="Darija", value="darija", emoji="🇲🇦", default=self.lang == "darija"),
+                discord.SelectOption(label="English", value="en", emoji="🇬🇧", default=self.lang == "en"),
+                discord.SelectOption(label="Français", value="fr", emoji="🇫🇷", default=self.lang == "fr"),
+            ],
+            min_values=1, max_values=1,
+            custom_id="ggmw9:applications:language", row=1,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        lang = set_panel_language(interaction.guild.id, interaction.user.id, self.values[0])
+        await interaction.response.send_message(
+            content=None,
+            embed=_application_home_embed(lang),
+            view=ApplicationPrivateView(interaction.user.id, lang),
+            ephemeral=True,
+        )
 
 
 class ApplicationPanelView(discord.ui.View):
-    """Public panel is Darija; language selection opens a fully localized private copy."""
-    def __init__(self):
-        super().__init__(timeout=None); self.add_item(ApplicationLanguageSelect())
+    """One public Darija Application message; localized panels are private."""
+    def __init__(self, lang: str = "darija"):
+        super().__init__(timeout=None)
+        self.lang = lang if lang in {"darija", "en", "fr"} else "darija"
+        apply_button = discord.ui.Button(
+            label=("📋 " + _application_t(self.lang, "apply"))[:80],
+            style=discord.ButtonStyle.primary,
+            custom_id="open_application_button",
+            row=0,
+        )
+        apply_button.callback = self.open_application_button
+        self.add_item(apply_button)
+        self.add_item(ApplicationLanguageSelect(self.lang))
 
-    @discord.ui.button(label="📋 قدم طلب Staff",style=discord.ButtonStyle.primary,custom_id="open_application_button",row=0)
-    async def open_application_button(self,interaction,button):
-        member=interaction.user
-        if not isinstance(member,discord.Member): await interaction.response.send_message("❌ وقع مشكل، عاود من جديد.",ephemeral=True); return
-        lang=get_panel_language(interaction.guild.id,member.id)
-        pending_id,_=get_pending_application_for_user(member.id)
-        if pending_id: await upsert_ephemeral_panel(interaction,"applications",content=_application_t(lang,"pending",id=pending_id),embed=_application_home_embed(lang),view=ApplicationPrivateView(member.id,lang)); return
-        remaining=application_cooldown_remaining(member.id)
+    async def open_application_button(self, interaction: discord.Interaction):
+        member = interaction.user
+        if not isinstance(member, discord.Member):
+            await interaction.response.send_message("❌ وقع مشكل، عاود من جديد.", ephemeral=True)
+            return
+        lang = get_panel_language(interaction.guild.id, member.id)
+        pending_id, _ = get_pending_application_for_user(member.id)
+        if pending_id:
+            await interaction.response.send_message(_application_t(lang, "pending", id=pending_id), ephemeral=True)
+            return
+        remaining = application_cooldown_remaining(member.id)
         if remaining:
-            hours=int(remaining.total_seconds()//3600)+1; await upsert_ephemeral_panel(interaction,"applications",content=_application_t(lang,"cooldown",hours=hours),embed=_application_home_embed(lang),view=ApplicationPrivateView(member.id,lang)); return
+            hours = int(remaining.total_seconds() // 3600) + 1
+            await interaction.response.send_message(_application_t(lang, "cooldown", hours=hours), ephemeral=True)
+            return
         await interaction.response.send_modal(ApplicationModal(lang))
 
 
@@ -5026,7 +5257,7 @@ async def setup_applications_panel(guild: discord.Guild):
             if message.author==bot.user and message.embeds and ("قدم لفريق الإدارة" in (message.embeds[0].title or "") or "Staff Applications" in (message.embeds[0].title or "") or "Candidatures Staff" in (message.embeds[0].title or "")):
                 matches.append(message)
     except discord.Forbidden: return
-    embed=_application_home_embed("darija"); view=ApplicationPanelView()
+    embed=_application_home_embed("darija"); view=ApplicationPanelView("darija")
     try:
         if matches:
             keep=matches[0]; await keep.edit(embed=embed,view=view)
@@ -7796,101 +8027,105 @@ async def voice_xp_loop_error(error):
     print(f"[VOICE-XP] خطأ كبير وقف الـ loop: {error}")
 
 
-async def setup_levels_info_message(guild: discord.Guild):
-    """رسالة عامة كتشرح XP + الرولات + الفوائد. كتتعدل نفس الرسالة بعد كل deploy."""
-    if not LEVELS_INFO_CHANNEL_ID:
-        return
-    channel = bot.get_channel(LEVELS_INFO_CHANNEL_ID)
-    if not channel:
-        return
+def build_levels_info_embed(guild: discord.Guild, lang: str = "darija") -> discord.Embed:
+    lang = lang if lang in {"darija", "en", "fr"} else "darija"
+    if lang == "en":
+        title = "📊 Levels & XP — progression with real value"
+        desc = (
+            f"💬 **Chat:** {xp_settings['chat_min']}-{xp_settings['chat_max']} XP per eligible message, cooldown **{xp_settings['chat_cooldown']}s**.\n"
+            f"🎙️ **Voice:** **{xp_settings['voice_per_interval']} XP** every {xp_settings['voice_interval_minutes']} minutes.\n"
+            f"📡 **Go Live:** **{xp_settings['stream_per_interval']} XP** every {xp_settings['voice_interval_minutes']} minutes.\n\n"
+            "## 🔄 How Level Roles work\nYou keep **only your highest Level Role**. When you reach a new threshold, the old Level Role is removed automatically. The bot also self-heals roles after restarts.\n\n"
+            "## 🎁 Why level up?\nHigher levels unlock stronger **Shop discounts, Daily bonuses, better loan terms and safe social/Discord perks**.\n\n"
+            "## 🖱️ No command needed\nUse the buttons below for your rank, another member's rank, leaderboard, roadmap, Bio, Poll and Legend Title.\n\n"
+            "🌐 The language selector opens your **private translated XP panel**. Dismiss is safe; reopen it here anytime."
+        )
+        roadmap_name, roadmap_more = "🪜 Level Role Roadmap", "🪜 Roadmap (continued)"
+        safety_name = "🛡️ Permission safety"
+        safety_value = "Level Roles **never grant dangerous management permissions** such as View Audit Log, Manage Threads, Manage Events or Manage Emojis. Their value comes from safe social and economy perks."
+        footer = f"{SERVER_NAME} | one Level Role • earn XP • unlock stronger perks • English"
+    elif lang == "fr":
+        title = "📊 Niveaux & XP — une progression qui a de la valeur"
+        desc = (
+            f"💬 **Chat :** {xp_settings['chat_min']}-{xp_settings['chat_max']} XP par message éligible, cooldown **{xp_settings['chat_cooldown']}s**.\n"
+            f"🎙️ **Vocal :** **{xp_settings['voice_per_interval']} XP** toutes les {xp_settings['voice_interval_minutes']} minutes.\n"
+            f"📡 **Go Live :** **{xp_settings['stream_per_interval']} XP** toutes les {xp_settings['voice_interval_minutes']} minutes.\n\n"
+            "## 🔄 Fonctionnement des rôles de niveau\nTu gardes **uniquement ton rôle de niveau le plus élevé**. Quand tu atteins un nouveau palier, l'ancien rôle est retiré automatiquement. Le bot répare aussi les rôles après un redémarrage.\n\n"
+            "## 🎁 Pourquoi monter de niveau ?\nLes niveaux débloquent de meilleures **réductions Shop, bonus Daily, conditions de prêt et avantages Discord/social sûrs**.\n\n"
+            "## 🖱️ Aucune commande nécessaire\nUtilise les boutons pour ton rang, le rang d'un membre, le classement, la progression, la Bio, les sondages et le titre Legend.\n\n"
+            "🌐 Le sélecteur ouvre ton **panneau XP privé traduit**. Tu peux le fermer puis le rouvrir ici sans problème."
+        )
+        roadmap_name, roadmap_more = "🪜 Progression des rôles", "🪜 Progression (suite)"
+        safety_name = "🛡️ Sécurité des permissions"
+        safety_value = "Les rôles de niveau **ne donnent jamais de permissions de gestion dangereuses** comme View Audit Log, Manage Threads, Manage Events ou Manage Emojis. Leur valeur vient des avantages sociaux et économiques sûrs."
+        footer = f"{SERVER_NAME} | un seul rôle de niveau • gagne de l'XP • débloque des avantages • Français"
+    else:
+        title = "📊 نظام المستويات — XP عندو قيمة حقيقية"
+        desc = (
+            f"💬 **الشات:** {xp_settings['chat_min']}-{xp_settings['chat_max']} XP لكل رسالة مؤهلة، Cooldown **{xp_settings['chat_cooldown']}ث**.\n"
+            f"🎙️ **الفويس:** **{xp_settings['voice_per_interval']} XP** كل {xp_settings['voice_interval_minutes']} دقايق.\n"
+            f"📡 **Go Live:** **{xp_settings['stream_per_interval']} XP** كل {xp_settings['voice_interval_minutes']} دقايق.\n\n"
+            "## 🔄 كيفاش كتخدم Level Role؟\n**عندك غير Role وحدة ديال Level.** منين توصل Threshold جديدة، البوت كيحيد القديمة وكيعطيك الأعلى أوتوماتيكياً، وحتى بعد Restart كيدير Self-Healing.\n\n"
+            "## 🎁 علاش نطلع XP؟\nLevels كيحلو **Shop Discount أكبر، Daily Bonus أكبر، قرض أقوى وشروط أحسن، ومزايا Discord/Social آمنة**.\n\n"
+            "## 🖱️ ما تحتاج تكتب حتى Command\nاستعمل الأزرار تحت: Rank ديالك، Rank ديال عضو، Leaderboard، Roadmap، Bio، Poll وLegend Title.\n\n"
+            "🌐 اختيار اللغة كيحل **Panel خاصة بيك** مترجمة. إلا سديتيها بـDismiss تقدر ترجع تحلها من هنا فالحين."
+        )
+        roadmap_name, roadmap_more = "🪜 Roadmap ديال Level Roles", "🪜 Roadmap (تكملة)"
+        safety_name = "🛡️ ملاحظة على الصلاحيات"
+        safety_value = "Level Roles **ما كتعطيش صلاحيات إدارة خطيرة**. ماكاين لا View Audit Log لا Manage Threads لا Manage Events لا Manage Emojis. القيمة كتجي من امتيازات آمنة واقتصادية."
+        footer = f"{SERVER_NAME} | Role وحدة ديال Level • طلع XP وفتح مزايا أقوى • Darija"
 
-    existing = None
-    try:
-        async for message in channel.history(limit=20):
-            if (
-                message.author == bot.user
-                and message.embeds
-                and message.embeds[0].title
-                and "نظام المستويات" in message.embeds[0].title
-            ):
-                existing = message
-                break
-    except discord.Forbidden:
-        return
-
-    embed = discord.Embed(
-        title="📊 نظام المستويات — XP عندو قيمة حقيقية",
-        description=(
-            f"💬 **الشات:** {xp_settings['chat_min']}-{xp_settings['chat_max']} XP لكل رسالة مؤهلة، "
-            f"Cooldown **{xp_settings['chat_cooldown']}ث**.\n"
-            f"🎙️ **الفويس:** **{xp_settings['voice_per_interval']} XP** كل "
-            f"{xp_settings['voice_interval_minutes']} دقايق.\n"
-            f"📡 **Go Live:** **{xp_settings['stream_per_interval']} XP** كل "
-            f"{xp_settings['voice_interval_minutes']} دقايق.\n\n"
-            "## 🔄 كيفاش كتخدم Level Role؟\n"
-            "**عندك غير Role وحدة ديال Level.** مثال: وصلتي Level 10 → كتجيك Role 10. "
-            "منين توصل Level 15 → البوت كيحيد Role 10 وكيعطي Role 15 أوتوماتيكياً. "
-            "حتى بعد Restart كيدير Self-Healing للرولات.\n\n"
-            "## 🎁 علاش نطلع XP؟\n"
-            "كل Role جديدة كتفتح **Shop Discount أكبر، Daily Bonus أكبر، قرض أقوى بفائدة أقل "
-            "ومدة أطول**، ومع Levels معينة كتفتح Discord/Social perks آمنة.\n\n"
-            "## 🖱️ ما تحتاج تكتب حتى Command\n"
-            "استعمل الـPanel اللي تحت: **Rank ديالك، Rank ديال عضو، Leaderboard، Roadmap، Bio، Poll وLegend Title**. "
-            "المعلومات الشخصية كتبان غير ليك باش الشانيل يبقى نقي.\n\n"
-            "🌐 **اللغات:** الدارجة Default • 🇬🇧 English • 🇫🇷 Français — اختيار اللغة شخصي لكل عضو."
-        ),
-        color=discord.Color.gold(),
-        timestamp=datetime.now(),
-    )
-
+    embed = discord.Embed(title=title, description=desc, color=discord.Color.gold(), timestamp=datetime.now())
     lines = []
     for lvl, role_id in sorted(LEVEL_ROLES.items()):
         role = guild.get_role(role_id) if role_id else None
         role_display = role.mention if role else f"`Level {lvl}`"
         p = LEVEL_ROLE_BENEFITS.get(lvl, {})
-        lines.append(
-            f"{role_display} **Lv {lvl} — {p.get('name', '')}**\n"
-            f"> 🛒 -{p.get('shop_discount_percent', 0)}% • "
-            f"🎁 Daily +{p.get('daily_bonus_percent', 0)}% • "
-            f"🏦 {cfg.fmt_money(int(p.get('loan_base', 0)))} / {p.get('loan_interest', 0)}% / {p.get('loan_days', 0)}d\n"
-            f"> {p.get('feature', '—')}"
-        )
+        if lang == "en":
+            line = (f"{role_display} **Lv {lvl} — {p.get('name','')}**\n> 🛒 Shop -{p.get('shop_discount_percent',0)}% • 🎁 Daily +{p.get('daily_bonus_percent',0)}% • 🏦 {cfg.fmt_money(int(p.get('loan_base',0)))} / {p.get('loan_interest',0)}% / {p.get('loan_days',0)}d\n> {p.get('feature','—')}")
+        elif lang == "fr":
+            line = (f"{role_display} **Nv {lvl} — {p.get('name','')}**\n> 🛒 Shop -{p.get('shop_discount_percent',0)}% • 🎁 Daily +{p.get('daily_bonus_percent',0)}% • 🏦 {cfg.fmt_money(int(p.get('loan_base',0)))} / {p.get('loan_interest',0)}% / {p.get('loan_days',0)}j\n> {p.get('feature','—')}")
+        else:
+            line = (f"{role_display} **Lv {lvl} — {p.get('name','')}**\n> 🛒 -{p.get('shop_discount_percent',0)}% • 🎁 Daily +{p.get('daily_bonus_percent',0)}% • 🏦 {cfg.fmt_money(int(p.get('loan_base',0)))} / {p.get('loan_interest',0)}% / {p.get('loan_days',0)}d\n> {p.get('feature','—')}")
+        lines.append(line)
 
-    # Discord embed field عندو limit؛ نقسم roadmap لعدة fields.
-    chunks, current = [], []
-    current_len = 0
+    chunks, current, current_len = [], [], 0
     for line in lines:
         if current and current_len + len(line) + 2 > 980:
-            chunks.append(current)
-            current, current_len = [], 0
-        current.append(line)
-        current_len += len(line) + 2
-    if current:
-        chunks.append(current)
-
+            chunks.append(current); current, current_len = [], 0
+        current.append(line); current_len += len(line) + 2
+    if current: chunks.append(current)
     for idx, chunk in enumerate(chunks, 1):
-        embed.add_field(
-            name="🪜 Roadmap ديال Level Roles" if idx == 1 else "🪜 Roadmap (تكملة)",
-            value="\n\n".join(chunk),
-            inline=False,
-        )
+        embed.add_field(name=roadmap_name if idx == 1 else roadmap_more, value="\n\n".join(chunk), inline=False)
+    embed.add_field(name=safety_name, value=safety_value, inline=False)
+    embed.set_footer(text=footer)
+    return embed
 
-    embed.add_field(
-        name="🛡️ ملاحظة على الصلاحيات",
-        value=(
-            "Level Roles **ما كتعطيش صلاحيات إدارة خطيرة**. "
-            "ماكاين لا View Audit Log لا Manage Threads لا Manage Events لا Manage Emojis. "
-            "القيمة كتجي من امتيازات آمنة واقتصادية."
-        ),
-        inline=False,
-    )
-    embed.set_footer(text=f"{SERVER_NAME} | Role وحدة ديال Level • طلع XP وفتح مزايا أقوى")
 
+async def setup_levels_info_message(guild: discord.Guild):
+    """Keep one Levels message and reset it to Darija after deploy/Owner Refresh."""
+    if not LEVELS_INFO_CHANNEL_ID:
+        return
+    channel = bot.get_channel(LEVELS_INFO_CHANNEL_ID)
+    if not channel:
+        return
+    existing = None
+    try:
+        async for message in channel.history(limit=30):
+            if message.author != bot.user or not message.embeds:
+                continue
+            title = message.embeds[0].title or ""
+            if any(x in title for x in ("نظام المستويات", "Levels & XP", "Niveaux & XP")):
+                existing = message
+                break
+    except discord.Forbidden:
+        return
+    embed = build_levels_info_embed(guild, "darija")
     try:
         if existing:
-            await existing.edit(embed=embed, view=LevelsInfoView())
+            await existing.edit(content=None, embed=embed, view=LevelsInfoView("darija"))
         else:
-            await channel.send(embed=embed, view=LevelsInfoView())
+            await channel.send(embed=embed, view=LevelsInfoView("darija"))
     except (discord.Forbidden, discord.HTTPException) as e:
         print(f"[LEVEL INFO] ما قدرتش نحدّث الرسالة: {e}")
 
@@ -10561,134 +10796,83 @@ class LevelsPrivateView(discord.ui.View):
 
 
 class LevelsInfoView(discord.ui.View):
-    """Persistent XP Center. Root فيها غير components ثابتين."""
-
-    def __init__(self):
+    """Persistent public XP Center. Public message stays Darija; localized sessions are private."""
+    def __init__(self, lang: str = "darija"):
         super().__init__(timeout=None)
-        self.add_item(GlobalPanelLanguageSelect("levels", row=1))
+        self.lang = lang if lang in {"darija", "en", "fr"} else "darija"
+        labels = {
+            "darija": ["Rank ديالي", "Rank ديال عضو", "Leaderboard", "Roadmap", "بدل Bio", "صاوب Poll", "Legend Title"],
+            "en": ["My Rank", "Member Rank", "Leaderboard", "Roadmap", "Edit Bio", "Create Poll", "Legend Title"],
+            "fr": ["Mon rang", "Rang d'un membre", "Classement", "Progression", "Modifier Bio", "Créer un sondage", "Titre Legend"],
+        }[self.lang]
+        specs = [
+            ("ggmw9:levels:my_rank", "📊", labels[0], discord.ButtonStyle.success, self.my_rank, 0),
+            ("ggmw9:levels:member_rank_button", "👤", labels[1], discord.ButtonStyle.primary, self.member_rank, 0),
+            ("ggmw9:levels:leaderboard", "🏆", labels[2], discord.ButtonStyle.primary, self.leaderboard, 0),
+            ("ggmw9:levels:roadmap", "🪜", labels[3], discord.ButtonStyle.secondary, self.roadmap, 0),
+            ("ggmw9:levels:bio", "📝", labels[4], discord.ButtonStyle.secondary, self.bio, 2),
+            ("ggmw9:levels:create_poll", "🗳️", labels[5], discord.ButtonStyle.secondary, self.create_poll, 2),
+            ("ggmw9:levels:legend_title", "👑", labels[6], discord.ButtonStyle.secondary, self.legend_title, 2),
+        ]
+        for custom_id, emoji, label, style, cb, row in specs:
+            b = discord.ui.Button(custom_id=custom_id, emoji=emoji, label=label[:80], style=style, row=row)
+            b.callback = cb
+            self.add_item(b)
+        self.add_item(GlobalPanelLanguageSelect("levels", self.lang, row=1))
 
-    @discord.ui.button(
-        label="Rank ديالي",
-        emoji="📊",
-        style=discord.ButtonStyle.success,
-        custom_id="ggmw9:levels:my_rank",
-        row=0,
-    )
-    async def my_rank(self, interaction: discord.Interaction, button: discord.ui.Button):
+    def _sync(self, interaction):
+        return get_panel_language(interaction.guild.id, interaction.user.id)
+
+    async def my_rank(self, interaction):
+        lang = self._sync(interaction)
         if not bot_settings["leveling_enabled"]:
-            await interaction.response.send_message(
-                "❌ نظام XP معطل دابا.",
-                ephemeral=True,
-            )
-            return
-        await interaction.response.send_message(
-            embed=build_rank_embed(interaction.guild, interaction.user),
-            ephemeral=True,
-        )
+            msg = "❌ XP is disabled right now." if lang=="en" else "❌ Le système XP est désactivé." if lang=="fr" else "❌ نظام XP معطل دابا."
+            await interaction.response.send_message(msg, ephemeral=True); return
+        await interaction.response.send_message(embed=build_rank_embed(interaction.guild, interaction.user), ephemeral=True)
 
-    @discord.ui.button(
-        label="Rank ديال عضو",
-        emoji="👤",
-        style=discord.ButtonStyle.primary,
-        custom_id="ggmw9:levels:member_rank_button",
-        row=0,
-    )
-    async def member_rank(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def member_rank(self, interaction):
+        lang = self._sync(interaction)
         if not bot_settings["leveling_enabled"]:
-            await interaction.response.send_message(
-                "❌ نظام XP معطل دابا.",
-                ephemeral=True,
-            )
-            return
-        await interaction.response.send_message(
-            "👤 اختار العضو اللي بغيتي تشوف Rank ديالو:",
-            view=XPRankMemberView(),
-            ephemeral=True,
-        )
+            msg = "❌ XP is disabled right now." if lang=="en" else "❌ Le système XP est désactivé." if lang=="fr" else "❌ نظام XP معطل دابا."
+            await interaction.response.send_message(msg, ephemeral=True); return
+        prompt = "👤 Choose a member:" if lang=="en" else "👤 Choisis un membre :" if lang=="fr" else "👤 اختار العضو اللي بغيتي تشوف Rank ديالو:"
+        await interaction.response.send_message(prompt, view=XPRankMemberView(), ephemeral=True)
 
-    @discord.ui.button(
-        label="Leaderboard",
-        emoji="🏆",
-        style=discord.ButtonStyle.primary,
-        custom_id="ggmw9:levels:leaderboard",
-        row=0,
-    )
-    async def leaderboard(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def leaderboard(self, interaction):
+        lang = self._sync(interaction)
         embed = build_leaderboard_embed(interaction.guild)
         if not embed:
-            await interaction.response.send_message(
-                "ℹ️ ماكاين حتى XP مسجل دابا.",
-                ephemeral=True,
-            )
-            return
+            msg = "ℹ️ No XP recorded yet." if lang=="en" else "ℹ️ Aucun XP enregistré." if lang=="fr" else "ℹ️ ماكاين حتى XP مسجل دابا."
+            await interaction.response.send_message(msg, ephemeral=True); return
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @discord.ui.button(
-        label="Roadmap",
-        emoji="🪜",
-        style=discord.ButtonStyle.secondary,
-        custom_id="ggmw9:levels:roadmap",
-        row=0,
-    )
-    async def roadmap(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message(
-            embed=build_levelroadmap_embed(),
-            ephemeral=True,
-        )
+    async def roadmap(self, interaction):
+        self._sync(interaction)
+        await interaction.response.send_message(embed=build_levelroadmap_embed(), ephemeral=True)
 
-    @discord.ui.button(
-        label="بدل Bio",
-        emoji="📝",
-        style=discord.ButtonStyle.secondary,
-        custom_id="ggmw9:levels:bio",
-        row=2,
-    )
-    async def bio(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def bio(self, interaction):
+        lang = self._sync(interaction)
         data = get_user_level_data(interaction.guild.id, interaction.user.id)
         if data["level"] < 20:
-            await interaction.response.send_message(
-                f"🔒 Bio كتفتح فـ **Level 20**. نتا دابا Level **{data['level']}**.",
-                ephemeral=True,
-            )
-            return
+            msg = (f"🔒 Bio unlocks at **Level 20**. You are Level **{data['level']}**." if lang=="en" else f"🔒 La Bio se débloque au **niveau 20**. Tu es niveau **{data['level']}**." if lang=="fr" else f"🔒 Bio كتفتح فـ **Level 20**. نتا دابا Level **{data['level']}**.")
+            await interaction.response.send_message(msg, ephemeral=True); return
         await interaction.response.send_modal(XPBioModal())
 
-    @discord.ui.button(
-        label="صاوب Poll",
-        emoji="🗳️",
-        style=discord.ButtonStyle.secondary,
-        custom_id="ggmw9:levels:create_poll",
-        row=2,
-    )
-    async def create_poll(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def create_poll(self, interaction):
+        lang = self._sync(interaction)
         data = get_user_level_data(interaction.guild.id, interaction.user.id)
         if data["level"] < 60:
-            await interaction.response.send_message(
-                f"🔒 Poll كتفتح فـ **Level 60**. نتا دابا Level **{data['level']}**.",
-                ephemeral=True,
-            )
-            return
-        await interaction.response.send_message(
-            "📍 اختار الشانيل اللي بغيتي تنشر فيها الـPoll:",
-            view=XPPollDestinationView(interaction.user.id),
-            ephemeral=True,
-        )
+            msg = (f"🔒 Polls unlock at **Level 60**. You are Level **{data['level']}**." if lang=="en" else f"🔒 Les sondages se débloquent au **niveau 60**. Tu es niveau **{data['level']}**." if lang=="fr" else f"🔒 Poll كتفتح فـ **Level 60**. نتا دابا Level **{data['level']}**.")
+            await interaction.response.send_message(msg, ephemeral=True); return
+        prompt = "📍 Choose the channel for your poll:" if lang=="en" else "📍 Choisis le salon du sondage :" if lang=="fr" else "📍 اختار الشانيل اللي بغيتي تنشر فيها الـPoll:"
+        await interaction.response.send_message(prompt, view=XPPollDestinationView(interaction.user.id), ephemeral=True)
 
-    @discord.ui.button(
-        label="Legend Title",
-        emoji="👑",
-        style=discord.ButtonStyle.secondary,
-        custom_id="ggmw9:levels:legend_title",
-        row=2,
-    )
-    async def legend_title(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def legend_title(self, interaction):
+        lang = self._sync(interaction)
         data = get_user_level_data(interaction.guild.id, interaction.user.id)
         if data["level"] < 100:
-            await interaction.response.send_message(
-                f"🔒 Legend Title كتفتح فـ **Level 100**. نتا دابا Level **{data['level']}**.",
-                ephemeral=True,
-            )
-            return
+            msg = (f"🔒 Legend Title unlocks at **Level 100**. You are Level **{data['level']}**." if lang=="en" else f"🔒 Le titre Legend se débloque au **niveau 100**. Tu es niveau **{data['level']}**." if lang=="fr" else f"🔒 Legend Title كتفتح فـ **Level 100**. نتا دابا Level **{data['level']}**.")
+            await interaction.response.send_message(msg, ephemeral=True); return
         await interaction.response.send_modal(XPLegendTitleModal())
 
 
