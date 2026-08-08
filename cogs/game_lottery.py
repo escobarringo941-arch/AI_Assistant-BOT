@@ -26,6 +26,8 @@ from discord.ext import commands
 import random
 import asyncio
 
+RNG = random.SystemRandom()
+
 from storage import JsonStore
 import games_config as cfg
 
@@ -33,7 +35,7 @@ DRAW_DELAY = 0.45     # الوقت بين رقم وآخر فالسحب
 
 
 def _draw_numbers() -> list:
-    return sorted(random.sample(range(1, cfg.LOTTERY_POOL_SIZE + 1), cfg.LOTTERY_PICK_COUNT))
+    return sorted(RNG.sample(range(1, cfg.LOTTERY_POOL_SIZE + 1), cfg.LOTTERY_PICK_COUNT))
 
 
 def _resolve(bet: int) -> dict:
@@ -78,10 +80,10 @@ class Lottery(commands.Cog):
 
     @commands.command(name="lottery", aliases=["يانصيب"])
     @commands.cooldown(1, cfg.COOLDOWN_LOTTERY, commands.BucketType.user)
-    async def lottery_cmd(self, ctx: commands.Context, bet: int):
+    async def lottery_cmd(self, ctx: commands.Context, bet: str):
         eco = self.economy()
         if not eco:
-            await ctx.send("❌ نظام الدراهم ماشي محمّل دابا.", ephemeral=True)
+            await ctx.send("❌ نظام الدولار ماشي محمّل دابا.", ephemeral=True)
             return
 
         if not self._check_gambling_channel(ctx):
@@ -90,15 +92,24 @@ class Lottery(commands.Cog):
             await ctx.send(f"❌ هاد اللعبة كتخدم غير فـ {hint}.", ephemeral=True)
             return
 
+        bet = cfg.parse_money_input(bet)
+        if bet is None:
+            await ctx.send("❌ دخل Bet بالدولار بحال `5` أو `5.50`.", ephemeral=True)
+            return
+        from cogs.gambling_panel import effective_max_bet, can_start_casino_round
+        allowed, _, _ = can_start_casino_round(self.bot, ctx.guild.id, ctx.author.id)
+        if not allowed:
+            await ctx.send("⏳ وصلتي Session limit ديال Casino.", ephemeral=True)
+            return
+
         key = (ctx.guild.id, ctx.author.id)
         if key in self.active:
             await ctx.send("❌ عندك رهان خدّام ديجا — سالّيه أولاً.", ephemeral=True)
             return
 
-        if bet < cfg.LOTTERY_MIN_BET or bet > cfg.LOTTERY_MAX_BET:
-            await ctx.send(
-                f"❌ الرهان خاصو يكون بين **{cfg.LOTTERY_MIN_BET}** و "
-                f"**{cfg.LOTTERY_MAX_BET}** {cfg.CURRENCY_EMOJI}.", ephemeral=True)
+        max_allowed = effective_max_bet(self.bot, ctx.guild.id, ctx.author.id, "lottery")
+        if bet < cfg.LOTTERY_MIN_BET or bet > max_allowed:
+            await ctx.send(f"❌ Bet بين **{cfg.fmt_money(cfg.LOTTERY_MIN_BET)}** و **{cfg.fmt_money(max_allowed)}**.", ephemeral=True)
             return
 
         if not eco.spend(ctx.guild.id, ctx.author.id, bet):
@@ -122,9 +133,9 @@ class Lottery(commands.Cog):
         embed.add_field(name="🏆 فوز", value=f"**{s['wins']}**", inline=True)
         embed.add_field(name="💀 خسارة", value=f"**{s['losses']}**", inline=True)
         embed.add_field(name="📊 النسبة", value=f"**{rate:.1f}%**", inline=True)
-        embed.add_field(name="💰 أكبر ربح", value=f"**{s['biggest_win']:,}**", inline=True)
+        embed.add_field(name="💰 أكبر ربح", value=f"**{cfg.fmt_money(s['biggest_win'])}**", inline=True)
         embed.add_field(name="🎉 جاكبوتات", value=f"**{s.get('jackpots', 0)}**", inline=True)
-        embed.add_field(name="📈 الصافي", value=f"**{net:+,}**", inline=True)
+        embed.add_field(name="📈 الصافي", value=f"**{cfg.fmt_money(net, signed=True)}**", inline=True)
         embed.set_thumbnail(url=target.display_avatar.url)
         return embed
 
@@ -140,7 +151,7 @@ class Lottery(commands.Cog):
         if not ranked:
             return discord.Embed(
                 title="🎟️ Lottery — أكبر الرابحين",
-                description="📭 مازال حتى واحد ماشرا تيكي. دير `!lottery`!",
+                description="📭 مازال حتى واحد ماشرا تيكي. دخل من **🎮・ARCADE → 🎰 Casino**!",
                 color=discord.Color.blurple(),
             )
 
@@ -151,7 +162,7 @@ class Lottery(commands.Cog):
             name = m.display_name if m else f"عضو خارج ({uid})"
             net = d.get("won", 0) - d.get("wagered", 0)
             prefix = medals[i] if i < 3 else f"`#{i + 1}`"
-            lines.append(f"{prefix} **{name}** — 📈 {net:+,} {cfg.CURRENCY_EMOJI}")
+            lines.append(f"{prefix} **{name}** — 📈 {cfg.fmt_money(net, signed=True)}")
 
         return discord.Embed(
             title="🎟️ Lottery — أكبر الرابحين",
@@ -165,7 +176,7 @@ class Lottery(commands.Cog):
 def _ticket_embed(bet: int, ticket: list) -> discord.Embed:
     embed = discord.Embed(
         title="🎟️ التيكي ديالك",
-        description=f"الرهان: **{bet:,}** {cfg.CURRENCY_EMOJI}",
+        description=f"Bet: **{cfg.fmt_money(bet)}**",
         color=discord.Color.blurple(),
     )
     embed.add_field(name="الأرقام ديالك", value=_nums_text(ticket), inline=False)
@@ -207,13 +218,16 @@ async def _play_out(cog: Lottery, msg: discord.Message, guild_id: int,
             guild = cog.bot.get_guild(guild_id)
             if guild:
                 jackpot_bonus = await eco.claim_global_jackpot(guild, user, "lottery")
+                if jackpot_bonus:
+                    s["won"] += jackpot_bonus
+                    s["biggest_win"] = max(s["biggest_win"], granted + jackpot_bonus)
         cog.db.save()
 
         color = discord.Color.green()
         title = "🎉 جاكبوت!" if result["win_type"] == "jackpot" else f"🎉 تطابق {result['count']} أرقام!"
-        desc_extra = f"\n💰 ربحتي **{granted:,}** {eco.currency_word(granted)} (×{result['multiplier']})"
+        desc_extra = f"\n💰 Payout **{cfg.fmt_money(granted)}** (×{result['multiplier']})"
         if jackpot_bonus:
-            desc_extra += f"\n🏆 **Global Jackpot:** +**{jackpot_bonus:,}** {cfg.CURRENCY_EMOJI}"
+            desc_extra += f"\n🏆 **Global Jackpot:** +**{cfg.fmt_money(jackpot_bonus)}**"
     else:
         s["losses"] += 1
         cog.db.save()
@@ -222,13 +236,16 @@ async def _play_out(cog: Lottery, msg: discord.Message, guild_id: int,
             await eco.route_gambling_loss(guild, user, bet, "lottery")
         color = discord.Color.red()
         title = "💀 خسرتي"
-        desc_extra = f"\n📉 خسرتي **{bet:,}** {eco.currency_word(bet)}"
+        desc_extra = f"\n📉 Loss **{cfg.fmt_money(bet)}**"
 
+    from cogs.gambling_panel import record_casino_round
+    round_payout = (granted + jackpot_bonus) if result["win_type"] != "none" else 0
+    record_casino_round(cog.bot, guild_id, user_id, "lottery", bet, round_payout)
     new_balance = eco.get_balance(guild_id, user_id)
     final_embed = discord.Embed(
         title=title,
         description=(f"🎟️ **التطابقات: {result['count']}/{cfg.LOTTERY_PICK_COUNT}**{desc_extra}\n\n"
-                     f"💳 الرصيد الجديد: **{new_balance:,}** {eco.currency_word(new_balance)}"),
+                     f"💳 Wallet: **{cfg.fmt_money(new_balance)}**"),
         color=color,
     )
     final_embed.add_field(name="الأرقام ديالك", value=_nums_text(ticket, matches_set), inline=False)
@@ -247,35 +264,22 @@ async def _play_out(cog: Lottery, msg: discord.Message, guild_id: int,
 
 
 class ReplayView(discord.ui.View):
-    def __init__(self, cog: Lottery, user: discord.abc.User, last_bet: int):
+    """Legacy replay compatibility; routes through the fair/session-aware casino hub."""
+    def __init__(self, cog, user: discord.abc.User, last_bet: int):
         super().__init__(timeout=120)
         self.cog = cog
         self.user = user
-        self.last_bet = last_bet
+        self.last_bet = int(last_bet)
 
     @discord.ui.button(label="🔄 عاود (نفس الرهان)", style=discord.ButtonStyle.success)
     async def replay(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.user.id:
             await interaction.response.send_message("❌ ماشي ديالك.", ephemeral=True)
             return
-
-        eco = self.cog.economy()
-        key = (interaction.guild.id, self.user.id)
-        if key in self.cog.active:
-            await interaction.response.send_message("❌ عندك رهان خدّام ديجا.", ephemeral=True)
-            return
-        if not eco.spend(interaction.guild.id, self.user.id, self.last_bet):
-            await interaction.response.send_message(
-                f"❌ ماعندكش الفلوس الكافية للرهان ديال **{self.last_bet:,}** {cfg.CURRENCY_EMOJI}.",
-                ephemeral=True)
-            return
-
-        self.cog.active.add(key)
-        result = _resolve(self.last_bet)
-        await interaction.response.edit_message(
-            embed=_ticket_embed(self.last_bet, result["ticket"]), view=None)
-        msg = await interaction.original_response()
-        await _play_out(self.cog, msg, interaction.guild.id, self.user, self.last_bet, result)
+        from cogs.gambling_panel import start_game_with_bet
+        await start_game_with_bet(
+            interaction, self.cog.bot, self.user, "lottery", self.last_bet, retry_bet=self.last_bet
+        )
 
 
 async def setup(bot: commands.Bot):
