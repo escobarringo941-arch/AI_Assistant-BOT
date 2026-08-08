@@ -195,6 +195,7 @@ async def _play_out(cog: Lottery, msg: discord.Message, guild_id: int,
     user_id = user.id
     s = cog.stats(guild_id, user_id)
     s["wagered"] += bet
+    jackpot_bonus = 0
 
     if result["win_type"] != "none":
         granted = eco.add_coins(guild_id, user_id, result["payout"], source="lottery")
@@ -203,16 +204,24 @@ async def _play_out(cog: Lottery, msg: discord.Message, guild_id: int,
         s["biggest_win"] = max(s["biggest_win"], granted)
         if result["win_type"] == "jackpot":
             s["jackpots"] = s.get("jackpots", 0) + 1
+            guild = cog.bot.get_guild(guild_id)
+            if guild:
+                jackpot_bonus = await eco.claim_global_jackpot(guild, user, "lottery")
         cog.db.save()
 
         color = discord.Color.green()
         title = "🎉 جاكبوت!" if result["win_type"] == "jackpot" else f"🎉 تطابق {result['count']} أرقام!"
         desc_extra = f"\n💰 ربحتي **{granted:,}** {eco.currency_word(granted)} (×{result['multiplier']})"
+        if jackpot_bonus:
+            desc_extra += f"\n🏆 **Global Jackpot:** +**{jackpot_bonus:,}** {cfg.CURRENCY_EMOJI}"
         if granted < result["payout"]:
             desc_extra += f"\n⚠️ وصلتي قريب من السقف اليومي — كان خاصك تربح {result['payout']:,}."
     else:
         s["losses"] += 1
         cog.db.save()
+        guild = cog.bot.get_guild(guild_id)
+        if guild:
+            await eco.route_gambling_loss(guild, user, bet, "lottery")
         color = discord.Color.red()
         title = "💀 خسرتي"
         desc_extra = f"\n📉 خسرتي **{bet:,}** {eco.currency_word(bet)}"
