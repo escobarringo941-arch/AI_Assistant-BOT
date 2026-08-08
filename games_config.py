@@ -58,15 +58,33 @@ LOAN_CREDIT_ON_TIME_BONUS = 8
 LOAN_CREDIT_OVERDUE_PENALTY = 15
 LOAN_AUTO_COLLECT_MINUTES = 15
 
-# (أقل Credit Score فهاد tier، أقصى قرض)
-# أول عضو كيبدا Score=50 → الحد 1000.
-LOAN_LIMIT_TIERS = [
-    (0, 300),
-    (30, 500),
-    (50, 1000),
-    (70, 1500),
-    (85, 2500),
+# ═══════ XP / Level → Bank Privileges ═══════
+# Level أعلى = قرض أساسي أكبر + فائدة أقل + مدة أداء أطول.
+LOAN_XP_TIERS = [
+    {"min_level": 0,   "max_level": 9,   "name": "🌱 Rookie",       "base_limit": 300,  "interest": 15, "term_days": 2},
+    {"min_level": 10,  "max_level": 19,  "name": "🥉 Bronze",       "base_limit": 500,  "interest": 14, "term_days": 2},
+    {"min_level": 20,  "max_level": 29,  "name": "🥈 Silver I",     "base_limit": 800,  "interest": 13, "term_days": 3},
+    {"min_level": 30,  "max_level": 39,  "name": "🥈 Silver II",    "base_limit": 1200, "interest": 12, "term_days": 3},
+    {"min_level": 40,  "max_level": 49,  "name": "🥇 Gold I",       "base_limit": 1600, "interest": 11, "term_days": 3},
+    {"min_level": 50,  "max_level": 59,  "name": "🥇 Gold II",      "base_limit": 2200, "interest": 10, "term_days": 4},
+    {"min_level": 60,  "max_level": 69,  "name": "💎 Diamond I",    "base_limit": 3000, "interest": 9,  "term_days": 4},
+    {"min_level": 70,  "max_level": 79,  "name": "💎 Diamond II",   "base_limit": 4000, "interest": 8,  "term_days": 5},
+    {"min_level": 80,  "max_level": 89,  "name": "👑 Elite I",      "base_limit": 5500, "interest": 7,  "term_days": 5},
+    {"min_level": 90,  "max_level": 99,  "name": "👑 Elite II",     "base_limit": 7000, "interest": 6,  "term_days": 6},
+    {"min_level": 100, "max_level": 999, "name": "🔱 Legend",       "base_limit": 9000, "interest": 5,  "term_days": 7},
 ]
+
+# Credit Score = الثقة فالأداء. كيضرب فالحد الأساسي ديال Level.
+LOAN_CREDIT_MULTIPLIERS = [
+    (0, 0.50),
+    (30, 0.75),
+    (50, 1.00),
+    (70, 1.15),
+    (85, 1.25),
+]
+
+# حماية السيولة: عضو واحد مايسلفش أكثر من 20% من Treasury الحالية.
+LOAN_TREASURY_MAX_PERCENT = 20
 
 MINIGAMES_CATEGORY_ID = 1533697548215128134
 
