@@ -361,7 +361,7 @@ def build_trivia_panel_embed(guild: discord.Guild, lang: str = "darija") -> disc
         name=_tri(lang,"🎯 كيفاش كتخدم","🎯 How it works","🎯 Comment ça marche"),
         value=_tri(
             lang,
-            f"1️⃣ ضغط **🎮 ابدأ اللعب**\n2️⃣ اختار المجال (من {len(TRIVIA_CATEGORIES)} مجالات)\n3️⃣ عندك {TRIVIA_ANSWER_SECONDS} ثانية لكل سؤال\n4️⃣ كل جواب صحيح كيزيد الصعوبة والـReward — الغلطة ولا الوقت كيساليو الجولة.",
+            f"1️⃣ ضغط **🎮 ابدأ اللعب**\n2️⃣ اختار المجال (من {len(TRIVIA_CATEGORIES)} مجالات)\n3️⃣ عندك {TRIVIA_ANSWER_SECONDS} ثانية لكل سؤال\n4️⃣ كل جواب صحيح كيزيد الصعوبة والمكافأة — الغلطة ولا الوقت كيساليو الجولة.",
             f"1️⃣ Press **🎮 Start Game**\n2️⃣ Pick a category ({len(TRIVIA_CATEGORIES)} available)\n3️⃣ You have {TRIVIA_ANSWER_SECONDS} seconds per question\n4️⃣ Correct answers raise the difficulty and reward; one wrong answer or timeout ends the run.",
             f"1️⃣ Appuie sur **🎮 Commencer**\n2️⃣ Choisis une catégorie ({len(TRIVIA_CATEGORIES)} disponibles)\n3️⃣ Tu as {TRIVIA_ANSWER_SECONDS} secondes par question\n4️⃣ Les bonnes réponses augmentent la difficulté et la récompense ; une erreur ou le temps écoulé termine la partie.",
         ),inline=False,
@@ -370,7 +370,7 @@ def build_trivia_panel_embed(guild: discord.Guild, lang: str = "darija") -> disc
         name=_tri(lang,"🌐 اللغات","🌐 Languages","🌐 Langues"),
         value=_tri(
             lang,
-            "🇲🇦 الدارجة هي الأصل. 🇬🇧 English و🇫🇷 Français كيتعرضو فجلسة خاصة ديالك، والأسئلة حتى هي كتترجم مع Cache باش مايتعاودش نفس الطلب.",
+            "🇲🇦 الدارجة هي الأصل. 🇬🇧 الإنجليزية و🇫🇷 الفرنسية كيتعرضو فجلسة خاصة ديالك، والأسئلة حتى هي كتترجم وكتتحفظ مؤقتاً باش مايتعاودش نفس الطلب.",
             "🇲🇦 Darija is the default public language. 🇬🇧 English and 🇫🇷 French run in your private session; questions are localized and cached.",
             "🇲🇦 La darija reste la langue publique par défaut. 🇬🇧 L’anglais et 🇫🇷 le français fonctionnent dans ta session privée ; les questions sont localisées et mises en cache.",
         ),inline=False,
@@ -381,10 +381,10 @@ def build_trivia_panel_embed(guild: discord.Guild, lang: str = "darija") -> disc
             f"{_trivia_difficulty_label('easy',lang)}: **{fmt_money(get_trivia_coins('easy'))}**\n"
             f"{_trivia_difficulty_label('medium',lang)}: **{fmt_money(get_trivia_coins('medium'))}**\n"
             f"{_trivia_difficulty_label('hard',lang)}: **{fmt_money(get_trivia_coins('hard'))}**\n"
-            + _tri(lang,f"Daily Mini Games cap: **{fmt_money(COINS_DAILY_CAP)}**",f"Daily Mini Games cap: **{fmt_money(COINS_DAILY_CAP)}**",f"Plafond quotidien Mini Games : **{fmt_money(COINS_DAILY_CAP)}**")
+            + _tri(lang,f"السقف اليومي ديال الألعاب المصغرة: **{fmt_money(COINS_DAILY_CAP)}**",f"Daily Mini Games cap: **{fmt_money(COINS_DAILY_CAP)}**",f"Plafond quotidien Mini Games : **{fmt_money(COINS_DAILY_CAP)}**")
         ),inline=False,
     )
-    e.set_footer(text=_tri(lang,f"{guild.name} | Trivia • الدارجة هي الواجهة العامة",f"{guild.name} | Trivia • Private English session",f"{guild.name} | Trivia • Session française privée"))
+    e.set_footer(text=_tri(lang,f"{guild.name} | تحدي المعلومات • الدارجة هي الواجهة العامة",f"{guild.name} | Trivia • Private English session",f"{guild.name} | Trivia • Session française privée"))
     return e
 
 
@@ -511,7 +511,7 @@ class TriviaSessionView(discord.ui.View):
                 f"💵 **{fmt_money(stats['coins'])}** مجموعين من Trivia\n✅ **{stats['correct']}** جواب صحيح\n🎮 **{stats['games']}** جولة{record}\n💼 الرصيد: **{fmt_money(balance)}**",
                 f"💵 **{fmt_money(stats['coins'])}** earned from Trivia\n✅ **{stats['correct']}** correct answers\n🎮 **{stats['games']}** games{record}\n💼 Balance: **{fmt_money(balance)}**",
                 f"💵 **{fmt_money(stats['coins'])}** gagnés dans Trivia\n✅ **{stats['correct']}** bonnes réponses\n🎮 **{stats['games']}** parties{record}\n💼 Solde : **{fmt_money(balance)}**")
-            e.add_field(name=_tri(self.lang,"🏆 المجموع ديالك من Trivia","🏆 Your Trivia Totals","🏆 Tes totaux Trivia"),value=value,inline=False)
+            e.add_field(name=_tri(self.lang,"🏆 المجموع ديالك من تحدي المعلومات","🏆 Your Trivia Totals","🏆 Tes totaux Trivia"),value=value,inline=False)
         e.set_footer(text=_tri(self.lang,"ضغط 🔄 باش تعاود","Press 🔄 to play again","Appuie sur 🔄 pour rejouer")); return e
 
     async def _watchdog(self):

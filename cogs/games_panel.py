@@ -62,6 +62,11 @@ async def _fresh_private(interaction: discord.Interaction, **kwargs):
 
 
 def _txt(lang: str, key: str) -> str:
+    """Single source of truth for ARCADE control labels.
+
+    Important: button/select labels MUST come from this table. This prevents
+    an English/French embed from being paired with Darija buttons.
+    """
     strings = {
         "darija": {
             "games": "🕹️ الألعاب",
@@ -72,25 +77,25 @@ def _txt(lang: str, key: str) -> str:
             "choose_game": "🕹️ اختار اللعبة اللي بغيتي:",
             "not_yours": "❌ هاد الجلسة ماشي ديالك.",
             "unavailable": "❌ هاد الخدمة ماشي متوفرة دابا.",
-            "economy_title": "💰 Economy Quick Access",
-            "economy_desc": "ARCADE غير **Quick Access**. البانلات الرسمية والكاملة باقين فـ #bank و #shop باش ما يكون حتى خلط.",
+            "economy_title": "💰 وصول سريع للاقتصاد",
+            "economy_desc": "ARCADE غير **وصول سريع**. البنك والمتجر الرسميين باقين فـ #bank و #shop باش كلشي يبقى واضح.",
             "official": "القنوات الرسمية",
-            "back": "رجع لـARCADE",
+            "back": "رجع للأركيد",
             "language_saved": "✅ تحلات ليك النسخة الخاصة **بالدارجة**.",
-            "trivia_desc": "Trivia جزء رسمي من ARCADE. دخل لقناة Trivia باش تلعب الجولات والأسئلة بلا ما نخربق Channel ديال ARCADE.",
-            "leader_pick": "🏆 اختار Leaderboard:",
+            "trivia_desc": "تحدي المعلومات جزء رسمي من الأركيد. دخل للقناة المخصصة ديالو باش تلعب الجولات والأسئلة بلا ما نعمرو قناة الأركيد.",
+            "leader_pick": "🏆 اختار الترتيب اللي بغيتي:",
         },
         "en": {
-            "games": "🕹️ الألعاب",
-            "trivia": "🧠 تحدي المعلومات",
-            "casino": "🎰 الرهانات",
-            "economy": "💰 الاقتصاد",
-            "leaders": "🏆 الترتيب",
+            "games": "🕹️ Mini Games",
+            "trivia": "🧠 Trivia",
+            "casino": "🎰 Casino",
+            "economy": "💰 Economy",
+            "leaders": "🏆 Leaderboards",
             "choose_game": "🕹️ Choose a game:",
             "not_yours": "❌ This session belongs to another member.",
             "unavailable": "❌ This feature is unavailable right now.",
             "economy_title": "💰 Economy Quick Access",
-            "economy_desc": "ARCADE is only the **quick-access hub**. The full official panels stay in #bank and #shop so members always know where the main economy lives.",
+            "economy_desc": "ARCADE is only the **quick-access hub**. The full official panels stay in #bank and #shop.",
             "official": "Official channels",
             "back": "Back to ARCADE",
             "language_saved": "✅ Your private panel is now **English**.",
@@ -99,23 +104,24 @@ def _txt(lang: str, key: str) -> str:
         },
         "fr": {
             "games": "🕹️ Mini-jeux",
-            "trivia": "🧠 تحدي المعلومات",
-            "casino": "🎰 الرهانات",
+            "trivia": "🧠 Trivia",
+            "casino": "🎰 Casino",
             "economy": "💰 Économie",
             "leaders": "🏆 Classements",
             "choose_game": "🕹️ Choisis un jeu :",
             "not_yours": "❌ Cette session appartient à un autre membre.",
             "unavailable": "❌ Cette fonction est indisponible pour le moment.",
-            "economy_title": "💰 Accès rapide à l'économie",
-            "economy_desc": "ARCADE sert d'**accès rapide**. Les panneaux officiels complets restent dans #bank et #shop pour éviter toute confusion.",
+            "economy_title": "💰 Accès rapide à l’économie",
+            "economy_desc": "ARCADE sert d’**accès rapide**. Les panneaux officiels complets restent dans #bank et #shop.",
             "official": "Salons officiels",
             "back": "Retour à ARCADE",
-            "language_saved": "✅ Ton panneau privé est maintenant en **Français**.",
-            "trivia_desc": "Trivia fait partie d'ARCADE. Utilise le salon Trivia dédié pour les manches et questions afin de garder ARCADE propre.",
+            "language_saved": "✅ Ton panneau privé est maintenant en **français**.",
+            "trivia_desc": "Trivia fait partie d’ARCADE. Utilise le salon Trivia dédié pour les manches et les questions afin de garder ARCADE propre.",
             "leader_pick": "🏆 Choisis un classement :",
         },
     }
-    return strings.get(lang, strings["darija"]).get(key, strings["darija"].get(key, key))
+    lang = lang if lang in strings else "darija"
+    return strings[lang].get(key, strings["darija"].get(key, key))
 
 
 def _channel_mention(channel_id: int, fallback: str) -> str:
@@ -231,16 +237,25 @@ class GamesPanelView(discord.ui.View):
 
     async def leaders_btn(self, interaction):
         lang=self._sync(interaction)
-        await interaction.response.defer(ephemeral=True, thinking=True)
+        # No work is done before responding: this removes the Discord
+        # "didn't respond in time" path when opening Leaderboards.
         try:
-            await interaction.edit_original_response(
+            await _fresh_private(
+                interaction,
                 content=_txt(lang,"leader_pick"),
                 embed=build_leaderboard_home_embed(lang),
-                view=LeaderboardPanelView(self.bot,owner=interaction.user,lang=lang,session_key="arcade",persistent=False),
+                view=LeaderboardPanelView(
+                    self.bot,
+                    owner=interaction.user,
+                    lang=lang,
+                    session_key="arcade",
+                    persistent=False,
+                ),
             )
         except Exception as exc:
             print(f"[ARCADE] leaderboard open failed: {type(exc).__name__}: {exc}")
-            await interaction.edit_original_response(content=_txt(lang,"unavailable"),embed=None,view=None)
+            if not interaction.response.is_done():
+                await interaction.response.send_message(_txt(lang,"unavailable"), ephemeral=True)
 
 
 def build_arcade_personal_embed(lang: str) -> discord.Embed:
@@ -258,9 +273,9 @@ def build_arcade_personal_embed(lang: str) -> discord.Embed:
         )
     else:
         desc = (
-            "**ARCADE هو القلب ديال GGMW9.** الألعاب، Trivia، Casino وQuick Access للاقتصاد مجموعين هنا.\n\n"
+            "**الأركيد هو القلب ديال GGMW9.** الألعاب، تحدي المعلومات، الرهانات والوصول السريع للاقتصاد مجموعين هنا.\n\n"
             "🕹️ الألعاب • 🧠 تحدي المعلومات • 🎰 الرهانات • 💰 الاقتصاد • 🏆 الترتيب\n"
-            "🏦 **البنك** و🛒 **المتجر** فـGGMW9 Economy باقين هما البانلات الرسمية والكاملة."
+            "🏦 **البنك** و🛒 **المتجر** فقسم الاقتصاد ديال GGMW9 باقين هما البانلات الرسمية والكاملة."
         )
     e = discord.Embed(title="🎮・ARCADE — GGMW9", description=desc, color=discord.Color.blurple())
     e.set_footer(text="🌐 Darija default • English • Français")
@@ -273,7 +288,7 @@ def build_games_menu_embed(lang: str) -> discord.Embed:
     elif lang == "fr":
         desc = "Choisis un mini-jeu. Trivia est aussi disponible directement depuis ARCADE."
     else:
-        desc = "اختار Mini Game. Trivia حتى هي موجودة مباشرة فـARCADE باش تكون باينة وواضحة."
+        desc = "اختار لعبة مصغرة. تحدي المعلومات حتى هو موجود مباشرة فالأركيد باش يكون باين وواضح."
     return discord.Embed(title=_txt(lang, "games"), description=desc, color=discord.Color.green())
 
 
@@ -284,7 +299,7 @@ def build_trivia_embed(lang: str) -> discord.Embed:
     elif lang == "fr":
         title, desc = "🧠 Trivia", f"{_txt(lang,'trivia_desc')}\n\n📍 Salon Trivia : {ch}\n🏆 Le classement Trivia est aussi accessible depuis ARCADE."
     else:
-        title, desc = "🧠 Trivia", f"{_txt(lang,'trivia_desc')}\n\n📍 قناة Trivia: {ch}\n🏆 Leaderboard ديال Trivia موجود حتى هو فـARCADE."
+        title, desc = "🧠 Trivia", f"{_txt(lang,'trivia_desc')}\n\n📍 قناة Trivia: {ch}\n🏆 ترتيب تحدي المعلومات موجود حتى هو فالأركيد."
     return discord.Embed(title=title, description=desc, color=discord.Color.purple())
 
 
@@ -420,9 +435,9 @@ class TriviaQuickView(discord.ui.View):
         if getattr(cfg, "TRIVIA_CHANNEL_ID", 0):
             url = f"https://discord.com/channels/{user.guild.id}/{int(cfg.TRIVIA_CHANNEL_ID)}" if isinstance(user, discord.Member) else None
             if url:
-                label = "🧠 Open Trivia Channel" if lang == "en" else "🧠 Ouvrir le salon Trivia" if lang == "fr" else "🧠 دخل لقناة Trivia"
+                label = "🧠 Open Trivia Channel" if lang == "en" else "🧠 Ouvrir le salon Trivia" if lang == "fr" else "🧠 دخل لقناة تحدي المعلومات"
                 self.add_item(discord.ui.Button(label=label, style=discord.ButtonStyle.link, url=url, row=0))
-        back_label = "↩️ Back to ARCADE" if lang == "en" else "↩️ Retour à ARCADE" if lang == "fr" else "↩️ رجع لـARCADE"
+        back_label = "↩️ Back to ARCADE" if lang == "en" else "↩️ Retour à ARCADE" if lang == "fr" else "↩️ رجع للأركيد"
         b=discord.ui.Button(label=back_label,style=discord.ButtonStyle.secondary,row=0); b.callback=self.back; self.add_item(b)
         self.add_item(ArcadeSessionLanguageSelect(bot, user, row=1))
 
@@ -513,10 +528,10 @@ def build_shop_public_embed(lang: str = "darija") -> discord.Embed:
         desc="Ce salon est le **Marketplace officiel complet**. ARCADE sert uniquement de raccourci.\n\nOuvre la boutique pour parcourir les catégories, actifs, utilités et objets de prestige."
         footer="GGMW9 Marketplace • Boutique officielle • Français"
     else:
-        desc="هاد Channel هي **الواجهة الرسمية والكاملة للمتجر**. ARCADE غير Shortcut سريع ليها.\n\nفتح Marketplace باش تشوف Categories، Assets، Utility وPrestige items."
-        footer="GGMW9 Marketplace • المتجر الرسمي • Darija"
+        desc="هاد القناة هي **الواجهة الرسمية والكاملة للمتجر**. الأركيد غير اختصار سريع ليها.\n\nفتح المتجر باش تشوف الأقسام، الممتلكات، الامتيازات وحوايج الهيبة."
+        footer="متجر GGMW9 • الواجهة الرسمية • الدارجة"
     e=discord.Embed(title="🛒 GGMW9 Marketplace",description=desc,color=discord.Color.blurple(),timestamp=datetime.now())
-    e.add_field(name="🌐 Language",value="🇲🇦 Darija • 🇬🇧 English • 🇫🇷 Français\n↳ اختيار اللغة كيفتح Panel خاصة بيك؛ Dismiss آمن وتقدر تعاود تفتحها.",inline=False)
+    e.add_field(name="🌐 Language",value="🇲🇦 الدارجة • 🇬🇧 الإنجليزية • 🇫🇷 الفرنسية\n↳ اختيار اللغة كيفتح بانل خاصة بيك؛ إلا سديتيها تقدر تعاود تفتحها عادي.",inline=False)
     e.set_footer(text=footer); return e
 
 
@@ -626,7 +641,7 @@ class LeaderboardSelect(discord.ui.Select):
                 return
 
             builder=getattr(cog,lb["method"])
-            embed=builder(interaction.guild, lang=self.lang) if lb["id"]=="trivia" else builder(interaction.guild)
+            embed=builder(interaction.guild, lang=self.lang) if lb["id"] in {"trivia","richest"} else builder(interaction.guild)
 
             lang = self.lang if self.owner else _lang(self.bot,interaction.guild.id,interaction.user.id)
             await interaction.edit_original_response(
@@ -640,7 +655,7 @@ class LeaderboardSelect(discord.ui.Select):
             try:
                 await interaction.edit_original_response(
                     content=(
-                        "❌ وقع مشكل فـLeaderboard. جرب عاود؛ إلا بقات استعمل 🔄 Refresh All Panels من Owner."
+                        "❌ وقع مشكل فالترتيب. جرب عاود؛ إلا بقات استعمل زر 🔄 تحديث جميع البانلز من لوحة المالك."
                         if lang=="darija" else
                         "❌ The leaderboard hit an error. Try again; if it persists use 🔄 Refresh All Panels."
                         if lang=="en" else

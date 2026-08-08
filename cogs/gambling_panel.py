@@ -13,11 +13,11 @@ from storage import JsonStore
 
 
 GAMBLING_GAMES = [
-    {"id":"dice","emoji":"🎲","label":"Dice","desc":"d20 بثلاث مستويات مخاطرة ثابتة","desc_en":"d20 with three fixed risk levels","desc_fr":"d20 avec trois niveaux de risque fixes","cog":"Dice","min_attr":"DICE_MIN_BET","max_attr":"DICE_MAX_BET"},
-    {"id":"coinflip","emoji":"🪙","label":"Coinflip","desc":"50/50 بPayout ثابت","desc_en":"50/50 with a fixed payout","desc_fr":"50/50 avec paiement fixe","cog":"Coinflip","min_attr":"COINFLIP_MIN_BET","max_attr":"COINFLIP_MAX_BET"},
-    {"id":"slots","emoji":"🎰","label":"Slots","desc":"Reels موزونة + Progressive Jackpot","desc_en":"Weighted reels + Progressive Jackpot","desc_fr":"Rouleaux pondérés + jackpot progressif","cog":"Slots","min_attr":"SLOTS_MIN_BET","max_attr":"SLOTS_MAX_BET"},
-    {"id":"scratch","emoji":"🎫","label":"Scratch Card","desc":"نتائج ثابتة ومدروسة بلا 3-match بالغلط","desc_en":"Fixed outcome table with protected match logic","desc_fr":"Table de résultats fixe avec logique de correspondance protégée","cog":"Scratch","min_attr":"SCRATCH_MIN_BET","max_attr":"SCRATCH_MAX_BET"},
-    {"id":"lottery","emoji":"🎟️","label":"Lottery","desc":"4 أرقام + Jackpot على 4/4","desc_en":"4 numbers + Jackpot on a 4/4 match","desc_fr":"4 numéros + jackpot sur un 4/4","cog":"Lottery","min_attr":"LOTTERY_MIN_BET","max_attr":"LOTTERY_MAX_BET"},
+    {"id":"dice","emoji":"🎲","label":"Dice","label_darija":"النرد","desc":"نرد d20 بثلاث مستويات مخاطرة ثابتة","desc_en":"d20 with three fixed risk levels","desc_fr":"d20 avec trois niveaux de risque fixes","cog":"Dice","min_attr":"DICE_MIN_BET","max_attr":"DICE_MAX_BET"},
+    {"id":"coinflip","emoji":"🪙","label":"Coinflip","label_darija":"وجه ولا كتابة","desc":"فرصة 50/50 وربح ثابت","desc_en":"50/50 with a fixed payout","desc_fr":"50/50 avec paiement fixe","cog":"Coinflip","min_attr":"COINFLIP_MIN_BET","max_attr":"COINFLIP_MAX_BET"},
+    {"id":"slots","emoji":"🎰","label":"Slots","label_darija":"السلوت","desc":"بكرات موزونة + جائزة كبرى تراكمية","desc_en":"Weighted reels + Progressive Jackpot","desc_fr":"Rouleaux pondérés + jackpot progressif","cog":"Slots","min_attr":"SLOTS_MIN_BET","max_attr":"SLOTS_MAX_BET"},
+    {"id":"scratch","emoji":"🎫","label":"Scratch Card","label_darija":"بطاقة الحظ","desc":"نتائج ثابتة ومدروسة بلا تطابق ثلاثي بالغلط","desc_en":"Fixed outcome table with protected match logic","desc_fr":"Table de résultats fixe avec logique de correspondance protégée","cog":"Scratch","min_attr":"SCRATCH_MIN_BET","max_attr":"SCRATCH_MAX_BET"},
+    {"id":"lottery","emoji":"🎟️","label":"Lottery","label_darija":"اليانصيب","desc":"4 أرقام + الجائزة الكبرى إلا طابقت 4/4","desc_en":"4 numbers + Jackpot on a 4/4 match","desc_fr":"4 numéros + jackpot sur un 4/4","cog":"Lottery","min_attr":"LOTTERY_MIN_BET","max_attr":"LOTTERY_MAX_BET"},
 ]
 GAME_BY_ID = {g["id"]: g for g in GAMBLING_GAMES}
 
@@ -56,11 +56,11 @@ def build_bet_limit_error(bot: commands.Bot, guild: discord.Guild, user: discord
     if bet < mn:
         if lang == "en": return f"❌ Minimum bet is **{cfg.fmt_money(mn)}**."
         if lang == "fr": return f"❌ La mise minimale est **{cfg.fmt_money(mn)}**."
-        return f"❌ أقل Bet هي **{cfg.fmt_money(mn)}**."
+        return f"❌ أقل رهان هو **{cfg.fmt_money(mn)}**."
     if bet > table_max:
         if lang == "en": return f"❌ Table maximum for this game is **{cfg.fmt_money(table_max)}**."
         if lang == "fr": return f"❌ La mise maximale de cette table est **{cfg.fmt_money(table_max)}**."
-        return f"❌ Table Max ديال هاد اللعبة هي **{cfg.fmt_money(table_max)}**."
+        return f"❌ أقصى رهان فهاد اللعبة هو **{cfg.fmt_money(table_max)}**."
     if bet > eff:
         if lang == "en":
             return (f"❌ Bet **{cfg.fmt_money(bet)}** is above your current bankroll limit.\n"
@@ -73,7 +73,7 @@ def build_bet_limit_error(bot: commands.Bot, guild: discord.Guild, user: discord
         return (f"❌ Bet **{cfg.fmt_money(bet)}** أكبر من limit ديالك دابا.\n"
                 f"✅ المسموح ليك: **{cfg.fmt_money(mn)} → {cfg.fmt_money(eff)}**\n"
                 f"💳 Wallet: **{cfg.fmt_money(wallet)}** • حماية Bankroll: **{pct}% فالرهان الواحد**. Savings ماكيدخلش فالقمار.")
-    return "❌ Bet خارج limit."
+    return "❌ الرهان خارج الحد المسموح."
 
 
 def _activity_db(bot: commands.Bot) -> JsonStore:
@@ -215,12 +215,6 @@ async def _upsert(interaction: discord.Interaction, session_key: str, **kwargs):
         return await interaction.response.send_message(ephemeral=True, **kwargs)
     return await interaction.followup.send(ephemeral=True, **kwargs)
 
-async def _fresh(interaction: discord.Interaction, **kwargs):
-    """Open a new private Casino session from the public panel. Dismiss-safe."""
-    if not interaction.response.is_done():
-        return await interaction.response.send_message(ephemeral=True, **kwargs)
-    return await interaction.followup.send(ephemeral=True, **kwargs)
-
 
 def _game_desc(meta: dict, lang: str) -> str:
     if lang == "en":
@@ -230,39 +224,45 @@ def _game_desc(meta: dict, lang: str) -> str:
     return meta["desc"]
 
 
+def _game_name(meta: dict, lang: str) -> str:
+    if lang=="darija":
+        return meta.get("label_darija", meta.get("label", meta.get("id","لعبة")))
+    return meta.get("label", meta.get("id","Game"))
+
+
 def _casino_text(lang: str, key: str, **fmt) -> str:
     data = {
         "darija": {
-            "session_title": "🎰 GGMW9 Casino — Session عادلة",
-            "session_desc": "💳 Wallet: **{wallet}**\n🧾 النشاط: **{rounds}/{limit} rounds** فآخر {window} دقيقة\n\nاختار اللعبة وكتب الرهان بالدولار. نفس الـSession كتتبدل فبلاصتها باش مايبقاش spam.\n🔒 **Odds ثابتة على الجميع**؛ Player Profile غير analytics/anti-bot وما كيبدلش RNG.",
-            "tables": "🎮 الطاولات",
+            "session_title": "🎰 رهانات GGMW9 — جلسة عادلة",
+            "session_desc": "💳 المحفظة: **{wallet}**\n🧾 النشاط: **{rounds}/{limit} جولة** فآخر {window} دقيقة\n\nاختار اللعبة وكتب الرهان بالدولار. نفس الجلسة الخاصة كتتبدل فبلاصتها باش مايتجمعوش الرسائل.\n🔒 **نفس فرص الربح عند الجميع**؛ ملف النشاط غير للتحليل والحماية من الاستعمال الآلي وما كيبدلش العشوائية.",
+            "tables": "🎮 الألعاب والحدود",
             "your_max": "الحد ديالك",
-            "guard_title": "⏳ حماية الـSession",
-            "guard": "وصلتي حد الجولات فهاد النافذة. استنى شوية؛ Odds ما تبدلوش.",
-            "choose": "🎮 اختار لعبة Casino...",
-            "not_yours": "❌ هاد Session ماشي ديالك.",
-            "unavailable": "❌ اللعبة أو Economy ماشي متوفرة.",
-            "active": "❌ عندك round خدامة دابا.",
+            "guard_title": "⏳ حماية الجلسة",
+            "guard": "وصلتي لحد الجولات فهاد المدة. استنى شوية؛ فرص الربح ديالك ما تبدلاتش.",
+            "choose": "🎮 اختار لعبة ديال الرهانات...",
+            "not_yours": "❌ هاد الجلسة ماشي ديالك.",
+            "unavailable": "❌ اللعبة ولا نظام الاقتصاد ماشي متوفر دابا.",
+            "active": "❌ عندك جولة خدامة دابا.",
             "enter_bet": "💵 دخل الرهان",
             "bet_label": "الرهان بالدولار",
-            "current_bet": "الحالي {bet} — كتب الرهان الجديد",
+            "current_bet": "الرهان الحالي {bet} — كتب الرهان الجديد",
             "bad_amount": "❌ دخل مبلغ بحال `5` أو `5.50`.",
-            "limit": "❌ Bet **{bet}** خارج limit ديالك.",
-            "need": "❌ ناقصك **{amount}** فالWallet.",
-            "wallet_changed": "❌ Wallet تبدلت وما بقاتش كافية.",
-            "bankroll": "Bankroll max ديالك دابا: **{maxbet}**",
-            "bankroll_note": "(max {pct}% من Wallet، مع minimum table bet)",
-            "risk": "Fixed odds؛ اختار مستوى المخاطرة.",
+            "limit": "❌ الرهان **{bet}** خارج الحد ديالك.",
+            "need": "❌ ناقصك **{amount}** فالمحفظة.",
+            "wallet_changed": "❌ رصيد المحفظة تبدل وما بقاش كافي.",
+            "bankroll": "أقصى رهان مسموح ليك دابا: **{maxbet}**",
+            "bankroll_note": "(الأقصى {pct}% من المحفظة فالرهان الواحد، مع احترام أقل رهان ديال اللعبة)",
+            "risk": "الفرص ثابتة؛ اختار مستوى المخاطرة.",
             "same_bet": "🔄 نفس الرهان",
             "change_bet": "💵 بدل الرهان",
-            "public_desc": "Casino صعيب، شفاف وعادل: **fixed odds للجميع** + progressive jackpot + bankroll/session protection.\nالأرباح ديال Casino ما داخلاش فـDaily mini-game cap.",
+            "public_desc": "نظام رهانات أصعب، شفاف وعادل: **نفس الفرص للجميع** + جائزة كبرى تراكمية + حماية للرصيد والجلسة.\nأرباح الرهانات ما داخلاش فالسقف اليومي ديال جوائز الألعاب المصغرة.",
             "protection": "🧠 الحماية",
-            "fairness_help": "ضغط **Fairness** باش تشوف RTP/House Edge. Player Profile ما كيغيّرش RNG.",
+            "fairness_help": "ضغط **العدالة والشفافية** باش تشوف نسبة الرجوع النظرية وهامش النظام. ملف اللاعب ما كيبدلش مولد النتائج العشوائية.",
             "langs": "🌍 اللغات",
-            "langs_value": "الدارجة هي الأساسية. بدّل لغتك من اللائحة لتحت: 🇲🇦 Darija • 🇬🇧 English • 🇫🇷 Français",
+            "langs_value": "الدارجة هي الأساسية. تقدر تختار: 🇲🇦 الدارجة • 🇬🇧 الإنجليزية • 🇫🇷 الفرنسية",
             "wallet_title": "💵 الرصيد",
-            "wallet_line": "💳 Wallet: **{wallet}**\n🏦 Savings: **{bank}**\n🎮 باقي Mini-game daily rewards: **{daily}**",
-            "stats_none": "مازال ما عندك حتى Casino stats.",
+            "wallet_line": "💳 المحفظة: **{wallet}**\n🏦 الادخار: **{bank}**\n🎮 باقي الجوائز اليومية ديال الألعاب المصغرة: **{daily}**",
+            "stats_none": "مازال ما عندك حتى إحصائيات فالرهانات.",
         },
         "en": {
             "session_title": "🎰 GGMW9 Casino — Fair Session",
@@ -353,7 +353,7 @@ def build_session_menu_embed(bot: commands.Bot, guild: discord.Guild, user: disc
         mn, mx = _limits(g["id"])
         eff = effective_max_bet(bot, guild.id, user.id, g["id"])
         lines.append(
-            f"{g['emoji']} **{g['label']}** — {cfg.fmt_money(mn)} → {cfg.fmt_money(mx)} • "
+            f"{g['emoji']} **{_game_name(g, lang)}** — {cfg.fmt_money(mn)} → {cfg.fmt_money(mx)} • "
             f"{_casino_text(lang, 'your_max')} {cfg.fmt_money(eff)}"
         )
     embed.add_field(name=_casino_text(lang, "tables"), value="\n".join(lines), inline=False)
@@ -373,13 +373,15 @@ def build_bet_error_embed(
     meta = GAME_BY_ID[game_id]
     min_bet, table_max = _limits(game_id)
     eff = effective_max_bet(bot, guild.id, user.id, game_id)
+    if lang=="en":
+        title=f"{meta['emoji']} {_game_name(meta,lang)} — Bet"; table=f"Table: **{cfg.fmt_money(min_bet)} → {cfg.fmt_money(table_max)}**"
+    elif lang=="fr":
+        title=f"{meta['emoji']} {_game_name(meta,lang)} — Mise"; table=f"Table : **{cfg.fmt_money(min_bet)} → {cfg.fmt_money(table_max)}**"
+    else:
+        title=f"{meta['emoji']} {_game_name(meta,lang)} — الرهان"; table=f"حدود اللعبة: **{cfg.fmt_money(min_bet)} → {cfg.fmt_money(table_max)}**"
     return discord.Embed(
-        title=f"{meta['emoji']} {meta['label']} — Bet",
-        description=(
-            f"{text}\n\nTable: **{cfg.fmt_money(min_bet)} → {cfg.fmt_money(table_max)}**\n"
-            f"{_casino_text(lang, 'bankroll', maxbet=cfg.fmt_money(eff))}\n"
-            f"{_casino_text(lang, 'bankroll_note', pct=getattr(cfg, 'CASINO_MAX_BET_WALLET_PERCENT', 10))}"
-        ),
+        title=title,
+        description=f"{text}\n\n{table}\n{_casino_text(lang, 'bankroll', maxbet=cfg.fmt_money(eff))}\n{_casino_text(lang, 'bankroll_note', pct=getattr(cfg, 'CASINO_MAX_BET_WALLET_PERCENT', 10))}",
         color=discord.Color.red(),
     )
 
@@ -389,10 +391,10 @@ def build_fairness_embed(lang: str = "darija") -> discord.Embed:
     descriptions = {
         "darija": (
             f"**{getattr(cfg,'CASINO_FAIRNESS_VERSION','GGMW9 Fair RNG')}**\n\n"
-            "✅ نفس Odds لكل عضو، مهما كان رابح ولا خاسر.\n"
-            "✅ RNG من SystemRandom/OS entropy فالألعاب.\n"
+            "✅ نفس فرص الربح لكل عضو، مهما كان رابح ولا خاسر.\n"
+            "✅ النتائج كتستعمل مولد عشوائي آمن من النظام.\n"
             "✅ Player Profile كيقرا النشاط غير للـanalytics/anti-bot.\n"
-            "❌ ماكاينش adaptive rigging ولا تغيير سري للفرص."
+            "❌ ماكاين لا تلاعب متكيف لا تغيير سري فالفرص حسب اللاعب."
         ),
         "en": (
             f"**{getattr(cfg,'CASINO_FAIRNESS_VERSION','GGMW9 Fair RNG')}**\n\n"
@@ -410,11 +412,11 @@ def build_fairness_embed(lang: str = "darija") -> discord.Embed:
         ),
     }
     embed = discord.Embed(
-        title="🛡️ Casino Fairness & RTP",
+        title=("🛡️ عدالة الرهانات ونسبة الرجوع النظرية" if lang=="darija" else "🛡️ Casino Fairness & RTP" if lang=="en" else "🛡️ Équité du Casino et RTP"),
         description=descriptions.get(lang, descriptions["darija"]),
         color=discord.Color.green(),
     )
-    embed.add_field(name="🪙 Coinflip", value=f"RTP **{rtp['coinflip']:.2f}%** • Edge **{100-rtp['coinflip']:.2f}%**", inline=True)
+    embed.add_field(name=("🪙 وجه ولا كتابة" if lang=="darija" else "🪙 Coinflip" if lang=="en" else "🪙 Pile ou face"), value=(f"الرجوع **{rtp['coinflip']:.2f}%** • هامش النظام **{100-rtp['coinflip']:.2f}%**" if lang=="darija" else f"RTP **{rtp['coinflip']:.2f}%** • Edge **{100-rtp['coinflip']:.2f}%**"), inline=True)
     embed.add_field(name="🎲 Dice Low", value=f"RTP **{rtp['dice_low']:.2f}%** • Edge **{100-rtp['dice_low']:.2f}%**", inline=True)
     embed.add_field(name="🎲 Dice Medium", value=f"RTP **{rtp['dice_medium']:.2f}%** • Edge **{100-rtp['dice_medium']:.2f}%**", inline=True)
     embed.add_field(name="🎲 Dice High", value=f"RTP **{rtp['dice_high']:.2f}%** • Edge **{100-rtp['dice_high']:.2f}%**", inline=True)
@@ -422,7 +424,7 @@ def build_fairness_embed(lang: str = "darija") -> discord.Embed:
     embed.add_field(name="🎫 Scratch", value=f"RTP **{rtp['scratch']:.2f}%** • Edge **{100-rtp['scratch']:.2f}%**", inline=True)
     embed.add_field(name="🎟️ Lottery", value=f"Base RTP ≈ **{rtp['lottery']:.2f}%** + funded Jackpot", inline=True)
     footer = {
-        "darija": "RTP هو long-run theoretical return، ماشي ضمان ديال أي session قصيرة",
+        "darija": "نسبة الرجوع النظرية محسوبة على المدى الطويل، وماشي ضمان لنتيجة أي جلسة قصيرة",
         "en": "RTP is a long-run theoretical return, not a guarantee for a short session",
         "fr": "Le RTP est un rendement théorique à long terme, pas une garantie sur une courte session",
     }
@@ -455,11 +457,11 @@ def build_profile_embed(bot: commands.Bot, guild: discord.Guild, user: discord.M
 
     labels = {
         "darija": {
-            "desc": "Profile تحليلي فقط؛ **ما كيبدلش Odds ولا Payouts**.", "rounds": "🎮 All-time rounds",
-            "wl": "🏆 W/L", "fav": "❤️ Favorite", "wager": "💵 Wagered", "payout": "💰 Gross payouts",
-            "net": "📈 Net", "recent": "⏱️ آخر {m}m", "signal": "🧠 Playstyle signal", "avg": "💵 Avg / Max bet",
-            "rate": "🎯 Recent win rate", "chase": "📈 Loss-chase signal", "streak": "📉 Current loss streak", "tempo": "⏱️ Tempo",
-            "fair": "🔒 ملاحظة Fairness", "fairv": "هاد القراءة غير analytics/anti-bot. **RTP، RNG وPayout tables ما كيتبدلوش حسب اللاعب.**",
+            "desc": "هاد الملف تحليلي فقط؛ **ما كيبدلش فرص الربح ولا قيمة الجوائز**.", "rounds": "🎮 مجموع الجولات",
+            "wl": "🏆 الربح / الخسارة", "fav": "❤️ اللعبة المفضلة", "wager": "💵 مجموع الرهانات", "payout": "💰 مجموع الجوائز",
+            "net": "📈 الصافي", "recent": "⏱️ آخر {m} دقيقة", "signal": "🧠 نمط اللعب", "avg": "💵 متوسط / أكبر رهان",
+            "rate": "🎯 نسبة الربح مؤخراً", "chase": "📈 رفع الرهان بعد الخسارة", "streak": "📉 سلسلة الخسائر الحالية", "tempo": "⏱️ سرعة اللعب",
+            "fair": "🔒 ملاحظة على العدالة", "fairv": "هاد القراءة غير للتحليل والحماية من الاستعمال الآلي. **نسبة الرجوع، العشوائية وجدول الجوائز ما كيتبدلوش حسب اللاعب.**",
         },
         "en": {
             "desc": "Analytics profile only; it **never changes odds or payouts**.", "rounds": "🎮 All-time rounds",
@@ -477,65 +479,55 @@ def build_profile_embed(bot: commands.Bot, guild: discord.Guild, user: discord.M
         },
     }
     t = labels.get(lang, labels["darija"])
-    embed = discord.Embed(title=f"📊 Casino Profile — {user.display_name}", description=t["desc"], color=discord.Color.blurple())
+    if lang=="darija":
+        signal_map={"🔴 High-intensity session":"🔴 جلسة قوية بزاف","🟠 Aggressive session":"🟠 جلسة هجومية","🟡 Active session":"🟡 جلسة نشيطة","🟢 Casual session":"🟢 جلسة عادية"}
+        tempo_map={"⚡ Very fast":"⚡ سريع بزاف","🏃 Fast":"🏃 سريع","🧘 Normal":"🧘 عادي","—":"—"}
+        behavior=dict(behavior); behavior["signal"]=signal_map.get(behavior["signal"],behavior["signal"]); behavior["tempo"]=tempo_map.get(behavior["tempo"],behavior["tempo"])
+    embed = discord.Embed(title=(f"📊 ملف الرهانات — {user.display_name}" if lang=="darija" else f"📊 Casino Profile — {user.display_name}" if lang=="en" else f"📊 Profil Casino — {user.display_name}"), description=t["desc"], color=discord.Color.blurple())
     embed.add_field(name=t["rounds"], value=f"**{total_rounds:,}**", inline=True)
     embed.add_field(name=t["wl"], value=f"**{wins:,} / {losses:,}**", inline=True)
-    embed.add_field(name=t["fav"], value=(f"{fav_meta['emoji']} {fav_meta['label']}" if fav_meta else "—"), inline=True)
+    embed.add_field(name=t["fav"], value=(f"{fav_meta['emoji']} {_game_name(fav_meta,lang)}" if fav_meta else "—"), inline=True)
     embed.add_field(name=t["wager"], value=f"**{cfg.fmt_money(total_wagered)}**", inline=True)
     embed.add_field(name=t["payout"], value=f"**{cfg.fmt_money(total_won)}**", inline=True)
     embed.add_field(name=t["net"], value=f"**{cfg.fmt_money(total_won-total_wagered, signed=True)}**", inline=True)
-    embed.add_field(name=t["recent"].format(m=getattr(cfg, 'CASINO_PROFILE_WINDOW_MINUTES', 30)), value=f"{n} rounds • {cfg.fmt_money(recent_wager)} wagered • {cfg.fmt_money(recent_net, signed=True)} net", inline=False)
+    embed.add_field(name=t["recent"].format(m=getattr(cfg, 'CASINO_PROFILE_WINDOW_MINUTES', 30)), value=(f"{n} جولة • رهانات {cfg.fmt_money(recent_wager)} • الصافي {cfg.fmt_money(recent_net, signed=True)}" if lang=="darija" else f"{n} rounds • {cfg.fmt_money(recent_wager)} wagered • {cfg.fmt_money(recent_net, signed=True)} net" if lang=="en" else f"{n} parties • {cfg.fmt_money(recent_wager)} misés • net {cfg.fmt_money(recent_net, signed=True)}"), inline=False)
     embed.add_field(name=t["signal"], value=behavior["signal"], inline=True)
     embed.add_field(name=t["avg"], value=f"{cfg.fmt_money(behavior['avg_bet'])} / {cfg.fmt_money(behavior['max_bet'])}", inline=True)
     embed.add_field(name=t["rate"], value=f"{behavior['win_rate']:.1f}%", inline=True)
-    embed.add_field(name=t["chase"], value=f"{behavior['chase_count']} escalations after losses", inline=True)
-    embed.add_field(name=t["streak"], value=f"{behavior['loss_streak']} rounds", inline=True)
+    embed.add_field(name=t["chase"], value=(f"{behavior['chase_count']} مرات" if lang=="darija" else f"{behavior['chase_count']} escalations after losses" if lang=="en" else f"{behavior['chase_count']} augmentations après perte"), inline=True)
+    embed.add_field(name=t["streak"], value=(f"{behavior['loss_streak']} جولات" if lang=="darija" else f"{behavior['loss_streak']} rounds" if lang=="en" else f"{behavior['loss_streak']} parties"), inline=True)
     embed.add_field(name=t["tempo"], value=behavior["tempo"], inline=True)
     embed.add_field(name=t["fair"], value=t["fairv"], inline=False)
     embed.set_thumbnail(url=user.display_avatar.url)
     return embed
 
 
-def build_public_casino_embed(lang: str = "darija") -> discord.Embed:
-    lang = lang if lang in {"darija","en","fr"} else "darija"
-    if lang=="en":
-        games_name, limits_name, fairness_name = "🎮 Games", "💵 Table limits", "🛡️ Fairness"
-        footer="GGMW9 Fair Casino • USD • shared live English panel • no personalized rigging"
-    elif lang=="fr":
-        games_name, limits_name, fairness_name = "🎮 Jeux", "💵 Limites de mise", "🛡️ Équité"
-        footer="GGMW9 Fair Casino • USD • panneau Français en direct • aucune manipulation personnalisée"
-    else:
-        games_name, limits_name, fairness_name = "🎮 الألعاب", "💵 حدود الرهان", "🛡️ النزاهة"
-        footer="GGMW9 Fair Casino • USD • Darija public / private translations • بلا rigging شخصي"
-    embed=discord.Embed(title="🎰 GGMW9 Casino",description=_casino_text(lang,"public_desc"),color=discord.Color.gold(),timestamp=datetime.now())
-    embed.add_field(name=games_name,value="\n".join(f"{g['emoji']} **{g['label']}** — {_game_desc(g,lang)}" for g in GAMBLING_GAMES),inline=False)
-    embed.add_field(name=limits_name,value="\n".join(f"{g['emoji']} {cfg.fmt_money(_limits(g['id'])[0])} → {cfg.fmt_money(_limits(g['id'])[1])}" for g in GAMBLING_GAMES),inline=True)
-    embed.add_field(name=_casino_text(lang,"protection"),value=f"Per bet max **{getattr(cfg,'CASINO_MAX_BET_WALLET_PERCENT',10)}% Wallet**\nMax **{getattr(cfg,'CASINO_MAX_ROUNDS_30M',60)} rounds/30m**",inline=True)
-    embed.add_field(name=fairness_name,value=_casino_text(lang,"fairness_help"),inline=False)
-    live_note=("اختار اللغة من اللائحة باش تحل Panel خاصة بيك. Dismiss آمن وتقدر تعاود تفتحها." if lang=="darija" else "Choose a language to open your private Casino panel. Dismiss is safe; reopen it anytime." if lang=="en" else "Choisis une langue pour ouvrir ton panneau Casino privé. Tu peux le fermer et le rouvrir sans problème.")
-    embed.add_field(name=_casino_text(lang,"langs"),value=_casino_text(lang,"langs_value")+"\n"+live_note,inline=False)
-    embed.set_footer(text=footer)
-    return embed
-
-
 class CasinoLanguageSelect(discord.ui.Select):
-    def __init__(self, bot: commands.Bot, lang: str = "darija", *, row: int = 1):
-        self.bot=bot; self.lang=lang if lang in {"darija","en","fr"} else "darija"
-        options=[
-            discord.SelectOption(label="Darija",value="darija",emoji="🇲🇦",default=self.lang=="darija"),
-            discord.SelectOption(label="English",value="en",emoji="🇬🇧",default=self.lang=="en"),
-            discord.SelectOption(label="Français",value="fr",emoji="🇫🇷",default=self.lang=="fr"),
+    def __init__(self, bot: commands.Bot, *, row: int = 1):
+        self.bot = bot
+        options = [
+            discord.SelectOption(label="Darija", value="darija", emoji="🇲🇦", description="اللغة الأساسية"),
+            discord.SelectOption(label="English", value="en", emoji="🇬🇧", description="English interface"),
+            discord.SelectOption(label="Français", value="fr", emoji="🇫🇷", description="Interface française"),
         ]
-        super().__init__(placeholder="🌍 Darija • English • Français",options=options,min_values=1,max_values=1,custom_id="ggmw9:casino:language",row=row)
-
-    async def callback(self,interaction:discord.Interaction):
-        lang=_set_lang(self.bot,interaction.guild.id,interaction.user.id,self.values[0])
-        await _fresh(
-            interaction,
-            content=("✅ تحلات ليك نسخة Casino الخاصة بالدارجة." if lang=="darija" else "✅ Your private Casino panel is now English." if lang=="en" else "✅ Ton panneau Casino privé est maintenant en français."),
-            embed=build_session_menu_embed(self.bot,interaction.guild,interaction.user,lang),
-            view=GamblingMenuView(self.bot,interaction.user,lang=lang),
+        super().__init__(
+            placeholder="🌍 Darija • English • Français",
+            options=options,
+            min_values=1,
+            max_values=1,
+            custom_id="ggmw9:casino:language",
+            row=row,
         )
+
+    async def callback(self, interaction: discord.Interaction):
+        lang = _set_lang(self.bot, interaction.guild.id, interaction.user.id, self.values[0])
+        await _upsert(
+            interaction,
+            "casino",
+            embed=build_session_menu_embed(self.bot, interaction.guild, interaction.user, lang),
+            view=GamblingMenuView(self.bot, interaction.user, lang=lang),
+        )
+
 
 
 class CasinoSessionLanguageSelect(discord.ui.Select):
@@ -566,52 +558,59 @@ class CasinoSessionLanguageSelect(discord.ui.Select):
 
 
 class GamblingPanelView(discord.ui.View):
-    def __init__(self, bot: commands.Bot, lang: str = "darija"):
+    def __init__(self, bot: commands.Bot):
         super().__init__(timeout=None)
-        self.bot=bot; self.lang=lang if lang in {"darija","en","fr"} else "darija"
-        labels={
-            "darija":["🎰 لعب","💵 Wallet","📊 الإحصائيات","🧠 Profile","🛡️ النزاهة"],
-            "en":["🎰 Play","💵 Wallet","📊 Stats","🧠 Profile","🛡️ Fairness"],
-            "fr":["🎰 Jouer","💵 Wallet","📊 Stats","🧠 Profil","🛡️ Équité"],
-        }[self.lang]
-        specs=[
-            ("ggmw9:gambling_panel:open",labels[0],discord.ButtonStyle.success,self.open_menu),
-            ("ggmw9:gambling_panel:balance",labels[1],discord.ButtonStyle.secondary,self.balance_btn),
-            ("ggmw9:gambling_panel:stats",labels[2],discord.ButtonStyle.secondary,self.stats_btn),
-            ("ggmw9:gambling_panel:profile",labels[3],discord.ButtonStyle.primary,self.profile_btn),
-            ("ggmw9:gambling_panel:fairness",labels[4],discord.ButtonStyle.primary,self.fairness_btn),
-        ]
-        for cid,label,style,cb in specs:
-            b=discord.ui.Button(label=label[:80],style=style,custom_id=cid,row=0); b.callback=cb; self.add_item(b)
-        self.add_item(CasinoLanguageSelect(bot,self.lang,row=1))
+        self.bot = bot
+        self.add_item(CasinoLanguageSelect(bot, row=1))
 
-    def _sync(self,interaction):
-        return _lang(self.bot,interaction.guild.id,interaction.user.id)
+    def _user_lang(self, interaction: discord.Interaction) -> str:
+        return _lang(self.bot, interaction.guild.id, interaction.user.id)
 
-    async def open_menu(self,interaction):
-        lang=self._sync(interaction)
-        await _fresh(interaction,embed=build_session_menu_embed(self.bot,interaction.guild,interaction.user,lang),view=GamblingMenuView(self.bot,interaction.user,lang=lang))
+    @discord.ui.button(label="🎰 Play", style=discord.ButtonStyle.success, custom_id="ggmw9:gambling_panel:open", row=0)
+    async def open_menu(self, interaction: discord.Interaction, button: discord.ui.Button):
+        lang = self._user_lang(interaction)
+        await _upsert(
+            interaction, "casino",
+            embed=build_session_menu_embed(self.bot, interaction.guild, interaction.user, lang),
+            view=GamblingMenuView(self.bot, interaction.user, lang=lang),
+        )
 
-    async def balance_btn(self,interaction):
-        eco=self.bot.get_cog("Economy"); lang=self._sync(interaction)
+    @discord.ui.button(label="💵 Wallet", style=discord.ButtonStyle.secondary, custom_id="ggmw9:gambling_panel:balance", row=0)
+    async def balance_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        eco = self.bot.get_cog("Economy")
+        lang = self._user_lang(interaction)
         if not eco:
-            await interaction.response.send_message(_casino_text(lang,"unavailable"),ephemeral=True); return
-        embed=discord.Embed(title=_casino_text(lang,"wallet_title"),description=_casino_text(lang,"wallet_line",wallet=cfg.fmt_money(eco.get_balance(interaction.guild.id,interaction.user.id)),bank=cfg.fmt_money(eco.get_bank_balance(interaction.guild.id,interaction.user.id)),daily=cfg.fmt_money(eco.daily_remaining(interaction.guild.id,interaction.user.id))),color=discord.Color.blurple())
-        await _fresh(interaction,embed=embed,view=CasinoInfoBackView(self.bot,interaction.user,lang))
+            await interaction.response.send_message(_casino_text(lang, "unavailable"), ephemeral=True)
+            return
+        embed = discord.Embed(
+            title=_casino_text(lang, "wallet_title"),
+            description=_casino_text(
+                lang, "wallet_line",
+                wallet=cfg.fmt_money(eco.get_balance(interaction.guild.id, interaction.user.id)),
+                bank=cfg.fmt_money(eco.get_bank_balance(interaction.guild.id, interaction.user.id)),
+                daily=cfg.fmt_money(eco.daily_remaining(interaction.guild.id, interaction.user.id)),
+            ),
+            color=discord.Color.blurple(),
+        )
+        await _upsert(interaction, "casino", embed=embed, view=CasinoInfoBackView(self.bot, interaction.user, lang))
 
-    async def stats_btn(self,interaction):
-        lang=self._sync(interaction)
-        embeds=[c.build_stats_embed(interaction.guild,interaction.user) for n in ("Dice","Coinflip","Slots","Scratch","Lottery") if (c:=self.bot.get_cog(n))]
-        if not embeds: embeds=[discord.Embed(description=_casino_text(lang,"stats_none"),color=discord.Color.blurple())]
-        await _fresh(interaction,embeds=embeds,view=CasinoInfoBackView(self.bot,interaction.user,lang))
+    @discord.ui.button(label="📊 Stats", style=discord.ButtonStyle.secondary, custom_id="ggmw9:gambling_panel:stats", row=0)
+    async def stats_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        lang = self._user_lang(interaction)
+        embeds = [c.build_stats_embed(interaction.guild, interaction.user) for n in ("Dice", "Coinflip", "Slots", "Scratch", "Lottery") if (c := self.bot.get_cog(n))]
+        if not embeds:
+            embeds = [discord.Embed(description=_casino_text(lang, "stats_none"), color=discord.Color.blurple())]
+        await _upsert(interaction, "casino", embeds=embeds, view=CasinoInfoBackView(self.bot, interaction.user, lang))
 
-    async def profile_btn(self,interaction):
-        lang=self._sync(interaction)
-        await _fresh(interaction,embed=build_profile_embed(self.bot,interaction.guild,interaction.user,lang),view=CasinoInfoBackView(self.bot,interaction.user,lang))
+    @discord.ui.button(label="🧠 Profile", style=discord.ButtonStyle.primary, custom_id="ggmw9:gambling_panel:profile", row=0)
+    async def profile_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        lang = self._user_lang(interaction)
+        await _upsert(interaction, "casino", embed=build_profile_embed(self.bot, interaction.guild, interaction.user, lang), view=CasinoInfoBackView(self.bot, interaction.user, lang))
 
-    async def fairness_btn(self,interaction):
-        lang=self._sync(interaction)
-        await _fresh(interaction,embed=build_fairness_embed(lang),view=CasinoInfoBackView(self.bot,interaction.user,lang))
+    @discord.ui.button(label="🛡️ Fairness", style=discord.ButtonStyle.primary, custom_id="ggmw9:gambling_panel:fairness", row=0)
+    async def fairness_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        lang = self._user_lang(interaction)
+        await _upsert(interaction, "casino", embed=build_fairness_embed(lang), view=CasinoInfoBackView(self.bot, interaction.user, lang))
 
 
 class CasinoInfoBackView(discord.ui.View):
@@ -766,7 +765,7 @@ async def start_game_with_bet(interaction, bot, user, game_id, bet, *, retry_bet
     allowed, rounds, limit = can_start_casino_round(bot, interaction.guild.id, user.id)
     if not allowed:
         guard = {
-            "darija": f"⏳ وصلتي **{rounds}/{limit}** rounds. استنى حتى يخرج أقدم round من window.",
+            "darija": f"⏳ وصلتي **{rounds}/{limit}** جولة. استنى حتى تخرج أقدم جولة من هاد المدة.",
             "en": f"⏳ You reached **{rounds}/{limit}** rounds. Wait until the oldest round leaves the window.",
             "fr": f"⏳ Tu as atteint **{rounds}/{limit}** parties. Attends que la plus ancienne sorte de la fenêtre.",
         }[lang]
@@ -789,20 +788,20 @@ async def start_game_with_bet(interaction, bot, user, game_id, bet, *, retry_bet
     if game_id == "dice":
         from cogs.game_dice import RiskView
         embed = discord.Embed(
-            title="🎲 Dice — Risk",
-            description=f"Bet: **{cfg.fmt_money(bet)}**\n{_casino_text(lang, 'risk')}",
+            title=("🎲 النرد — المخاطرة" if lang=="darija" else "🎲 Dice — Risk" if lang=="en" else "🎲 Dés — Risque"),
+            description=(f"الرهان: **{cfg.fmt_money(bet)}**\n{_casino_text(lang, 'risk')}" if lang=="darija" else f"Bet: **{cfg.fmt_money(bet)}**\n{_casino_text(lang, 'risk')}" if lang=="en" else f"Mise : **{cfg.fmt_money(bet)}**\n{_casino_text(lang, 'risk')}"),
             color=discord.Color.blurple(),
         )
         for lvl in cfg.DICE_RISK_LEVELS.values():
             chance = (21 - int(lvl["threshold"])) / 20 * 100
-            embed.add_field(name=lvl["label"], value=f"Win **{chance:.0f}%** • ×{lvl['multiplier']}", inline=True)
+            embed.add_field(name=lvl["label"], value=(f"فرصة الربح **{chance:.0f}%** • ×{lvl['multiplier']}" if lang=="darija" else f"Win **{chance:.0f}%** • ×{lvl['multiplier']}" if lang=="en" else f"Chance de gain **{chance:.0f}%** • ×{lvl['multiplier']}"), inline=True)
         await interaction.response.edit_message(content=None, embed=embed, view=RiskView(cog, user, bet))
         return
     if game_id == "coinflip":
         from cogs.game_coinflip import SideView
         embed = discord.Embed(
-            title="🪙 Coinflip — Side",
-            description=f"Bet: **{cfg.fmt_money(bet)}**\nChance **50%** • payout **×{cfg.COINFLIP_PAYOUT_MULTIPLIER}**",
+            title=("🪙 وجه ولا كتابة — الاختيار" if lang=="darija" else "🪙 Coinflip — Side" if lang=="en" else "🪙 Pile ou face — Côté"),
+            description=(f"الرهان: **{cfg.fmt_money(bet)}**\nفرصة الربح **50%** • الجائزة **×{cfg.COINFLIP_PAYOUT_MULTIPLIER}**" if lang=="darija" else f"Bet: **{cfg.fmt_money(bet)}**\nChance **50%** • payout **×{cfg.COINFLIP_PAYOUT_MULTIPLIER}**" if lang=="en" else f"Mise : **{cfg.fmt_money(bet)}**\nChance **50%** • gain **×{cfg.COINFLIP_PAYOUT_MULTIPLIER}**"),
             color=discord.Color.blurple(),
         )
         await interaction.response.edit_message(content=None, embed=embed, view=SideView(cog, user, bet))
@@ -869,7 +868,7 @@ class GamblingPanel(commands.Cog):
         self.bot = bot
 
     async def cog_load(self):
-        self.bot.add_view(GamblingPanelView(self.bot,"darija"))
+        self.bot.add_view(GamblingPanelView(self.bot))
         print("✅ [CASINO] Multilang persistent panel registered.")
 
     @commands.Cog.listener()
@@ -890,22 +889,39 @@ class GamblingPanel(commands.Cog):
         try:
             if matches:
                 keep = matches[0]
-                await keep.edit(content=None, embed=embed, view=GamblingPanelView(self.bot,"darija"))
+                await keep.edit(embed=embed, view=GamblingPanelView(self.bot))
                 for old in matches[1:]:
                     try:
                         await old.delete()
                     except (discord.Forbidden, discord.NotFound, discord.HTTPException):
                         pass
             else:
-                await channel.send(embed=embed, view=GamblingPanelView(self.bot,"darija"))
+                await channel.send(embed=embed, view=GamblingPanelView(self.bot))
         except (discord.Forbidden, discord.HTTPException):
             pass
 
     def build_public_panel_embed(self, lang: str = "darija"):
-        return build_public_casino_embed(lang)
+        # Public shared panel stays Darija by default. Language choice opens a personal localized session.
+        embed = discord.Embed(
+            title="🎰 GGMW9 Casino",
+            description=_casino_text(lang, "public_desc"),
+            color=discord.Color.gold(),
+            timestamp=datetime.now(),
+        )
+        games_name="🎮 الألعاب" if lang=="darija" else "🎮 Games" if lang=="en" else "🎮 Jeux"
+        limits_name="💵 حدود الرهان" if lang=="darija" else "💵 Table limits" if lang=="en" else "💵 Limites des mises"
+        fair_name="🛡️ العدالة والشفافية" if lang=="darija" else "🛡️ Fairness" if lang=="en" else "🛡️ Équité"
+        protection_value=(f"أقصى رهان **{getattr(cfg,'CASINO_MAX_BET_WALLET_PERCENT',10)}% من المحفظة**\nأقصى نشاط **{getattr(cfg,'CASINO_MAX_ROUNDS_30M',60)} جولة / 30 دقيقة**" if lang=="darija" else f"Per bet max **{getattr(cfg,'CASINO_MAX_BET_WALLET_PERCENT',10)}% Wallet**\nMax **{getattr(cfg,'CASINO_MAX_ROUNDS_30M',60)} rounds/30m**" if lang=="en" else f"Maximum **{getattr(cfg,'CASINO_MAX_BET_WALLET_PERCENT',10)}% du portefeuille par mise**\nMax **{getattr(cfg,'CASINO_MAX_ROUNDS_30M',60)} parties / 30 min**")
+        embed.add_field(name=games_name, value="\n".join(f"{g['emoji']} **{_game_name(g,lang)}** — {_game_desc(g, lang)}" for g in GAMBLING_GAMES), inline=False)
+        embed.add_field(name=limits_name, value="\n".join(f"{g['emoji']} {cfg.fmt_money(_limits(g['id'])[0])} → {cfg.fmt_money(_limits(g['id'])[1])}" for g in GAMBLING_GAMES), inline=True)
+        embed.add_field(name=_casino_text(lang, "protection"), value=protection_value, inline=True)
+        embed.add_field(name=fair_name, value=_casino_text(lang, "fairness_help"), inline=False)
+        embed.add_field(name=_casino_text(lang, "langs"), value=_casino_text(lang, "langs_value"), inline=False)
+        embed.set_footer(text=("رهانات GGMW9 العادلة • USD • بلا تلاعب مخصص لأي لاعب" if lang=="darija" else "GGMW9 Fair Casino • USD • no personalized rigging" if lang=="en" else "Casino équitable GGMW9 • USD • aucun trucage personnalisé"))
+        return embed
 
     async def _send_panel(self, channel):
-        await channel.send(embed=self.build_public_panel_embed("darija"), view=GamblingPanelView(self.bot,"darija"))
+        await channel.send(embed=self.build_public_panel_embed("darija"), view=GamblingPanelView(self.bot))
 
     @commands.command(name="gamblingpanel", hidden=True)
     @commands.has_permissions(administrator=True)
