@@ -379,14 +379,89 @@ class Economy(commands.Cog):
         sys["credit_scores"][str(user_id)] = max(0, min(100, int(score)))
         self.system_db.save()
 
-    def get_loan_limit(self, guild_id: int, user_id: int) -> int:
+    def get_user_level(self, guild_id: int, user_id: int) -> int:
+        """Level الحقيقي من ai_bot عبر bot.gg bridge. Fallback=0 إلا ماكانش الربط."""
+        bridge = getattr(self.bot, "gg", None) or {}
+        getter = bridge.get("get_user_level_data")
+        if not callable(getter):
+            return 0
+        try:
+            data = getter(guild_id, user_id) or {}
+            return max(0, int(data.get("level", 0) or 0))
+        except Exception:
+            return 0
+
+    def get_xp_loan_tier(self, guild_id: int, user_id: int) -> dict:
+        level = self.get_user_level(guild_id, user_id)
+        tiers = getattr(cfg, "LOAN_XP_TIERS", []) or []
+        if not tiers:
+            return {
+                "min_level": 0, "max_level": 999, "name": "🌱 Rookie",
+                "base_limit": 300, "interest": 15, "term_days": 2,
+            }
+        chosen = dict(tiers[0])
+        for tier in sorted(tiers, key=lambda t: int(t.get("min_level", 0))):
+            if level >= int(tier.get("min_level", 0)):
+                chosen = dict(tier)
+            else:
+                break
+        return chosen
+
+    def get_next_xp_loan_tier(self, guild_id: int, user_id: int) -> Optional[dict]:
+        level = self.get_user_level(guild_id, user_id)
+        for tier in sorted(
+            getattr(cfg, "LOAN_XP_TIERS", []) or [],
+            key=lambda t: int(t.get("min_level", 0))
+        ):
+            if int(tier.get("min_level", 0)) > level:
+                return dict(tier)
+        return None
+
+    def get_credit_limit_multiplier(self, guild_id: int, user_id: int) -> float:
         score = self.get_credit_score(guild_id, user_id)
-        tiers = getattr(cfg, "LOAN_LIMIT_TIERS", [(0, 300), (30, 500), (50, 1000), (70, 1500), (85, 2500)])
-        limit = 0
-        for min_score, amount in sorted(tiers, key=lambda x: int(x[0])):
+        tiers = getattr(
+            cfg, "LOAN_CREDIT_MULTIPLIERS",
+            [(0, 0.50), (30, 0.75), (50, 1.00), (70, 1.15), (85, 1.25)]
+        )
+        multiplier = 0.50
+        for min_score, mult in sorted(tiers, key=lambda x: int(x[0])):
             if score >= int(min_score):
-                limit = int(amount)
-        return max(int(getattr(cfg, "LOAN_MIN_AMOUNT", 100) or 100), limit)
+                multiplier = float(mult)
+        return max(0.0, multiplier)
+
+    def get_loan_terms(self, guild_id: int, user_id: int) -> dict:
+        """Level = privileges | Credit = trust | Treasury = liquidity protection."""
+        level = self.get_user_level(guild_id, user_id)
+        score = self.get_credit_score(guild_id, user_id)
+        tier = self.get_xp_loan_tier(guild_id, user_id)
+        credit_mult = self.get_credit_limit_multiplier(guild_id, user_id)
+
+        base_limit = max(0, int(tier.get("base_limit", 0) or 0))
+        credit_adjusted = max(0, int(base_limit * credit_mult))
+
+        treasury = max(0, int(self._system(guild_id).get("treasury", 0) or 0))
+        treasury_pct = max(
+            0, min(100, int(getattr(cfg, "LOAN_TREASURY_MAX_PERCENT", 20) or 20))
+        )
+        liquidity_cap = treasury * treasury_pct // 100
+        effective_limit = min(credit_adjusted, liquidity_cap, treasury)
+
+        return {
+            "level": level,
+            "tier_name": tier.get("name", "🌱 Rookie"),
+            "base_limit": base_limit,
+            "credit_score": score,
+            "credit_multiplier": credit_mult,
+            "credit_adjusted_limit": credit_adjusted,
+            "treasury": treasury,
+            "liquidity_cap": liquidity_cap,
+            "effective_limit": max(0, effective_limit),
+            "interest_percent": max(0, int(tier.get("interest", 15) or 0)),
+            "term_days": max(1, int(tier.get("term_days", 2) or 2)),
+        }
+
+    def get_loan_limit(self, guild_id: int, user_id: int) -> int:
+        return int(self.get_loan_terms(guild_id, user_id)["effective_limit"])
 
     def get_active_loan(self, guild_id: int, user_id: int) -> Optional[dict]:
         loan = self._system(guild_id).get("loans", {}).get(str(user_id))
@@ -456,27 +531,38 @@ class Economy(commands.Cog):
                 "خاصك تساليه قبل ما تاخد قرض جديد."
             )
 
-        score = self.get_credit_score(guild.id, user.id)
-        limit = self.get_loan_limit(guild.id, user.id)
+        terms = self.get_loan_terms(guild.id, user.id)
+        score = int(terms["credit_score"])
+        level = int(terms["level"])
+        limit = int(terms["effective_limit"])
+        min_amount = int(getattr(cfg, "LOAN_MIN_AMOUNT", 100) or 100)
+
+        if limit < min_amount:
+            return False, (
+                f"❌ البنك ما يقدرش يخرج ليك قرض دابا.\n"
+                f"⭐ Level: **{level}** ({terms['tier_name']})\n"
+                f"💳 Credit Score: **{score}/100**\n"
+                f"🏛️ الحد الفعلي حسب السيولة: **{limit:,}** {cfg.CURRENCY_EMOJI}\n"
+                "طلع XP / حسن Credit Score / خلي Treasury تكبر ومن بعد عاود."
+            )
+
         if amount > limit:
             return False, (
-                f"❌ Credit Score ديالك **{score}/100** والحد الأقصى ديالك دابا "
-                f"هو **{limit:,}** {cfg.CURRENCY_EMOJI}."
+                f"❌ الحد الفعلي ديالك دابا هو **{limit:,}** {cfg.CURRENCY_EMOJI}.\n"
+                f"⭐ Level **{level}** — {terms['tier_name']} | "
+                f"Base **{terms['base_limit']:,}**\n"
+                f"💳 Credit **{score}/100** (×{terms['credit_multiplier']:.2f}) | "
+                f"🏛️ Liquidity Cap **{terms['liquidity_cap']:,}**"
             )
 
         sys = self._system(guild.id)
         treasury = int(sys.get("treasury", 0) or 0)
-        if treasury < amount:
-            return False, (
-                f"❌ البنك ماعندوش سيولة كافية دابا. Treasury فيها غير "
-                f"**{treasury:,}** {cfg.CURRENCY_EMOJI}."
-            )
 
-        interest_pct = int(getattr(cfg, "LOAN_INTEREST_PERCENT", 10) or 10)
+        interest_pct = int(terms["interest_percent"])
         interest = max(1, amount * interest_pct // 100) if interest_pct > 0 else 0
         total_due = amount + interest
         now = datetime.now(timezone.utc)
-        due_at = now + timedelta(days=int(getattr(cfg, "LOAN_TERM_DAYS", 3) or 3))
+        due_at = now + timedelta(days=int(terms["term_days"]))
         loan_id = int(sys.get("loan_next_id", 1) or 1)
         sys["loan_next_id"] = loan_id + 1
 
@@ -521,7 +607,9 @@ class Economy(commands.Cog):
                 f"**Principal:** **{amount:,}** {cfg.CURRENCY_EMOJI}\n"
                 f"**الفائدة ({interest_pct}%):** **{interest:,}**\n"
                 f"**المطلوب يرجع:** **{total_due:,}**\n"
-                f"**Credit Score:** **{score}/100**\n"
+                f"⭐ **Level/Tier:** **{level}** — {terms['tier_name']}\n"
+                f"💳 **Credit Score:** **{score}/100**\n"
+                f"📉 **الفائدة:** **{interest_pct}%** | ⏳ **المدة:** **{terms['term_days']} أيام**\n"
                 f"**الأجل:** <t:{int(due_at.timestamp())}:F>"
             ),
             discord.Color.blurple(),
@@ -530,10 +618,12 @@ class Economy(commands.Cog):
         return True, (
             f"✅ تقبل القرض **#{loan_id}**.\n"
             f"💵 دخل للـWallet: **{amount:,}** {cfg.CURRENCY_EMOJI}\n"
-            f"📈 الفائدة: **{interest:,}** ({interest_pct}%)\n"
+            f"⭐ Level **{level}** — **{terms['tier_name']}**\n"
+            f"📈 الفائدة: **{interest:,}** (**{interest_pct}%**)\n"
             f"💳 خاصك ترجع: **{total_due:,}**\n"
+            f"⏳ المدة: **{terms['term_days']} أيام**\n"
             f"📅 قبل: <t:{int(due_at.timestamp())}:F> (<t:{int(due_at.timestamp())}:R>)\n"
-            f"⭐ Credit Score: **{score}/100**"
+            f"💳 Credit Score: **{score}/100**"
         )
 
     async def _apply_loan_payment(
@@ -848,6 +938,7 @@ class Economy(commands.Cog):
                 "💳 **Wallet** = الفلوس اللي كتقدر تلعب وتشري بيها.\n"
                 "🏦 **Bank** = فلوس مخزنة، الألعاب ماكتقدرش تمسها حتى تسحبها.\n"
                 "💳 **Loans** = قرض حقيقي كيخرج من Treasury، بفائدة وCredit Score وأجل للأداء.\n"
+                "⭐ **XP مهم:** كل ما طلع Level ديالك، كيزيد حد القرض، كتنقص الفائدة وكتطول مدة الأداء.\n"
                 "🎰 الخسائر الحقيقية كتغذي Treasury وGlobal Jackpot، وجزء كيتحرق ضد التضخم."
             ),
             color=discord.Color.gold(),
@@ -856,7 +947,34 @@ class Economy(commands.Cog):
         embed.add_field(name="🏛️ Treasury", value=f"**{sys['treasury']:,}** {cfg.CURRENCY_EMOJI}", inline=True)
         embed.add_field(name="🎰 Global Jackpot", value=f"**{sys['jackpot']:,}** {cfg.CURRENCY_EMOJI}", inline=True)
         embed.add_field(name="🎉 Events Fund", value=f"**{sys['events']:,}** {cfg.CURRENCY_EMOJI}", inline=True)
-        embed.set_footer(text="GGMW9 Economy • اختار من الأزرار تحت")
+
+        roadmap = []
+        for tier in getattr(cfg, "LOAN_XP_TIERS", []) or []:
+            min_lvl = int(tier.get("min_level", 0))
+            max_lvl = int(tier.get("max_level", min_lvl))
+            lvl = f"Lv {min_lvl}" if min_lvl >= 100 else f"Lv {min_lvl}-{max_lvl}"
+            roadmap.append(
+                f"{tier.get('name', 'Tier')} • **{lvl}** → "
+                f"**{int(tier.get('base_limit', 0)):,}** | "
+                f"**{int(tier.get('interest', 0))}%** | "
+                f"**{int(tier.get('term_days', 0))}d**"
+            )
+        embed.add_field(
+            name="⭐ XP → امتيازات البنك",
+            value="\n".join(roadmap)[:1024] if roadmap else "طلع Level باش تفتح شروط أحسن.",
+            inline=False,
+        )
+        embed.add_field(
+            name="💡 كيفاش كيتحسب الحد الفعلي؟",
+            value=(
+                "**Level** = الحد الأساسي + الفائدة + المدة. "
+                "**Credit Score** = معامل الثقة. "
+                "**Treasury** = سقف السيولة باش عضو واحد مايفرغش البنك.\n"
+                "ضغط **⭐ امتيازات XP** باش تشوف وضعيتك والمستوى الجاي."
+            ),
+            inline=False,
+        )
+        embed.set_footer(text="GGMW9 Economy • طلع XP = امتيازات مالية أقوى")
         return embed
 
     def build_global_economy_embed(self, guild: discord.Guild) -> discord.Embed:
@@ -903,11 +1021,25 @@ class Economy(commands.Cog):
         )
         embed.add_field(name="💳 Wallet", value=f"**{wallet:,}**", inline=True)
         embed.add_field(name="🏦 Bank", value=f"**{bank:,}**", inline=True)
-        score = self.get_credit_score(guild.id, user.id)
+        terms = self.get_loan_terms(guild.id, user.id)
+        score = int(terms["credit_score"])
         embed.add_field(
-            name="⭐ Credit Score",
-            value=f"**{score}/100**\nحد القرض: **{self.get_loan_limit(guild.id, user.id):,}**",
+            name="⭐ Level / Bank Tier",
+            value=f"**Level {terms['level']}**\n{terms['tier_name']}",
             inline=True,
+        )
+        embed.add_field(
+            name="💳 Credit Score",
+            value=f"**{score}/100**\n×{terms['credit_multiplier']:.2f} على الحد",
+            inline=True,
+        )
+        embed.add_field(
+            name="🏦 شروط القرض دابا",
+            value=(
+                f"حد فعلي: **{terms['effective_limit']:,}** {cfg.CURRENCY_EMOJI}\n"
+                f"فائدة: **{terms['interest_percent']}%** • مدة: **{terms['term_days']} أيام**"
+            ),
+            inline=False,
         )
         loan = self.get_active_loan(guild.id, user.id)
         if loan:
@@ -924,6 +1056,77 @@ class Economy(commands.Cog):
             embed.add_field(name="💳 القرض", value="ما عندك حتى قرض خدام.", inline=False)
         embed.set_thumbnail(url=user.display_avatar.url)
         embed.set_footer(text="Bank محمي من الرهان | القرض المتأخر كيتجمع من Bank ثم Wallet")
+        return embed
+
+    def build_xp_bank_perks_embed(self, guild: discord.Guild, user: discord.abc.User) -> discord.Embed:
+        terms = self.get_loan_terms(guild.id, user.id)
+        next_tier = self.get_next_xp_loan_tier(guild.id, user.id)
+        min_amount = int(getattr(cfg, "LOAN_MIN_AMOUNT", 100) or 100)
+
+        embed = discord.Embed(
+            title=f"⭐ امتيازات XP — {user.display_name}",
+            description=(
+                "**XP/Level = الخبرة والسمعة داخل السيرفر.**\n"
+                "كل Tier جديد كيعطيك قرض أكبر، فائدة أقل، ووقت أكثر للأداء. "
+                "Credit Score كيبقى مقياس الثقة واش كتخلص مزيان."
+            ),
+            color=discord.Color.gold(),
+        )
+        embed.set_thumbnail(url=user.display_avatar.url)
+        embed.add_field(
+            name="📊 وضعيتك دابا",
+            value=(
+                f"⭐ **Level {terms['level']}** — {terms['tier_name']}\n"
+                f"💳 Credit Score: **{terms['credit_score']}/100**\n"
+                f"🏛️ Treasury: **{terms['treasury']:,}** {cfg.CURRENCY_EMOJI}"
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="💰 الامتيازات ديالك",
+            value=(
+                f"Base Loan من Level: **{terms['base_limit']:,}**\n"
+                f"بعد Credit (×{terms['credit_multiplier']:.2f}): "
+                f"**{terms['credit_adjusted_limit']:,}**\n"
+                f"Liquidity Cap: **{terms['liquidity_cap']:,}**\n"
+                f"✅ **الحد الفعلي: {terms['effective_limit']:,} {cfg.CURRENCY_EMOJI}**\n"
+                f"📉 الفائدة: **{terms['interest_percent']}%**\n"
+                f"⏳ المدة: **{terms['term_days']} أيام**"
+            ),
+            inline=False,
+        )
+
+        if next_tier:
+            nxt = int(next_tier.get("min_level", 0))
+            left = max(0, nxt - int(terms["level"]))
+            embed.add_field(
+                name="🚀 الهدف الجاي",
+                value=(
+                    f"باقي **{left} Level** لـ **{next_tier.get('name', 'Tier جديد')}** (Lv {nxt}).\n"
+                    f"💰 Base Loan: **{int(next_tier.get('base_limit', 0)):,}**\n"
+                    f"📉 Interest: **{int(next_tier.get('interest', 0))}%**\n"
+                    f"⏳ Term: **{int(next_tier.get('term_days', 0))} أيام**"
+                ),
+                inline=False,
+            )
+        else:
+            embed.add_field(
+                name="🔱 القمة",
+                value="راك فـ **Legend Tier** — أقوى شروط البنك مفتوحة ليك.",
+                inline=False,
+            )
+
+        if int(terms["effective_limit"]) < min_amount:
+            embed.add_field(
+                name="⚠️ السيولة",
+                value=(
+                    f"الحد الفعلي دابا أقل من أقل قرض (**{min_amount:,}**) بسبب Treasury/Credit. "
+                    "Level ديالك باقي محسوب؛ منين تتحسن السيولة/الثقة غادي يبان أثره."
+                ),
+                inline=False,
+            )
+
+        embed.set_footer(text="نشاط أكثر → XP أكثر → Bank Tier أقوى")
         return embed
 
     def build_user_transactions_embed(self, guild: discord.Guild, user: discord.abc.User) -> discord.Embed:
@@ -1450,12 +1653,14 @@ class BankAmountModal(discord.ui.Modal):
 
 
 class LoanRequestModal(discord.ui.Modal):
-    def __init__(self, cog: "Economy"):
+    def __init__(self, cog: "Economy", guild_id: int, user_id: int):
+        terms = cog.get_loan_terms(guild_id, user_id)
+        limit = int(terms["effective_limit"])
         super().__init__(title="💳 طلب قرض من GGMW9 Bank")
         self.cog = cog
         self.amount = discord.ui.TextInput(
             label="شحال بغيتي تسلف؟",
-            placeholder=f"أقل مبلغ {getattr(cfg, 'LOAN_MIN_AMOUNT', 100)}",
+            placeholder=f"من {getattr(cfg, 'LOAN_MIN_AMOUNT', 100)} حتى {limit}",
             min_length=1,
             max_length=12,
             required=True,
@@ -1607,10 +1812,23 @@ class EconomyBankPanelView(discord.ui.View):
                 ephemeral=True,
             )
             return
-        score = self.cog.get_credit_score(interaction.guild.id, interaction.user.id)
-        limit = self.cog.get_loan_limit(interaction.guild.id, interaction.user.id)
-        treasury = int(self.cog._system(interaction.guild.id).get("treasury", 0) or 0)
-        await interaction.response.send_modal(LoanRequestModal(self.cog))
+        terms = self.cog.get_loan_terms(interaction.guild.id, interaction.user.id)
+        min_amount = int(getattr(cfg, "LOAN_MIN_AMOUNT", 100) or 100)
+        if int(terms["effective_limit"]) < min_amount:
+            await interaction.response.send_message(
+                (
+                    f"❌ الحد ديالك ماكافيش لقرض دابا.\n"
+                    f"⭐ Level **{terms['level']}** — {terms['tier_name']}\n"
+                    f"💳 Credit **{terms['credit_score']}/100**\n"
+                    f"🏛️ الحد الفعلي: **{terms['effective_limit']:,}** {cfg.CURRENCY_EMOJI}\n\n"
+                    "ضغط **⭐ امتيازات XP** باش تشوف الطريق للـTier الجاي."
+                ),
+                ephemeral=True,
+            )
+            return
+        await interaction.response.send_modal(
+            LoanRequestModal(self.cog, interaction.guild.id, interaction.user.id)
+        )
 
     @discord.ui.button(
         label="💸 خلص القرض", style=discord.ButtonStyle.primary,
@@ -1624,6 +1842,17 @@ class EconomyBankPanelView(discord.ui.View):
             )
             return
         await interaction.response.send_modal(LoanRepayModal(self.cog, loan))
+
+
+    @discord.ui.button(
+        label="⭐ امتيازات XP", style=discord.ButtonStyle.secondary,
+        custom_id="ggmw9:economy:xp_perks", row=2
+    )
+    async def xp_perks_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(
+            embed=self.cog.build_xp_bank_perks_embed(interaction.guild, interaction.user),
+            ephemeral=True,
+        )
 
 
 class ShopView(discord.ui.View):
