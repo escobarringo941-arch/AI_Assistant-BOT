@@ -3837,7 +3837,7 @@ class RulesVerifyView(discord.ui.View):
             return True
         return any(role.id in EXEMPT_ROLE_IDS for role in member.roles)
 
-    @discord.ui.button(label="✅ كنوافق / Agree / J'accepte", style=discord.ButtonStyle.success, custom_id="rules_agree_button")
+    @discord.ui.button(label="✅ كنوافق", style=discord.ButtonStyle.success, custom_id="rules_agree_button")
     async def agree_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         member = interaction.user
         guild = interaction.guild
@@ -3916,7 +3916,7 @@ class RulesVerifyView(discord.ui.View):
             ephemeral=True
         )
 
-    @discord.ui.button(label="❌ كنرفض / Refuse / Je refuse", style=discord.ButtonStyle.danger, custom_id="rules_refuse_button")
+    @discord.ui.button(label="❌ كنرفض", style=discord.ButtonStyle.danger, custom_id="rules_refuse_button")
     async def refuse_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         member = interaction.user
         guild = interaction.guild
