@@ -64,11 +64,11 @@ async def _fresh_private(interaction: discord.Interaction, **kwargs):
 def _txt(lang: str, key: str) -> str:
     strings = {
         "darija": {
-            "games": "🕹️ Mini Games",
-            "trivia": "🧠 Trivia",
-            "casino": "🎰 Casino",
-            "economy": "💰 Economy",
-            "leaders": "🏆 Leaderboards",
+            "games": "🕹️ الألعاب",
+            "trivia": "🧠 تحدي المعلومات",
+            "casino": "🎰 الرهانات",
+            "economy": "💰 الاقتصاد",
+            "leaders": "🏆 الترتيب",
             "choose_game": "🕹️ اختار اللعبة اللي بغيتي:",
             "not_yours": "❌ هاد الجلسة ماشي ديالك.",
             "unavailable": "❌ هاد الخدمة ماشي متوفرة دابا.",
@@ -81,11 +81,11 @@ def _txt(lang: str, key: str) -> str:
             "leader_pick": "🏆 اختار Leaderboard:",
         },
         "en": {
-            "games": "🕹️ Mini Games",
-            "trivia": "🧠 Trivia",
-            "casino": "🎰 Casino",
-            "economy": "💰 Economy",
-            "leaders": "🏆 Leaderboards",
+            "games": "🕹️ الألعاب",
+            "trivia": "🧠 تحدي المعلومات",
+            "casino": "🎰 الرهانات",
+            "economy": "💰 الاقتصاد",
+            "leaders": "🏆 الترتيب",
             "choose_game": "🕹️ Choose a game:",
             "not_yours": "❌ This session belongs to another member.",
             "unavailable": "❌ This feature is unavailable right now.",
@@ -99,8 +99,8 @@ def _txt(lang: str, key: str) -> str:
         },
         "fr": {
             "games": "🕹️ Mini-jeux",
-            "trivia": "🧠 Trivia",
-            "casino": "🎰 Casino",
+            "trivia": "🧠 تحدي المعلومات",
+            "casino": "🎰 الرهانات",
             "economy": "💰 Économie",
             "leaders": "🏆 Classements",
             "choose_game": "🕹️ Choisis un jeu :",
@@ -193,7 +193,7 @@ class GamesPanelView(discord.ui.View):
     def __init__(self, bot: commands.Bot, lang: str = "darija"):
         super().__init__(timeout=None)
         self.bot = bot
-        self.lang = lang if lang in {"darija","en","fr"} else "darija"
+        self.lang = "darija"
         specs = [
             ("ggmw9:arcade:games", _txt(self.lang,"games"), discord.ButtonStyle.success, self.open_games),
             ("ggmw9:arcade:trivia", _txt(self.lang,"trivia"), discord.ButtonStyle.primary, self.trivia_btn),
@@ -231,7 +231,16 @@ class GamesPanelView(discord.ui.View):
 
     async def leaders_btn(self, interaction):
         lang=self._sync(interaction)
-        await _fresh_private(interaction,content=_txt(lang,"leader_pick"),embed=build_leaderboard_home_embed(lang),view=LeaderboardPanelView(self.bot,owner=interaction.user,lang=lang,session_key="arcade",persistent=False))
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            await interaction.edit_original_response(
+                content=_txt(lang,"leader_pick"),
+                embed=build_leaderboard_home_embed(lang),
+                view=LeaderboardPanelView(self.bot,owner=interaction.user,lang=lang,session_key="arcade",persistent=False),
+            )
+        except Exception as exc:
+            print(f"[ARCADE] leaderboard open failed: {type(exc).__name__}: {exc}")
+            await interaction.edit_original_response(content=_txt(lang,"unavailable"),embed=None,view=None)
 
 
 def build_arcade_personal_embed(lang: str) -> discord.Embed:
@@ -250,8 +259,8 @@ def build_arcade_personal_embed(lang: str) -> discord.Embed:
     else:
         desc = (
             "**ARCADE هو القلب ديال GGMW9.** الألعاب، Trivia، Casino وQuick Access للاقتصاد مجموعين هنا.\n\n"
-            "🕹️ Mini Games • 🧠 Trivia • 🎰 Casino • 💰 Economy • 🏆 Leaderboards\n"
-            "🏦 **Bank** و🛒 **Shop** فـGGMW9 Economy باقين هما البانلات الرسمية والكاملة."
+            "🕹️ الألعاب • 🧠 تحدي المعلومات • 🎰 الرهانات • 💰 الاقتصاد • 🏆 الترتيب\n"
+            "🏦 **البنك** و🛒 **المتجر** فـGGMW9 Economy باقين هما البانلات الرسمية والكاملة."
         )
     e = discord.Embed(title="🎮・ARCADE — GGMW9", description=desc, color=discord.Color.blurple())
     e.set_footer(text="🌐 Darija default • English • Français")
@@ -532,7 +541,7 @@ class ShopLanguageSelect(discord.ui.Select):
 class ShopPanelView(discord.ui.View):
     def __init__(self, bot: commands.Bot, lang: str="darija"):
         super().__init__(timeout=None); self.bot=bot; self.lang=lang if lang in {"darija","en","fr"} else "darija"
-        label="🛒 Open Marketplace" if self.lang=="en" else "🛒 Ouvrir la boutique" if self.lang=="fr" else "🛒 فتح Marketplace"
+        label="🛒 Open Marketplace" if self.lang=="en" else "🛒 Ouvrir la boutique" if self.lang=="fr" else "🛒 فتح المتجر"
         b=discord.ui.Button(label=label,style=discord.ButtonStyle.success,custom_id="ggmw9:shop_panel:open",row=0); b.callback=self.open_shop; self.add_item(b)
         self.add_item(ShopLanguageSelect(bot,self.lang))
 
@@ -552,48 +561,96 @@ class ShopPanelView(discord.ui.View):
 # ═══════════════════════════════════════════════════════
 
 LEADERBOARDS=[
-    {"id":"richest","emoji":"💰","label":"Richest","cog":"Economy","method":"build_richest_embed"},
-    {"id":"wordle","emoji":"🔤","label":"Wordle","cog":"Wordle","method":"build_top_embed"},
-    {"id":"reaction","emoji":"⚡","label":"Reaction","cog":"ReactionSpeed","method":"build_top_embed"},
-    {"id":"xo","emoji":"⭕","label":"X/O","cog":"TicTacToe","method":"build_top_embed"},
-    {"id":"hangman","emoji":"🪢","label":"Hangman","cog":"Hangman","method":"build_top_embed"},
-    {"id":"trivia","emoji":"🧠","label":"Trivia","cog":"Trivia","method":"build_top_embed"},
-    {"id":"dice","emoji":"🎲","label":"Dice","cog":"Dice","method":"build_top_embed"},
-    {"id":"coinflip","emoji":"🪙","label":"Coinflip","cog":"Coinflip","method":"build_top_embed"},
-    {"id":"slots","emoji":"🎰","label":"Slots","cog":"Slots","method":"build_top_embed"},
-    {"id":"scratch","emoji":"🎫","label":"Scratch","cog":"Scratch","method":"build_top_embed"},
-    {"id":"lottery","emoji":"🎟️","label":"Lottery","cog":"Lottery","method":"build_top_embed"},
-    {"id":"counting","emoji":"🔢","label":"Counting","cog":"Counting","method":"build_status_embed"},
+    {"id":"richest","emoji":"💰","darija":"الأغنى","en":"Richest","fr":"Plus riches","cog":"Economy","method":"build_richest_embed"},
+    {"id":"wordle","emoji":"🔤","darija":"Wordle","en":"Wordle","fr":"Wordle","cog":"Wordle","method":"build_top_embed"},
+    {"id":"reaction","emoji":"⚡","darija":"أسرع ضغطة","en":"Reaction","fr":"Réaction","cog":"ReactionSpeed","method":"build_top_embed"},
+    {"id":"xo","emoji":"⭕","darija":"X/O","en":"X/O","fr":"Morpion","cog":"TicTacToe","method":"build_top_embed"},
+    {"id":"hangman","emoji":"🪢","darija":"المشنوق","en":"Hangman","fr":"Pendu","cog":"Hangman","method":"build_top_embed"},
+    {"id":"trivia","emoji":"🧠","darija":"تحدي المعلومات","en":"Trivia","fr":"Trivia","cog":"Trivia","method":"build_top_embed"},
+    {"id":"dice","emoji":"🎲","darija":"النرد","en":"Dice","fr":"Dés","cog":"Dice","method":"build_top_embed"},
+    {"id":"coinflip","emoji":"🪙","darija":"وجه ولا كتابة","en":"Coinflip","fr":"Pile ou face","cog":"Coinflip","method":"build_top_embed"},
+    {"id":"slots","emoji":"🎰","darija":"السلوت","en":"Slots","fr":"Machine à sous","cog":"Slots","method":"build_top_embed"},
+    {"id":"scratch","emoji":"🎫","darija":"بطاقة الحظ","en":"Scratch","fr":"Carte à gratter","cog":"Scratch","method":"build_top_embed"},
+    {"id":"lottery","emoji":"🎟️","darija":"اليانصيب","en":"Lottery","fr":"Loterie","cog":"Lottery","method":"build_top_embed"},
+    {"id":"counting","emoji":"🔢","darija":"العدّاد","en":"Counting","fr":"Comptage","cog":"Counting","method":"build_status_embed"},
 ]
 
 
+def _lb_label(item, lang):
+    lang = lang if lang in {"darija","en","fr"} else "darija"
+    return item.get(lang) or item.get("darija") or item["id"]
+
+
 def build_leaderboard_home_embed(lang="darija"):
-    desc="اختار اللعبة؛ النتيجة كتبان فـنفس الرسالة الخاصة." if lang=="darija" else "Choose a board; the result replaces this same private message." if lang=="en" else "Choisis un classement ; le résultat remplace ce même message privé."
-    return discord.Embed(title="🏆 Leaderboards",description=desc,color=discord.Color.gold())
+    if lang == "en":
+        return discord.Embed(title="🏆 Leaderboards", description="Choose a leaderboard. The result stays inside this same private session.", color=discord.Color.gold())
+    if lang == "fr":
+        return discord.Embed(title="🏆 Classements", description="Choisis un classement. Le résultat reste dans cette même session privée.", color=discord.Color.gold())
+    return discord.Embed(title="🏆 الترتيب", description="اختار اللائحة اللي بغيتي؛ النتيجة كتبقى فنفس الجلسة الخاصة.", color=discord.Color.gold())
 
 
 class LeaderboardSelect(discord.ui.Select):
     def __init__(self,bot,owner=None,lang="darija",session_key="leaderboards",persistent=True):
-        self.bot,self.owner,self.lang,self.session_key=bot,owner,lang,session_key
-        super().__init__(placeholder=_txt(lang,"leader_pick")[:150],options=[discord.SelectOption(label=x["label"],value=x["id"],emoji=x["emoji"]) for x in LEADERBOARDS],custom_id=("ggmw9:leaderboard_panel:select" if persistent else None),row=0)
+        self.bot,self.owner,self.lang,self.session_key=bot,owner,lang if lang in {"darija","en","fr"} else "darija",session_key
+        kwargs = dict(
+            placeholder=_txt(self.lang,"leader_pick")[:150],
+            options=[discord.SelectOption(label=_lb_label(x,self.lang)[:100],value=x["id"],emoji=x["emoji"]) for x in LEADERBOARDS],
+            row=0,
+        )
+        if persistent:
+            kwargs["custom_id"] = "ggmw9:leaderboard_panel:select"
+        super().__init__(**kwargs)
+
     async def callback(self,interaction):
         if self.owner and interaction.user.id!=self.owner.id:
-            await interaction.response.send_message(_txt(self.lang,"not_yours"),ephemeral=True); return
-        choice=self.values[0]; lb=next((x for x in LEADERBOARDS if x["id"]==choice),None)
-        cog=self.bot.get_cog(lb["cog"]) if lb else None
-        if not lb or not cog or not hasattr(cog,lb["method"]):
-            if self.owner:
-                await interaction.response.edit_message(content=_txt(self.lang,"unavailable"),embed=None,view=LeaderboardPanelView(self.bot,owner=self.owner,lang=self.lang,session_key=self.session_key,persistent=False))
-            else:
-                lang=_lang(self.bot,interaction.guild.id,interaction.user.id)
-                await _fresh_private(interaction,content=_txt(lang,"unavailable"),embed=None,view=None)
+            await interaction.response.send_message(_txt(self.lang,"not_yours"),ephemeral=True)
             return
-        embed=getattr(cog,lb["method"])(interaction.guild)
-        if self.owner:
-            await interaction.response.edit_message(content=None,embed=embed,view=LeaderboardPanelView(self.bot,owner=self.owner,lang=self.lang,session_key=self.session_key,persistent=False))
+
+        # Acknowledge immediately. Public selector -> fresh ephemeral response;
+        # private selector -> update the same private message.
+        if self.owner is None:
+            await interaction.response.defer(ephemeral=True, thinking=True)
         else:
-            lang=_lang(self.bot,interaction.guild.id,interaction.user.id)
-            await _fresh_private(interaction,content=None,embed=embed,view=LeaderboardPanelView(self.bot,owner=interaction.user,lang=lang,session_key=self.session_key,persistent=False))
+            await interaction.response.defer()
+        try:
+            choice=self.values[0]
+            lb=next((x for x in LEADERBOARDS if x["id"]==choice),None)
+            cog=self.bot.get_cog(lb["cog"]) if lb else None
+            if not lb or not cog or not hasattr(cog,lb["method"]):
+                lang = self.lang if self.owner else _lang(self.bot,interaction.guild.id,interaction.user.id)
+                await interaction.edit_original_response(
+                    content=_txt(lang,"unavailable"),
+                    embed=None,
+                    view=LeaderboardPanelView(self.bot,owner=(self.owner or interaction.user),lang=lang,session_key=self.session_key,persistent=False),
+                )
+                return
+
+            builder=getattr(cog,lb["method"])
+            embed=builder(interaction.guild, lang=self.lang) if lb["id"]=="trivia" else builder(interaction.guild)
+
+            lang = self.lang if self.owner else _lang(self.bot,interaction.guild.id,interaction.user.id)
+            await interaction.edit_original_response(
+                content=None,
+                embed=embed,
+                view=LeaderboardPanelView(self.bot,owner=(self.owner or interaction.user),lang=lang,session_key=self.session_key,persistent=False),
+            )
+        except Exception as exc:
+            print(f"[LEADERBOARD] interaction failed: {type(exc).__name__}: {exc}")
+            lang = self.lang if self.owner else _lang(self.bot,interaction.guild.id,interaction.user.id)
+            try:
+                await interaction.edit_original_response(
+                    content=(
+                        "❌ وقع مشكل فـLeaderboard. جرب عاود؛ إلا بقات استعمل 🔄 Refresh All Panels من Owner."
+                        if lang=="darija" else
+                        "❌ The leaderboard hit an error. Try again; if it persists use 🔄 Refresh All Panels."
+                        if lang=="en" else
+                        "❌ Une erreur a touché le classement. Réessaie ; si elle persiste utilise 🔄 Refresh All Panels."
+                    ),
+                    embed=None,
+                    view=LeaderboardPanelView(self.bot,owner=(self.owner or interaction.user),lang=lang,session_key=self.session_key,persistent=False),
+                )
+            except Exception:
+                pass
 
 
 class LeaderboardLanguageSelect(discord.ui.Select):

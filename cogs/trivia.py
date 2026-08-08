@@ -56,6 +56,66 @@ TRIVIA_DIFFICULTY_LABELS = {
 }
 
 
+TRIVIA_CATEGORY_I18N = {
+    "general": {"darija":"🌍 ثقافة عامة","en":"🌍 General Knowledge","fr":"🌍 Culture générale"},
+    "science": {"darija":"🔬 علوم","en":"🔬 Science","fr":"🔬 Sciences"},
+    "sports": {"darija":"⚽ رياضة","en":"⚽ Sports","fr":"⚽ Sport"},
+    "history": {"darija":"📜 تاريخ","en":"📜 History","fr":"📜 Histoire"},
+    "geography": {"darija":"🗺️ جغرافيا","en":"🗺️ Geography","fr":"🗺️ Géographie"},
+    "movies": {"darija":"🎬 أفلام","en":"🎬 Movies","fr":"🎬 Films"},
+    "music": {"darija":"🎵 موسيقى","en":"🎵 Music","fr":"🎵 Musique"},
+    "games": {"darija":"🎮 ألعاب فيديو","en":"🎮 Video Games","fr":"🎮 Jeux vidéo"},
+    "anime": {"darija":"📺 أنمي ومانغا","en":"📺 Anime & Manga","fr":"📺 Anime & Manga"},
+}
+
+
+def _tr_lang(lang: str) -> str:
+    return lang if lang in {"darija","en","fr"} else "darija"
+
+
+def _tr(bot: commands.Bot, guild_id: int, user_id: int) -> str:
+    getter=(getattr(bot,"gg",{}) or {}).get("get_panel_language")
+    if getter:
+        try: return _tr_lang(getter(guild_id,user_id))
+        except Exception: pass
+    return "darija"
+
+
+def _set_tr(bot: commands.Bot, guild_id: int, user_id: int, lang: str) -> str:
+    lang=_tr_lang(lang)
+    setter=(getattr(bot,"gg",{}) or {}).get("set_panel_language")
+    if setter:
+        try: return _tr_lang(setter(guild_id,user_id,lang))
+        except Exception: pass
+    return lang
+
+
+def _tri(lang: str, darija: str, en: str, fr: str) -> str:
+    return {"darija":darija,"en":en,"fr":fr}[_tr_lang(lang)]
+
+
+def _trivia_category_label(category: str, lang: str) -> str:
+    entry=TRIVIA_CATEGORY_I18N.get(category)
+    if entry: return entry.get(_tr_lang(lang),entry["darija"])
+    return TRIVIA_CATEGORY_LABELS.get(category,category)
+
+
+def _trivia_difficulty_label(difficulty: str, lang: str) -> str:
+    labels={
+        "darija":{"easy":"🟢 ساهل","medium":"🟡 متوسط","hard":"🔴 صعيب"},
+        "en":{"easy":"🟢 Easy","medium":"🟡 Medium","hard":"🔴 Hard"},
+        "fr":{"easy":"🟢 Facile","medium":"🟡 Moyen","hard":"🔴 Difficile"},
+    }
+    return labels[_tr_lang(lang)].get(difficulty,difficulty)
+
+
+async def _fresh_trivia_private(interaction: discord.Interaction, **kwargs):
+    """Always create a fresh private response from the fixed Darija public panel."""
+    if not interaction.response.is_done():
+        return await interaction.response.send_message(ephemeral=True, **kwargs)
+    return await interaction.followup.send(ephemeral=True, **kwargs)
+
+
 def get_trivia_coins(difficulty: str) -> int:
     """Reward بالسنت؛ العرض للمستخدم كيدوز من fmt_money()."""
     return int(TRIVIA_COINS.get(difficulty, TRIVIA_COINS.get("easy", 4)))
@@ -270,364 +330,297 @@ class TriviaView(discord.ui.View):
 
 def build_trivia_session_embed(question_text: str, options: list, category_label: str, difficulty: str,
                                round_num: int, streak: int, expires_at: datetime,
-                               prefix: str = "") -> discord.Embed:
-    reward = get_trivia_coins(difficulty)
-    letters = ["🇦", "🇧", "🇨", "🇩"]
-    options_text = "\n".join(f"{letters[i]} {opt}" for i, opt in enumerate(options))
-    embed = discord.Embed(
-        title=f"🧠 Trivia — سؤال #{round_num}",
-        description=f"{prefix}**{question_text}**\n\n{options_text}",
-        color=discord.Color.teal(),
-    )
-    embed.add_field(name="📚 المجال", value=category_label, inline=True)
-    embed.add_field(name="🎯 الصعوبة", value=TRIVIA_DIFFICULTY_LABELS.get(difficulty, difficulty), inline=True)
-    embed.add_field(name="🔥 السلسلة", value=f"{streak} صحيح متتالي", inline=True)
-    # ⏱️ عدّاد حقيقي كيتحدّث من البوت (Discord ماكيحدّثش <t:R> كل ثانية،
-    # علاش كان كيبان مجمد فـ "29") — شوف TriviaSessionView._watchdog
-    remaining = max(0, int(round((expires_at - datetime.now()).total_seconds())))
-    total = max(TRIVIA_ANSWER_SECONDS, 1)
-    filled = max(0, min(6, -(-remaining * 6 // total)))   # ceil(remaining/total * 6)
-    bar = "🟩" * filled + "⬛" * (6 - filled)
-    warn = " ⚠️" if remaining <= 10 else ""
-    embed.add_field(name="⏱️ الوقت", value=f"{bar}\nباقي **{remaining}** ثانية{warn}", inline=True)
-    embed.set_footer(text=f"جاوب صحيح تربح +{fmt_money(reward)}")
+                               prefix: str = "", lang: str = "darija") -> discord.Embed:
+    lang=_tr_lang(lang)
+    reward=get_trivia_coins(difficulty)
+    letters=["🇦","🇧","🇨","🇩"]
+    options_text="\n".join(f"{letters[i]} {opt}" for i,opt in enumerate(options))
+    title=_tri(lang,f"🧠 Trivia — سؤال #{round_num}",f"🧠 Trivia — Question #{round_num}",f"🧠 Trivia — Question #{round_num}")
+    embed=discord.Embed(title=title,description=f"{prefix}**{question_text}**\n\n{options_text}",color=discord.Color.teal())
+    embed.add_field(name=_tri(lang,"📚 المجال","📚 Category","📚 Catégorie"),value=category_label,inline=True)
+    embed.add_field(name=_tri(lang,"🎯 الصعوبة","🎯 Difficulty","🎯 Difficulté"),value=_trivia_difficulty_label(difficulty,lang),inline=True)
+    embed.add_field(name=_tri(lang,"🔥 السلسلة","🔥 Streak","🔥 Série"),value=_tri(lang,f"{streak} صحيح متتالي",f"{streak} correct in a row",f"{streak} bonnes réponses de suite"),inline=True)
+    remaining=max(0,int(round((expires_at-datetime.now()).total_seconds())))
+    total=max(TRIVIA_ANSWER_SECONDS,1); filled=max(0,min(6,-(-remaining*6//total))); bar="🟩"*filled+"⬛"*(6-filled); warn=" ⚠️" if remaining<=10 else ""
+    embed.add_field(name=_tri(lang,"⏱️ الوقت","⏱️ Time","⏱️ Temps"),value=_tri(lang,f"{bar}\nباقي **{remaining}** ثانية{warn}",f"{bar}\n**{remaining}** seconds left{warn}",f"{bar}\nIl reste **{remaining}** secondes{warn}"),inline=True)
+    embed.set_footer(text=_tri(lang,f"جاوب صحيح تربح +{fmt_money(reward)}",f"Correct answer = +{fmt_money(reward)}",f"Bonne réponse = +{fmt_money(reward)}"))
     return embed
 
 
+def build_trivia_panel_embed(guild: discord.Guild, lang: str = "darija") -> discord.Embed:
+    lang=_tr_lang(lang)
+    title=_tri(lang,"🧠 مرحبا بيك فـ لعبة Trivia","🧠 Welcome to Trivia","🧠 Bienvenue dans Trivia")
+    desc=_tri(
+        lang,
+        f"اختبر معلوماتك وربح **USD** {CURRENCY_EMOJI}! اختار المجال وبدا تجاوب على الأسئلة.",
+        f"Test your knowledge and earn **USD** {CURRENCY_EMOJI}! Pick a category and answer the questions.",
+        f"Teste tes connaissances et gagne des **USD** {CURRENCY_EMOJI} ! Choisis une catégorie et réponds aux questions.",
+    )
+    e=discord.Embed(title=title,description=desc,color=discord.Color.teal(),timestamp=datetime.now())
+    e.add_field(
+        name=_tri(lang,"🎯 كيفاش كتخدم","🎯 How it works","🎯 Comment ça marche"),
+        value=_tri(
+            lang,
+            f"1️⃣ ضغط **🎮 ابدأ اللعب**\n2️⃣ اختار المجال (من {len(TRIVIA_CATEGORIES)} مجالات)\n3️⃣ عندك {TRIVIA_ANSWER_SECONDS} ثانية لكل سؤال\n4️⃣ كل جواب صحيح كيزيد الصعوبة والـReward — الغلطة ولا الوقت كيساليو الجولة.",
+            f"1️⃣ Press **🎮 Start Game**\n2️⃣ Pick a category ({len(TRIVIA_CATEGORIES)} available)\n3️⃣ You have {TRIVIA_ANSWER_SECONDS} seconds per question\n4️⃣ Correct answers raise the difficulty and reward; one wrong answer or timeout ends the run.",
+            f"1️⃣ Appuie sur **🎮 Commencer**\n2️⃣ Choisis une catégorie ({len(TRIVIA_CATEGORIES)} disponibles)\n3️⃣ Tu as {TRIVIA_ANSWER_SECONDS} secondes par question\n4️⃣ Les bonnes réponses augmentent la difficulté et la récompense ; une erreur ou le temps écoulé termine la partie.",
+        ),inline=False,
+    )
+    e.add_field(
+        name=_tri(lang,"🌐 اللغات","🌐 Languages","🌐 Langues"),
+        value=_tri(
+            lang,
+            "🇲🇦 الدارجة هي الأصل. 🇬🇧 English و🇫🇷 Français كيتعرضو فجلسة خاصة ديالك، والأسئلة حتى هي كتترجم مع Cache باش مايتعاودش نفس الطلب.",
+            "🇲🇦 Darija is the default public language. 🇬🇧 English and 🇫🇷 French run in your private session; questions are localized and cached.",
+            "🇲🇦 La darija reste la langue publique par défaut. 🇬🇧 L’anglais et 🇫🇷 le français fonctionnent dans ta session privée ; les questions sont localisées et mises en cache.",
+        ),inline=False,
+    )
+    e.add_field(
+        name=_tri(lang,"💵 الجوائز بالدولار","💵 USD Rewards","💵 Récompenses USD"),
+        value=(
+            f"{_trivia_difficulty_label('easy',lang)}: **{fmt_money(get_trivia_coins('easy'))}**\n"
+            f"{_trivia_difficulty_label('medium',lang)}: **{fmt_money(get_trivia_coins('medium'))}**\n"
+            f"{_trivia_difficulty_label('hard',lang)}: **{fmt_money(get_trivia_coins('hard'))}**\n"
+            + _tri(lang,f"Daily Mini Games cap: **{fmt_money(COINS_DAILY_CAP)}**",f"Daily Mini Games cap: **{fmt_money(COINS_DAILY_CAP)}**",f"Plafond quotidien Mini Games : **{fmt_money(COINS_DAILY_CAP)}**")
+        ),inline=False,
+    )
+    e.set_footer(text=_tri(lang,f"{guild.name} | Trivia • الدارجة هي الواجهة العامة",f"{guild.name} | Trivia • Private English session",f"{guild.name} | Trivia • Session française privée"))
+    return e
+
+
+class TriviaPrivateLanguageSelect(discord.ui.Select):
+    def __init__(self,cog:"Trivia",user:discord.abc.User,lang:str="darija",mode:str="home",*,row:int=1):
+        self.cog,self.user,self.lang,self.mode=cog,user,_tr_lang(lang),mode
+        super().__init__(placeholder="🌐 اللغة / Language / Langue",options=[
+            discord.SelectOption(label="Darija",value="darija",emoji="🇲🇦",default=self.lang=="darija"),
+            discord.SelectOption(label="English",value="en",emoji="🇬🇧",default=self.lang=="en"),
+            discord.SelectOption(label="Français",value="fr",emoji="🇫🇷",default=self.lang=="fr"),
+        ],min_values=1,max_values=1,row=row)
+
+    async def callback(self,interaction:discord.Interaction):
+        if interaction.user.id!=self.user.id:
+            await interaction.response.send_message(_tri(self.lang,"❌ هاد الجلسة ماشي ديالك.","❌ This session isn't yours.","❌ Cette session ne t'appartient pas."),ephemeral=True); return
+        lang=_set_tr(self.cog.bot,interaction.guild.id,interaction.user.id,self.values[0])
+        if self.mode=="category":
+            await interaction.response.edit_message(content=_tri(lang,"📚 اختار المجال لي بغيتي:","📚 Choose a category:","📚 Choisis une catégorie :"),embed=None,view=TriviaCategorySelectView(self.cog,self.user,lang))
+        else:
+            await interaction.response.edit_message(content=None,embed=build_trivia_panel_embed(interaction.guild,lang),view=TriviaPrivateHomeView(self.cog,self.user,lang))
+
+
+class TriviaPublicLanguageSelect(discord.ui.Select):
+    def __init__(self,cog:"Trivia"):
+        self.cog=cog
+        super().__init__(placeholder="🌐 اللغة / Language / Langue",options=[
+            discord.SelectOption(label="Darija",value="darija",emoji="🇲🇦"),
+            discord.SelectOption(label="English",value="en",emoji="🇬🇧"),
+            discord.SelectOption(label="Français",value="fr",emoji="🇫🇷"),
+        ],min_values=1,max_values=1,custom_id="ggmw9:trivia:language",row=1)
+
+    async def callback(self,interaction:discord.Interaction):
+        lang=_set_tr(self.cog.bot,interaction.guild.id,interaction.user.id,self.values[0])
+        await _fresh_trivia_private(interaction,embed=build_trivia_panel_embed(interaction.guild,lang),view=TriviaPrivateHomeView(self.cog,interaction.user,lang))
+
+
+class TriviaPrivateHomeView(discord.ui.View):
+    def __init__(self,cog:"Trivia",user:discord.abc.User,lang:str="darija"):
+        super().__init__(timeout=1800); self.cog,self.user,self.lang=cog,user,_tr_lang(lang)
+        start=discord.ui.Button(label=_tri(self.lang,"🎮 ابدأ اللعب","🎮 Start Game","🎮 Commencer"),style=discord.ButtonStyle.success,row=0)
+        start.callback=self.start_game; self.add_item(start)
+        self.add_item(TriviaPrivateLanguageSelect(cog,user,self.lang,"home",row=1))
+
+    async def start_game(self,interaction:discord.Interaction):
+        if interaction.user.id!=self.user.id:
+            await interaction.response.send_message(_tri(self.lang,"❌ هاد الجلسة ماشي ديالك.","❌ This session isn't yours.","❌ Cette session ne t'appartient pas."),ephemeral=True); return
+        if not TRIVIA_ENABLED:
+            await interaction.response.edit_message(content=_tri(self.lang,"❌ لعبة Trivia معطلة دابا.","❌ Trivia is disabled right now.","❌ Trivia est désactivé pour le moment."),embed=None,view=None); return
+        await interaction.response.edit_message(content=_tri(self.lang,"📚 اختار المجال لي بغيتي:","📚 Choose a category:","📚 Choisis une catégorie :"),embed=None,view=TriviaCategorySelectView(self.cog,self.user,self.lang))
+
+
 class TriviaReplayView(discord.ui.View):
-    """زر 'العب مرة أخرى' فآخر الجلسة — كيرجع لاختيار المجال بلا ما يحتاج العضو يرجع لـ channel."""
+    def __init__(self,cog:"Trivia",user:discord.abc.User,lang:str="darija"):
+        super().__init__(timeout=900); self.cog,self.user,self.lang=cog,user,_tr_lang(lang)
+        b=discord.ui.Button(label=_tri(self.lang,"🔄 العب مرة أخرى","🔄 Play Again","🔄 Rejouer"),style=discord.ButtonStyle.success,row=0); b.callback=self.replay; self.add_item(b)
+        self.add_item(TriviaPrivateLanguageSelect(cog,user,self.lang,"home",row=1))
 
-    def __init__(self, cog: "Trivia", user: discord.abc.User):
-        super().__init__(timeout=300)
-        self.cog = cog
-        self.user = user
+    async def replay(self,interaction:discord.Interaction):
+        if interaction.user.id!=self.user.id:
+            await interaction.response.send_message(_tri(self.lang,"❌ هاد اللعبة ماشي ديالك.","❌ This game isn't yours.","❌ Cette partie ne t'appartient pas."),ephemeral=True); return
+        await interaction.response.edit_message(content=_tri(self.lang,"📚 اختار المجال لي بغيتي:","📚 Choose a category:","📚 Choisis une catégorie :"),embed=None,view=TriviaCategorySelectView(self.cog,self.user,self.lang))
 
-    @discord.ui.button(label="🔄 العب مرة أخرى", style=discord.ButtonStyle.success)
-    async def replay_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id != self.user.id:
-            await interaction.response.send_message("❌ هاد اللعبة ماشي ديالك.", ephemeral=True)
-            return
-        view = TriviaCategorySelectView(self.cog, self.user)
-        await interaction.response.edit_message(
-            content="📚 شنو المجال لي بغيتي تلعب فيه؟", embed=None, view=view
+
+class TriviaSessionLanguageSelect(discord.ui.Select):
+    """Change language inside the SAME active private Trivia message, without resetting the timer."""
+    def __init__(self,session:"TriviaSessionView"):
+        self.session=session
+        super().__init__(placeholder="🌐 اللغة / Language / Langue",options=[
+            discord.SelectOption(label="Darija",value="darija",emoji="🇲🇦",default=session.lang=="darija"),
+            discord.SelectOption(label="English",value="en",emoji="🇬🇧",default=session.lang=="en"),
+            discord.SelectOption(label="Français",value="fr",emoji="🇫🇷",default=session.lang=="fr"),
+        ],min_values=1,max_values=1,row=2)
+
+    async def callback(self,interaction:discord.Interaction):
+        s=self.session
+        if interaction.user.id!=s.user.id:
+            await interaction.response.send_message(_tri(s.lang,"❌ هاد اللعبة ماشي ديالك.","❌ This game isn't yours.","❌ Cette partie ne t'appartient pas."),ephemeral=True); return
+        if s.ended:
+            await interaction.response.defer(); return
+        await interaction.response.defer()
+        new_lang=_set_tr(s.cog.bot,interaction.guild.id,interaction.user.id,self.values[0])
+        payload=await s.cog.localize_question_payload(
+            s.base_question_text,s.base_options,s.base_correct,s.category,s.difficulty,new_lang,key=s.question_key
         )
+        if s.ended: return
+        s.lang=new_lang
+        s.question_text=payload["question"]; s.options=list(payload["options"]); s.correct_index=s.options.index(payload["correct"]); s.category_label=_trivia_category_label(s.category,new_lang)
+        s._build_components()
+        await interaction.edit_original_response(embed=s.build_embed(),view=s)
 
 
 class TriviaSessionView(discord.ui.View):
-    """جلسة لعب فردية (ephemeral، غير صاحبها كيشوفها): كل ما جاوب صحيح، كيجي سؤال جديد
-    أصعب وReward USD أكبر، حتى يغلط ولا يخلص الوقت.
+    def __init__(self,cog:"Trivia",user:discord.abc.User,category:str,round_num:int,streak:int,question:dict,interaction:discord.Interaction,
+                 used_keys:Optional[set]=None,session_coins:int=0,correct_by_difficulty:Optional[dict]=None,hit_cap:bool=False,lang:str="darija"):
+        super().__init__(timeout=None)
+        self.cog,self.user,self.category,self.round_num,self.streak=cog,user,category,round_num,streak
+        self.lang=_tr_lang(lang); self.interaction=interaction; self.used_keys=used_keys if used_keys is not None else set(); self.ended=False; self.prefix=""
+        self.session_coins=session_coins; self.correct_by_difficulty=correct_by_difficulty or {"easy":0,"medium":0,"hard":0}; self.hit_cap=hit_cap
+        self.question_text=question["question"]; self.options=list(question["options"]); self.correct_index=self.options.index(question["correct"]); self.difficulty=question["difficulty"]
+        self.category_label=_trivia_category_label(category,self.lang); self.question_key=question.get("key")
+        self.base_question_text=question.get("_base_question",question["question"]); self.base_options=list(question.get("_base_options",question["options"])); self.base_correct=question.get("_base_correct",question["correct"])
+        if self.question_key: self.used_keys.add(self.question_key)
+        self.expires_at=datetime.now()+timedelta(seconds=TRIVIA_ANSWER_SECONDS)
+        self._build_components(); self._watchdog_task=asyncio.create_task(self._watchdog())
 
-    🇲🇦 الأسئلة كيجيو من البنك المحلي بالدارجة، وإلا سالا المجال كيتكمل من OpenTDB
-    مع ترجمة أوتوماتيكية (شوف Trivia.get_darija_question).
+    def build_embed(self,prefix:str=None):
+        if prefix is not None: self.prefix=prefix
+        return build_trivia_session_embed(self.question_text,self.options,self.category_label,self.difficulty,self.round_num,self.streak,self.expires_at,prefix=self.prefix,lang=self.lang)
 
-    ⏱️ الوقت كيتحسب بـ watchdog يدوي (asyncio.sleep) مربوط بـ self.expires_at الثابتة —
-    ماشي بـ discord.py timeout العادي (timeout=None).
-
-    ⚠️ ملاحظة تقنية مهمة: الرسالة ephemeral، وDiscord ماكيسمحش تعدلها بـ message.edit().
-    علاش كنحتافظو بآخر Interaction وكنعدلو بـ interaction.edit_original_response() —
-    هادشي هو اللي كان خلي شاشة «سالا الوقت» ماكتبانش فالنسخة القديمة."""
-
-    def __init__(self, cog: "Trivia", user: discord.abc.User, category: str, round_num: int, streak: int,
-                 question: dict, interaction: discord.Interaction,
-                 used_keys: Optional[set] = None,
-                 session_coins: int = 0, correct_by_difficulty: Optional[dict] = None,
-                 hit_cap: bool = False):
-        super().__init__(timeout=None)   # كنعطلو الـ timeout الأوتوماتيكي، وكنديرو واحد يدوي تحت
-        self.cog = cog
-        self.user = user
-        self.category = category
-        self.round_num = round_num
-        self.streak = streak
-        self.interaction = interaction          # ← آخر interaction، بيه كنعدلو الرسالة ephemeral
-        self.used_keys = used_keys if used_keys is not None else set()
-        self.ended = False
-        self.prefix = ""   # السطر الفوقاني (✅ صحيح! +X...) — كيتحفظ باش يبقى بايـن مع تحديثات العدّاد
-
-        # ═══ تتبع الربح USD ديال هاد الجولة (باش نوريوه ملي يخسر) ═══
-        self.session_coins = session_coins
-        self.correct_by_difficulty = correct_by_difficulty or {"easy": 0, "medium": 0, "hard": 0}
-        self.hit_cap = hit_cap   # واش وصل للسقف اليومي فهاد الجولة
-
-        self.question_text = question["question"]
-        self.options = list(question["options"])
-        self.correct_index = self.options.index(question["correct"])
-        self.difficulty = question["difficulty"]
-        self.category_label = question.get("category", TRIVIA_CATEGORY_LABELS.get(category, category))
-        if question.get("key"):
-            self.used_keys.add(question["key"])
-
-        self.expires_at = datetime.now() + timedelta(seconds=TRIVIA_ANSWER_SECONDS)
-        self._build_components()
-        self._watchdog_task = asyncio.create_task(self._watchdog())
-
-    def build_embed(self, prefix: str = None) -> discord.Embed:
-        if prefix is not None:
-            self.prefix = prefix
-        return build_trivia_session_embed(
-            self.question_text, self.options, self.category_label, self.difficulty,
-            self.round_num, self.streak, self.expires_at, prefix=self.prefix
-        )
-
-    def build_summary(self, title: str, top_text: str, color: discord.Color,
-                      guild: Optional[discord.Guild]) -> discord.Embed:
-        """ملخص نهاية الجولة — كيبين شحال جمع من USD فهاد اللعبة، التفصيل حسب الصعوبة،
-        والمجموع الدائم ديالو من Trivia كامل + الرصيد الحالي."""
-        embed = discord.Embed(title=title, description=top_text, color=color)
-
-        # ═══ الربح ديال هاد الجولة ═══
-        breakdown = []
-        for diff in ("easy", "medium", "hard"):
-            n = self.correct_by_difficulty.get(diff, 0)
-            if n:
-                breakdown.append(f"{TRIVIA_DIFFICULTY_LABELS[diff]} × {n}")
-        cap_line = f"\n🧢 وصلتي للسقف اليومي (**{fmt_money(COINS_DAILY_CAP)}**)" if self.hit_cap else ""
-
-        embed.add_field(
-            name="💰 ربحتي فهاد الجولة",
-            value=(
-                f"**+{fmt_money(self.session_coins)}**\n"
-                + ("\n".join(breakdown) if breakdown else "*ماجاوبتي على حتى سؤال صحيح*")
-                + cap_line
-            ),
-            inline=True
-        )
-        embed.add_field(
-            name="🎯 النتيجة",
-            value=f"**{self.streak}** صحيح متتالي\n📚 {TRIVIA_CATEGORY_LABELS.get(self.category, self.category)}",
-            inline=True
-        )
-
-        # ═══ المجموع الدائم + الرصيد ═══
+    def build_summary(self,title:str,top_text:str,color:discord.Color,guild:Optional[discord.Guild]):
+        e=discord.Embed(title=title,description=top_text,color=color)
+        breakdown=[]
+        for diff in ("easy","medium","hard"):
+            n=self.correct_by_difficulty.get(diff,0)
+            if n: breakdown.append(f"{_trivia_difficulty_label(diff,self.lang)} × {n}")
+        cap_line=_tri(self.lang,f"\n🧢 وصلتي للسقف اليومي (**{fmt_money(COINS_DAILY_CAP)}**)",f"\n🧢 Daily cap reached (**{fmt_money(COINS_DAILY_CAP)}**)",f"\n🧢 Plafond quotidien atteint (**{fmt_money(COINS_DAILY_CAP)}**)") if self.hit_cap else ""
+        empty=_tri(self.lang,"*ماجاوبتي على حتى سؤال صحيح*","*No correct answers in this run*","*Aucune bonne réponse dans cette partie*")
+        e.add_field(name=_tri(self.lang,"💰 ربحتي فهاد الجولة","💰 Run Earnings","💰 Gains de la partie"),value=f"**+{fmt_money(self.session_coins)}**\n"+("\n".join(breakdown) if breakdown else empty)+cap_line,inline=True)
+        e.add_field(name=_tri(self.lang,"🎯 النتيجة","🎯 Result","🎯 Résultat"),value=_tri(self.lang,f"**{self.streak}** صحيح متتالي\n📚 {_trivia_category_label(self.category,self.lang)}",f"**{self.streak}** correct in a row\n📚 {_trivia_category_label(self.category,self.lang)}",f"**{self.streak}** bonnes réponses de suite\n📚 {_trivia_category_label(self.category,self.lang)}"),inline=True)
         if guild:
-            stats = self.cog.finish_game(guild.id, self.user.id, self.streak)
-            balance = self.cog.get_balance(guild.id, self.user.id)
-            record_line = "\n🏅 **رقم قياسي جديد ديالك!** 🎉" if stats["is_record"] else \
-                          f"\n🥇 أحسن سلسلة ديالك: **{stats['best_streak']}**"
-            embed.add_field(
-                name="🏆 المجموع ديالك من Trivia",
-                value=(
-                    f"💵 **{fmt_money(stats['coins'])}** مجموعين من Trivia\n"
-                    f"✅ **{stats['correct']}** جواب صحيح\n"
-                    f"🎮 **{stats['games']}** جولة تلعبات"
-                    f"{record_line}\n"
-                    f"💼 الرصيد ديالك دابا: **{fmt_money(balance)}**"
-                ),
-                inline=False
-            )
-
-        embed.set_footer(text="كليكي 🔄 باش تعاود من جديد")
-        return embed
+            stats=self.cog.finish_game(guild.id,self.user.id,self.streak); balance=self.cog.get_balance(guild.id,self.user.id)
+            record=_tri(self.lang,"\n🏅 **رقم قياسي جديد!** 🎉" if stats["is_record"] else f"\n🥇 أحسن سلسلة: **{stats['best_streak']}**","\n🏅 **New personal record!** 🎉" if stats["is_record"] else f"\n🥇 Best streak: **{stats['best_streak']}**","\n🏅 **Nouveau record personnel !** 🎉" if stats["is_record"] else f"\n🥇 Meilleure série : **{stats['best_streak']}**")
+            value=_tri(self.lang,
+                f"💵 **{fmt_money(stats['coins'])}** مجموعين من Trivia\n✅ **{stats['correct']}** جواب صحيح\n🎮 **{stats['games']}** جولة{record}\n💼 الرصيد: **{fmt_money(balance)}**",
+                f"💵 **{fmt_money(stats['coins'])}** earned from Trivia\n✅ **{stats['correct']}** correct answers\n🎮 **{stats['games']}** games{record}\n💼 Balance: **{fmt_money(balance)}**",
+                f"💵 **{fmt_money(stats['coins'])}** gagnés dans Trivia\n✅ **{stats['correct']}** bonnes réponses\n🎮 **{stats['games']}** parties{record}\n💼 Solde : **{fmt_money(balance)}**")
+            e.add_field(name=_tri(self.lang,"🏆 المجموع ديالك من Trivia","🏆 Your Trivia Totals","🏆 Tes totaux Trivia"),value=value,inline=False)
+        e.set_footer(text=_tri(self.lang,"ضغط 🔄 باش تعاود","Press 🔄 to play again","Appuie sur 🔄 pour rejouer")); return e
 
     async def _watchdog(self):
-        """جوج مهام فنفس الوقت:
-          1) كيسالي اللعبة بالضبط ملي يخلص الوقت (المنطق الأصلي)
-          2) كيحدّث العدّاد فالرسالة كل 5 ثواني — حيت Discord ماكيحدّثش
-             الـ timestamps النسبية (<t:R>) كل ثانية، فكان العد كيبان مجمد.
-        التحديث كل 5 ثواني (ماشي كل ثانية) باش ما نضربوش rate limit ديال
-        Discord ملي كيلعبو بزاف ديال الأعضاء فنفس الوقت."""
         try:
             while not self.ended:
-                remaining = (self.expires_at - datetime.now()).total_seconds()
-                if remaining <= 0:
-                    break
-                await asyncio.sleep(min(5, remaining))
-                if self.ended:
-                    return
-                # إلا بقات أقل من ثانية، دوز نيشان لشاشة النهاية بلا تحديث زايد
-                if (self.expires_at - datetime.now()).total_seconds() < 1:
-                    break
-                try:
-                    # embed فقط — الأزرار كيبقاو كيف ما هوما
-                    await self.interaction.edit_original_response(embed=self.build_embed())
-                except (discord.HTTPException, discord.NotFound):
-                    pass   # تحديث فيزوال فقط — إلا فشل، اللعبة كتكمل عادي
-            if not self.ended:
-                await self._end_session_timeout()
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            print(f"[TRIVIA] خطأ فـ watchdog: {e}")
+                remaining=(self.expires_at-datetime.now()).total_seconds()
+                if remaining<=0: break
+                await asyncio.sleep(min(5,remaining))
+                if self.ended: return
+                if (self.expires_at-datetime.now()).total_seconds()<1: break
+                try: await self.interaction.edit_original_response(embed=self.build_embed())
+                except (discord.HTTPException,discord.NotFound): pass
+            if not self.ended: await self._end_session_timeout()
+        except asyncio.CancelledError: pass
+        except Exception as e: print(f"[TRIVIA] watchdog error: {e}")
 
     def _cancel_watchdog(self):
-        if self._watchdog_task and not self._watchdog_task.done():
-            self._watchdog_task.cancel()
+        if self._watchdog_task and not self._watchdog_task.done(): self._watchdog_task.cancel()
 
     def _build_components(self):
-        self.clear_items()
-        letters = ["🇦", "🇧", "🇨", "🇩"]
-        for i, option in enumerate(self.options):
-            btn = discord.ui.Button(
-                label=f"{letters[i]} {option}"[:80],
-                style=discord.ButtonStyle.secondary,
-                row=i // 2
-            )
-            btn.callback = self._make_answer_callback(i)
-            self.add_item(btn)
+        self.clear_items(); letters=["🇦","🇧","🇨","🇩"]
+        for i,opt in enumerate(self.options):
+            b=discord.ui.Button(label=f"{letters[i]} {opt}"[:80],style=discord.ButtonStyle.secondary,row=i//2); b.callback=self._make_answer_callback(i); self.add_item(b)
+        self.add_item(TriviaSessionLanguageSelect(self))
 
     def _disable_and_reveal(self):
-        for i, child in enumerate(self.children):
-            if isinstance(child, discord.ui.Button):
-                child.disabled = True
-                if i == self.correct_index:
-                    child.style = discord.ButtonStyle.success
+        answer_i=0
+        for child in self.children:
+            if isinstance(child,discord.ui.Button):
+                child.disabled=True
+                if answer_i==self.correct_index: child.style=discord.ButtonStyle.success
+                answer_i+=1
+            elif isinstance(child,discord.ui.Select): child.disabled=True
 
-    def _make_answer_callback(self, index: int):
-        async def callback(interaction: discord.Interaction):
-            if interaction.user.id != self.user.id:
-                await interaction.response.send_message("❌ هاد اللعبة ماشي ديالك.", ephemeral=True)
-                return
-            if self.ended:
-                await interaction.response.defer()
-                return
-
-            self.ended = True
-            self._cancel_watchdog()
-            self.stop()
-            self.interaction = interaction
-            await interaction.response.defer()   # جلب السؤال الجاي (ممكن OpenTDB + ترجمة) ياخد شوية
-
-            # ═══ جواب غالط → سالات اللعبة ═══
-            if index != self.correct_index:
-                self._disable_and_reveal()
-                embed = self.build_summary(
-                    title="❌ جواب غالط — سالات اللعبة!",
-                    top_text=f"الجواب الصحيح كان: **{self.options[self.correct_index]}**",
-                    color=discord.Color.red(),
-                    guild=interaction.guild
-                )
-                await interaction.edit_original_response(embed=embed, view=TriviaReplayView(self.cog, self.user))
-                return
-
-            # ═══ جواب صحيح → 💵 USD (بلاصة XP القديمة) ═══
-            reward = get_trivia_coins(self.difficulty)
-            real = reward
+    def _make_answer_callback(self,index:int):
+        async def callback(interaction:discord.Interaction):
+            if interaction.user.id!=self.user.id:
+                await interaction.response.send_message(_tri(self.lang,"❌ هاد اللعبة ماشي ديالك.","❌ This game isn't yours.","❌ Cette partie ne t'appartient pas."),ephemeral=True); return
+            if self.ended: await interaction.response.defer(); return
+            self.ended=True; self._cancel_watchdog(); self.stop(); self.interaction=interaction; await interaction.response.defer()
+            if index!=self.correct_index:
+                self._disable_and_reveal(); embed=self.build_summary(
+                    _tri(self.lang,"❌ جواب غالط — سالات اللعبة!","❌ Wrong answer — run over!","❌ Mauvaise réponse — partie terminée !"),
+                    _tri(self.lang,f"الجواب الصحيح كان: **{self.options[self.correct_index]}**",f"The correct answer was: **{self.options[self.correct_index]}**",f"La bonne réponse était : **{self.options[self.correct_index]}**"),
+                    discord.Color.red(),interaction.guild)
+                await interaction.edit_original_response(embed=embed,view=TriviaReplayView(self.cog,self.user,self.lang)); return
+            reward=get_trivia_coins(self.difficulty); real=reward
             if interaction.guild:
-                real = self.cog.award_coins(interaction.guild.id, interaction.user.id, reward, source="trivia_panel")
-                self.cog.bump_stats(interaction.guild.id, interaction.user.id, coins=real, correct=1)
-            if real < reward:
-                self.hit_cap = True
-            self.session_coins += real
-            self.correct_by_difficulty[self.difficulty] = self.correct_by_difficulty.get(self.difficulty, 0) + 1
-
-            next_round = self.round_num + 1
-            next_streak = self.streak + 1
-            next_q = await self.cog.get_darija_question(
-                self.category, get_trivia_difficulty(next_round), self.used_keys
-            )
-
+                real=self.cog.award_coins(interaction.guild.id,interaction.user.id,reward,source="trivia_panel"); self.cog.bump_stats(interaction.guild.id,interaction.user.id,coins=real,correct=1)
+            if real<reward: self.hit_cap=True
+            self.session_coins+=real; self.correct_by_difficulty[self.difficulty]=self.correct_by_difficulty.get(self.difficulty,0)+1
+            next_round=self.round_num+1; next_streak=self.streak+1
+            next_q=await self.cog.get_question_for_language(self.category,get_trivia_difficulty(next_round),self.used_keys,self.lang)
             if not next_q:
-                self.streak = next_streak
-                embed = self.build_summary(
-                    title="🎉 صحيح! سالاو الأسئلة ديال هاد المجال",
-                    top_text=(
-                        f"وصلتي لـ **{next_streak}** سؤال صحيح متتالي وكملتي المجال كامل! 🔥\n"
-                        f"جرب مجال آخر باش تكمل تجمع."
-                    ),
-                    color=discord.Color.gold(),
-                    guild=interaction.guild
-                )
-                await interaction.edit_original_response(embed=embed, view=TriviaReplayView(self.cog, self.user))
-                return
-
-            gained_txt = f"✅ صحيح! (+{fmt_money(real)})"
-            if real < reward:
-                gained_txt += " — 🧢 السقف اليومي"
-            new_view = TriviaSessionView(
-                self.cog, self.user, self.category, next_round, next_streak, next_q,
-                interaction, self.used_keys,
-                session_coins=self.session_coins, correct_by_difficulty=self.correct_by_difficulty,
-                hit_cap=self.hit_cap
-            )
-            await interaction.edit_original_response(
-                embed=new_view.build_embed(
-                    prefix=f"{gained_txt} — مجموعك فهاد الجولة: **{fmt_money(self.session_coins)}**\n\n"
-                ),
-                view=new_view
-            )
-
+                self.streak=next_streak; embed=self.build_summary(
+                    _tri(self.lang,"🎉 صحيح! سالاو الأسئلة ديال هاد المجال","🎉 Correct! Category completed","🎉 Bonne réponse ! Catégorie terminée"),
+                    _tri(self.lang,f"وصلتي لـ **{next_streak}** صحيح متتالي وكملتي المجال! 🔥",f"You reached **{next_streak}** correct answers in a row and completed the category! 🔥",f"Tu as atteint **{next_streak}** bonnes réponses de suite et terminé la catégorie ! 🔥"),
+                    discord.Color.gold(),interaction.guild)
+                await interaction.edit_original_response(embed=embed,view=TriviaReplayView(self.cog,self.user,self.lang)); return
+            gained=_tri(self.lang,f"✅ صحيح! (+{fmt_money(real)})",f"✅ Correct! (+{fmt_money(real)})",f"✅ Bonne réponse ! (+{fmt_money(real)})")
+            if real<reward: gained+=_tri(self.lang," — 🧢 السقف اليومي"," — 🧢 daily cap"," — 🧢 plafond quotidien")
+            new_view=TriviaSessionView(self.cog,self.user,self.category,next_round,next_streak,next_q,interaction,self.used_keys,session_coins=self.session_coins,correct_by_difficulty=self.correct_by_difficulty,hit_cap=self.hit_cap,lang=self.lang)
+            prefix=_tri(self.lang,f"{gained} — مجموع الجولة: **{fmt_money(self.session_coins)}**\n\n",f"{gained} — Run total: **{fmt_money(self.session_coins)}**\n\n",f"{gained} — Total de la partie : **{fmt_money(self.session_coins)}**\n\n")
+            await interaction.edit_original_response(embed=new_view.build_embed(prefix=prefix),view=new_view)
         return callback
 
     async def _end_session_timeout(self):
-        self.ended = True
-        self.stop()
-        funny_lines = [
-            "حاول مرة أخرى! ⏱️",
-            "معرفتيش لعيبة بحالك 😅 جرب عاود!",
-            "الوقت هرب منك هاد المرة، عاود الكرة!",
-        ]
-        guild = self.interaction.guild if self.interaction else None
-        embed = self.build_summary(
-            title="⏱️ سالا الوقت!",
-            top_text=(
-                f"الجواب الصحيح كان: **{self.options[self.correct_index]}**\n\n"
-                f"{random.choice(funny_lines)}"
-            ),
-            color=discord.Color.orange(),
-            guild=guild
-        )
-        try:
-            await self.interaction.edit_original_response(embed=embed, view=TriviaReplayView(self.cog, self.user))
-        except (discord.HTTPException, discord.NotFound) as e:
-            print(f"[TRIVIA] ماقدرتش نعدل رسالة نهاية الوقت: {e}")
+        self.ended=True; self.stop(); guild=self.interaction.guild if self.interaction else None
+        top=_tri(self.lang,f"الجواب الصحيح كان: **{self.options[self.correct_index]}**\n\nالوقت هرب منك، جرب عاود!",f"The correct answer was: **{self.options[self.correct_index]}**\n\nTime ran out — try again!",f"La bonne réponse était : **{self.options[self.correct_index]}**\n\nLe temps est écoulé — réessaie !")
+        embed=self.build_summary(_tri(self.lang,"⏱️ سالا الوقت!","⏱️ Time's up!","⏱️ Temps écoulé !"),top,discord.Color.orange(),guild)
+        try: await self.interaction.edit_original_response(embed=embed,view=TriviaReplayView(self.cog,self.user,self.lang))
+        except (discord.HTTPException,discord.NotFound) as e: print(f"[TRIVIA] timeout edit failed: {e}")
 
 
 class TriviaCategorySelectView(discord.ui.View):
-    """Select menu باش يختار المجال قبل ما تبدا الجلسة.
-    ⚡ السؤال الأول كيجي من البنك المحلي بالدارجة → فوري، بلا API، بلا rate limit."""
+    def __init__(self,cog:"Trivia",user:discord.abc.User,lang:str="darija"):
+        super().__init__(timeout=900); self.cog,self.user,self.lang=cog,user,_tr_lang(lang)
+        select=discord.ui.Select(placeholder=_tri(self.lang,"📚 اختار المجال...","📚 Choose a category...","📚 Choisis une catégorie..."),min_values=1,max_values=1,options=[discord.SelectOption(label=_trivia_category_label(c,self.lang)[:100],value=c) for c in TRIVIA_CATEGORIES],row=0)
+        select.callback=self._select; self.select=select; self.add_item(select)
+        back=discord.ui.Button(label=_tri(self.lang,"↩️ رجع","↩️ Back","↩️ Retour"),style=discord.ButtonStyle.secondary,row=1); back.callback=self._back; self.add_item(back)
+        self.add_item(TriviaPrivateLanguageSelect(cog,user,self.lang,"category",row=2))
 
-    def __init__(self, cog: "Trivia", user: discord.abc.User):
-        super().__init__(timeout=300)
-        self.cog = cog
-        self.user = user
-        select = discord.ui.Select(
-            placeholder="📚 اختار المجال لي بغيتي الأسئلة ديالو...",
-            min_values=1, max_values=1,
-            options=[discord.SelectOption(label=TRIVIA_CATEGORY_LABELS[c], value=c) for c in TRIVIA_CATEGORIES]
-        )
-        select.callback = self._make_select_callback(select)
-        self.add_item(select)
+    async def _back(self,interaction):
+        if interaction.user.id!=self.user.id:
+            await interaction.response.send_message(_tri(self.lang,"❌ هاد الجلسة ماشي ديالك.","❌ This session isn't yours.","❌ Cette session ne t'appartient pas."),ephemeral=True); return
+        await interaction.response.edit_message(content=None,embed=build_trivia_panel_embed(interaction.guild,self.lang),view=TriviaPrivateHomeView(self.cog,self.user,self.lang))
 
-    def _make_select_callback(self, select: discord.ui.Select):
-        async def callback(interaction: discord.Interaction):
-            if interaction.user.id != self.user.id:
-                await interaction.response.send_message("❌ هاد الاختيار ماشي ديالك.", ephemeral=True)
-                return
-
-            await interaction.response.defer()
-            self.stop()
-
-            category = select.values[0]
-            used_keys = set()
-            q = await self.cog.get_darija_question(category, "easy", used_keys)
-
-            if not q:
-                await interaction.edit_original_response(
-                    content="❌ ما قدرتش نجيب سؤال دابا، جرب مجال آخر ولا عاود من بعد شوية.",
-                    embed=None, view=None
-                )
-                return
-
-            view = TriviaSessionView(self.cog, self.user, category, 1, 0, q, interaction, used_keys)
-            await interaction.edit_original_response(content=None, embed=view.build_embed(), view=view)
-
-        return callback
+    async def _select(self,interaction):
+        if interaction.user.id!=self.user.id:
+            await interaction.response.send_message(_tri(self.lang,"❌ هاد الاختيار ماشي ديالك.","❌ This selection isn't yours.","❌ Ce choix ne t'appartient pas."),ephemeral=True); return
+        await interaction.response.defer(); category=self.select.values[0]; used=set(); q=await self.cog.get_question_for_language(category,"easy",used,self.lang)
+        if not q:
+            await interaction.edit_original_response(content=_tri(self.lang,"❌ ما قدرتش نجيب سؤال دابا. جرب عاود.","❌ I couldn't load a question. Try again.","❌ Impossible de charger une question. Réessaie."),embed=None,view=TriviaCategorySelectView(self.cog,self.user,self.lang)); return
+        view=TriviaSessionView(self.cog,self.user,category,1,0,q,interaction,used,lang=self.lang); await interaction.edit_original_response(content=None,embed=view.build_embed(),view=view)
 
 
 class TriviaGamePanelView(discord.ui.View):
-    """الزر الدائم فـ channel اللعبة. Persistent.
-    ⚠️ نفس custom_id القديم — الـ panels لي تصيفطو قبل الترحيل غادي يبقاو خدامين."""
+    """Fixed public Darija Trivia panel. Language choices always open a fresh private session."""
+    def __init__(self,cog:"Trivia"):
+        super().__init__(timeout=None); self.cog=cog
+        start=discord.ui.Button(label="🎮 ابدأ اللعب",style=discord.ButtonStyle.success,custom_id="trivia_start_game_button",row=0); start.callback=self.start_btn; self.add_item(start)
+        self.add_item(TriviaPublicLanguageSelect(cog))
 
-    def __init__(self, cog: "Trivia"):
-        super().__init__(timeout=None)
-        self.cog = cog
-
-    @discord.ui.button(label="🎮 ابدأ اللعب", style=discord.ButtonStyle.success, custom_id="trivia_start_game_button")
-    async def start_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def start_btn(self,interaction:discord.Interaction):
         if not TRIVIA_ENABLED:
-            await interaction.response.send_message("❌ لعبة Trivia معطلة دابا.", ephemeral=True)
-            return
-        view = TriviaCategorySelectView(self.cog, interaction.user)
-        await interaction.response.send_message("📚 شنو المجال لي بغيتي تلعب فيه؟", view=view, ephemeral=True)
+            await interaction.response.send_message("❌ لعبة Trivia معطلة دابا.",ephemeral=True); return
+        # Original public button is intentionally Darija.
+        _set_tr(self.cog.bot,interaction.guild.id,interaction.user.id,"darija")
+        await _fresh_trivia_private(interaction,content="📚 اختار المجال لي بغيتي:",view=TriviaCategorySelectView(self.cog,interaction.user,"darija"))
 
 
 # ═══════════════════════════════════════════════════════
@@ -643,8 +636,11 @@ class Trivia(commands.Cog):
         self.stats = JsonStore("trivia_stats.json", default={})
         # كاش الترجمة — نفس الملف القديم بالضبط، الترجمات المحفوظة كيتعاود استعمالهم
         self.darija_cache = JsonStore("trivia_darija_cache.json", default={})
+        self.language_cache = JsonStore("trivia_language_cache.json", default={})
         if self.darija_cache.data:
             print(f"✅ تحملو {len(self.darija_cache.data)} ترجمة محفوظة ديال Trivia")
+        if self.language_cache.data:
+            print(f"✅ [TRIVIA] loaded {len(self.language_cache.data)} EN/FR cached question translations")
 
     async def cog_load(self):
         self._migrate_old_stats()
@@ -762,35 +758,17 @@ class Trivia(commands.Cog):
             "is_record": is_record and streak > 0,
         }
 
-    def build_top_embed(self, guild: discord.Guild) -> discord.Embed:
-        """كيتسمى من بانل الـ leaderboards — أكثر الأعضاء جاوبو صحيح فـ Trivia."""
-        guild_data = self.stats.guild(guild.id)
-        ranked = sorted(
-            [(uid, d) for uid, d in guild_data.items() if d.get("correct", 0) > 0],
-            key=lambda kv: kv[1].get("correct", 0),
-            reverse=True,
-        )[:10]
-
+    def build_top_embed(self, guild: discord.Guild, lang: str = "darija") -> discord.Embed:
+        lang=_tr_lang(lang); guild_data=self.stats.guild(guild.id)
+        ranked=sorted([(uid,d) for uid,d in guild_data.items() if d.get("correct",0)>0],key=lambda kv:kv[1].get("correct",0),reverse=True)[:10]
+        title=_tri(lang,"🧠 Trivia — أكثر الأجوبة الصحيحة","🧠 Trivia — Most Correct Answers","🧠 Trivia — Plus de bonnes réponses")
         if not ranked:
-            return discord.Embed(
-                title="🧠 Trivia — أكثر الأجوبة الصحيحة",
-                description="📭 مازال حتى واحد ماجاوب. جرب سؤال Trivia!",
-                color=discord.Color.teal(),
-            )
-
-        medals = ["🥇", "🥈", "🥉"]
-        lines = []
-        for i, (uid, d) in enumerate(ranked):
-            m = guild.get_member(int(uid))
-            name = m.display_name if m else f"عضو خارج ({uid})"
-            prefix = medals[i] if i < 3 else f"`#{i + 1}`"
-            lines.append(f"{prefix} **{name}** — ✅ {d.get('correct', 0)} (🔥 {d.get('best_streak', 0)})")
-
-        return discord.Embed(
-            title="🧠 Trivia — أكثر الأجوبة الصحيحة",
-            description="\n".join(lines),
-            color=discord.Color.teal(),
-        )
+            return discord.Embed(title=title,description=_tri(lang,"📭 مازال حتى واحد ماجاوب.","📭 No results yet.","📭 Aucun résultat pour le moment."),color=discord.Color.teal())
+        medals=["🥇","🥈","🥉"]; lines=[]
+        for i,(uid,d) in enumerate(ranked):
+            m=guild.get_member(int(uid)); name=m.display_name if m else _tri(lang,f"عضو خارج ({uid})",f"Former member ({uid})",f"Ancien membre ({uid})"); prefix=medals[i] if i<3 else f"`#{i+1}`"
+            lines.append(f"{prefix} **{name}** — ✅ {d.get('correct',0)} (🔥 {d.get('best_streak',0)})")
+        return discord.Embed(title=title,description="\n".join(lines),color=discord.Color.teal())
 
     # ═══════════════════════════════════════════════════
     # ║        الترجمة للدارجة (لأسئلة OpenTDB فقط)          ║
@@ -875,6 +853,54 @@ class Trivia(commands.Cog):
         fallback_keys = {k for k in used_keys if not k.startswith(f"{category}:{difficulty}:")}
         return build_bank_question(category, difficulty, fallback_keys)
 
+
+    async def translate_darija_question(self, question: str, options: list, lang: str) -> Optional[tuple]:
+        """Translate one Darija question to EN/FR once, then keep it in a persistent cache."""
+        lang=_tr_lang(lang)
+        if lang=="darija": return question,list(options)
+        cache_key=f"{lang}|{question.strip()}|"+"¦".join(str(x) for x in options)
+        cached=self.language_cache.data.get(cache_key)
+        if cached and len(cached.get("options",[]))==4:
+            return cached.get("question",question),list(cached["options"])
+        chat_fn=(getattr(self.bot,"gg",{}) or {}).get("call_openrouter_chat")
+        if not chat_fn: return None
+        target="natural English" if lang=="en" else "natural French"
+        lines=[f"Q: {question}"]+[f"{chr(65+i)}: {opt}" for i,opt in enumerate(options)]
+        messages=[{"role":"system","content":(
+            f"Translate this quiz into {target}. Keep the meaning and difficulty exactly the same. "
+            "Keep proper names/brands accurate. Reply with EXACTLY 5 lines: Q:, A:, B:, C:, D:. "
+            "No markdown, explanations, or extra text.")},{"role":"user","content":"\n".join(lines)}]
+        result,error=await chat_fn(messages,900,0.2)
+        if error or not result:
+            print(f"[TRIVIA] {lang} translation failed: {error}"); return None
+        parsed={}
+        for line in result.strip().splitlines():
+            clean=line.strip().lstrip("*").strip()
+            for key in ("Q","A","B","C","D"):
+                pref=f"{key}:"
+                if clean.startswith(pref) and key not in parsed:
+                    parsed[key]=clean[len(pref):].strip(); break
+        if not all(parsed.get(k) for k in ("Q","A","B","C","D")):
+            print(f"[TRIVIA] malformed {lang} translation: {result[:180]}"); return None
+        translated=(parsed["Q"],[parsed["A"],parsed["B"],parsed["C"],parsed["D"]])
+        self.language_cache.data[cache_key]={"question":translated[0],"options":translated[1]}; self.language_cache.save(); return translated
+
+    async def localize_question_payload(self, base_question: str, base_options: list, base_correct: str,
+                                        category: str, difficulty: str, lang: str, key: str = None) -> dict:
+        lang=_tr_lang(lang); options=list(base_options); question=base_question; correct=base_correct
+        if lang in {"en","fr"}:
+            translated=await self.translate_darija_question(base_question,options,lang)
+            if translated:
+                correct_idx=options.index(base_correct)
+                question,new_options=translated; options=list(new_options); correct=options[correct_idx]
+        return {"question":question,"options":options,"correct":correct,"category":_trivia_category_label(category,lang),"difficulty":difficulty,"key":key,
+                "_base_question":base_question,"_base_options":list(base_options),"_base_correct":base_correct}
+
+    async def get_question_for_language(self, category: str, difficulty: str, used_keys: set, lang: str) -> Optional[dict]:
+        base=await self.get_darija_question(category,difficulty,used_keys)
+        if not base: return None
+        return await self.localize_question_payload(base["question"],list(base["options"]),base["correct"],category,difficulty,lang,key=base.get("key"))
+
     # ═══════════════════════════════════════════════════
     # ║                  إرسال سؤال عام                     ║
     # ═══════════════════════════════════════════════════
@@ -924,39 +950,7 @@ class Trivia(commands.Cog):
         if not channel:
             return False
 
-        embed = discord.Embed(
-            title="🧠 مرحبا بيك فـ لعبة Trivia",
-            description=f"اختبر معلوماتك وربح **USD** {CURRENCY_EMOJI}! "
-                        "كليكي على الزر تحت، اختار المجال لي بغيتي، وابدا تجاوب على الأسئلة.",
-            color=discord.Color.teal(),
-            timestamp=datetime.now()
-        )
-        embed.add_field(
-            name="🎯 كيفاش كتخدم",
-            value=(
-                "1️⃣ كليكي **🎮 ابدأ اللعب** تحت\n"
-                f"2️⃣ اختار المجال لي بغيتي (من {len(TRIVIA_CATEGORIES)} مجالات)\n"
-                f"3️⃣ جاوب على الأسئلة — عندك {TRIVIA_ANSWER_SECONDS} ثانية لكل سؤال\n"
-                "4️⃣ كل ما جاوبتي صحيح، الأسئلة كتزاد صعوبة والـReward بالدولار كيزيد — حتى تغلط ولا يخلص الوقت!"
-            ), inline=False
-        )
-        embed.add_field(
-            name="🇲🇦 كلشي بالدارجة",
-            value=(
-                f"كاع الأسئلة والأجوبة مكتوبين بالدارجة المغربية من الأصل ({count_bank_questions()} سؤال) — "
-                "بلا ترجمة، بلا انتظار، وكيبانو ليك فالحين ملي تختار المجال."
-            ), inline=False
-        )
-        embed.add_field(
-            name="💵 Rewards بالدولار",
-            value=(
-                f"🟢 سهل: **{fmt_money(get_trivia_coins('easy'))}**\n"
-                f"🟡 متوسط: **{fmt_money(get_trivia_coins('medium'))}**\n"
-                f"🔴 صعيب: **{fmt_money(get_trivia_coins('hard'))}**\n"
-                f"(غلطة وحدة كتوقف السلسلة — Daily Mini Games cap هو {fmt_money(COINS_DAILY_CAP)})"
-            ), inline=False
-        )
-        embed.set_footer(text=f"{guild.name} | Trivia Game")
+        embed = build_trivia_panel_embed(guild, "darija")
 
         matches = []
         try:

@@ -2369,11 +2369,11 @@ class BankLanguageSelect(discord.ui.Select):
 
 
 class EconomyBankPanelView(discord.ui.View):
-    """Official public Bank panel stays Darija; personal/localized sessions are private."""
+    """Official public Bank panel is ALWAYS Darija; localized sessions are private."""
     def __init__(self,cog,lang="darija"):
-        super().__init__(timeout=None); self.cog=cog; self.lang=lang if lang in {"darija","en","fr"} else "darija"
-        open_label="🏦 Open My Bank" if self.lang=="en" else "🏦 Ouvrir ma banque" if self.lang=="fr" else "🏦 فتح البنك ديالي"
-        stats_label="📊 Economy Stats" if self.lang=="en" else "📊 Statistiques économie" if self.lang=="fr" else "📊 إحصائيات الاقتصاد"
+        super().__init__(timeout=None); self.cog=cog; self.lang="darija"
+        open_label="🏦 فتح البنك ديالي"
+        stats_label="📊 إحصائيات الاقتصاد"
         b1=discord.ui.Button(label=open_label,style=discord.ButtonStyle.success,custom_id="ggmw9:economy:open_bank",row=0); b1.callback=self.open_bank; self.add_item(b1)
         b2=discord.ui.Button(label=stats_label,style=discord.ButtonStyle.secondary,custom_id="ggmw9:economy:public_stats",row=0); b2.callback=self.stats; self.add_item(b2)
         self.add_item(BankLanguageSelect(cog,self.lang))
