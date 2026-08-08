@@ -242,6 +242,7 @@ async def run_roll(cog: Dice, interaction: discord.Interaction, user: discord.ab
     else:
         s["losses"] += 1
         cog.db.save()
+        await eco.route_gambling_loss(interaction.guild, user, bet, "dice")
         color = discord.Color.red()
         title = "💀 خسرتي"
         desc_extra = f"\n📉 خسرتي **{bet:,}** {cfg.CURRENCY_EMOJI}"
