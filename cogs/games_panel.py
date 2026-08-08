@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""GGMW9 public hubs — one clean ARCADE, dedicated Shop, dedicated Leaderboards.
+"""GGMW9 public hubs — fixed Darija + private localized sessions.
 
-Public messages stay in Darija by default. Every member can save a personal
-Darija / English / French preference. Public buttons open ONE private session
-message and submenus edit that same message instead of stacking replies.
+Public messages stay Darija. Selecting a language always creates a NEW private
+ephemeral home panel for that member. Inside it, language changes edit the same
+private message. Dismiss is safe because no public-launch ephemeral is cached.
 """
 
 from datetime import datetime
@@ -50,6 +50,16 @@ async def _upsert(bot: commands.Bot, interaction: discord.Interaction, key: str,
     else:
         await interaction.followup.send(ephemeral=True, **kwargs)
 
+async def _fresh_private(interaction: discord.Interaction, **kwargs):
+    """Open a brand-new ephemeral session from a public panel.
+
+    Never cache this message. If the user Dismisses it, the next public click
+    simply creates another clean session.
+    """
+    if not interaction.response.is_done():
+        return await interaction.response.send_message(ephemeral=True, **kwargs)
+    return await interaction.followup.send(ephemeral=True, **kwargs)
+
 
 def _txt(lang: str, key: str) -> str:
     strings = {
@@ -66,7 +76,7 @@ def _txt(lang: str, key: str) -> str:
             "economy_desc": "ARCADE غير **Quick Access**. البانلات الرسمية والكاملة باقين فـ #bank و #shop باش ما يكون حتى خلط.",
             "official": "القنوات الرسمية",
             "back": "رجع لـARCADE",
-            "language_saved": "✅ اللغة ديالك ولات **الدارجة**. هاد الاختيار شخصي وما كيبدلش الواجهة على الناس الآخرين.",
+            "language_saved": "✅ تحلات ليك النسخة الخاصة **بالدارجة**.",
             "trivia_desc": "Trivia جزء رسمي من ARCADE. دخل لقناة Trivia باش تلعب الجولات والأسئلة بلا ما نخربق Channel ديال ARCADE.",
             "leader_pick": "🏆 اختار Leaderboard:",
         },
@@ -83,7 +93,7 @@ def _txt(lang: str, key: str) -> str:
             "economy_desc": "ARCADE is only the **quick-access hub**. The full official panels stay in #bank and #shop so members always know where the main economy lives.",
             "official": "Official channels",
             "back": "Back to ARCADE",
-            "language_saved": "✅ Your language is now **English**. This is personal and does not change the public panel for other members.",
+            "language_saved": "✅ Your private panel is now **English**.",
             "trivia_desc": "Trivia is an official ARCADE game. Use the dedicated Trivia channel for rounds and questions so ARCADE stays clean.",
             "leader_pick": "🏆 Choose a leaderboard:",
         },
@@ -100,7 +110,7 @@ def _txt(lang: str, key: str) -> str:
             "economy_desc": "ARCADE sert d'**accès rapide**. Les panneaux officiels complets restent dans #bank et #shop pour éviter toute confusion.",
             "official": "Salons officiels",
             "back": "Retour à ARCADE",
-            "language_saved": "✅ Ta langue est maintenant **Français**. Ce choix est personnel et ne change pas le panneau public des autres membres.",
+            "language_saved": "✅ Ton panneau privé est maintenant en **Français**.",
             "trivia_desc": "Trivia fait partie d'ARCADE. Utilise le salon Trivia dédié pour les manches et questions afin de garder ARCADE propre.",
             "leader_pick": "🏆 Choisis un classement :",
         },
@@ -117,32 +127,28 @@ def _channel_mention(channel_id: int, fallback: str) -> str:
 # ═══════════════════════════════════════════════════════
 
 class ArcadeLanguageSelect(discord.ui.Select):
-    def __init__(self, bot: commands.Bot, *, custom_id: str = "ggmw9:arcade:language", row: int = 1):
+    def __init__(self, bot: commands.Bot, lang: str = "darija", *, custom_id: str = "ggmw9:arcade:language", row: int = 1):
         self.bot = bot
+        self.lang = lang if lang in {"darija","en","fr"} else "darija"
         super().__init__(
             placeholder="🌐 اللغة / Language / Langue",
-            min_values=1,
-            max_values=1,
+            min_values=1, max_values=1,
             options=[
-                discord.SelectOption(label="Darija", value="darija", emoji="🇲🇦", description="Default / اللغة الأساسية"),
-                discord.SelectOption(label="English", value="en", emoji="🇬🇧"),
-                discord.SelectOption(label="Français", value="fr", emoji="🇫🇷"),
+                discord.SelectOption(label="Darija", value="darija", emoji="🇲🇦", default=self.lang=="darija"),
+                discord.SelectOption(label="English", value="en", emoji="🇬🇧", default=self.lang=="en"),
+                discord.SelectOption(label="Français", value="fr", emoji="🇫🇷", default=self.lang=="fr"),
             ],
-            custom_id=custom_id,
-            row=row,
+            custom_id=custom_id, row=row,
         )
 
     async def callback(self, interaction: discord.Interaction):
         lang = _set_lang(self.bot, interaction.guild.id, interaction.user.id, self.values[0])
-        await _upsert(
-            self.bot,
+        await _fresh_private(
             interaction,
-            "arcade",
             content=_txt(lang, "language_saved"),
             embed=build_arcade_personal_embed(lang),
             view=ArcadePrivateHomeView(self.bot, interaction.user, lang),
         )
-
 
 
 class ArcadeSessionLanguageSelect(discord.ui.Select):
@@ -183,66 +189,49 @@ class ArcadeSessionLanguageSelect(discord.ui.Select):
 
 
 class GamesPanelView(discord.ui.View):
-    """Persistent public ARCADE. Five clear destinations + personal language."""
-
-    def __init__(self, bot: commands.Bot):
+    """Persistent public ARCADE. It stays Darija; language choices open private sessions."""
+    def __init__(self, bot: commands.Bot, lang: str = "darija"):
         super().__init__(timeout=None)
         self.bot = bot
-        self.add_item(ArcadeLanguageSelect(bot, row=1))
+        self.lang = lang if lang in {"darija","en","fr"} else "darija"
+        specs = [
+            ("ggmw9:arcade:games", _txt(self.lang,"games"), discord.ButtonStyle.success, self.open_games),
+            ("ggmw9:arcade:trivia", _txt(self.lang,"trivia"), discord.ButtonStyle.primary, self.trivia_btn),
+            ("ggmw9:arcade:casino", _txt(self.lang,"casino"), discord.ButtonStyle.danger, self.casino_btn),
+            ("ggmw9:arcade:economy", _txt(self.lang,"economy"), discord.ButtonStyle.primary, self.economy_btn),
+            ("ggmw9:arcade:leaderboards", _txt(self.lang,"leaders"), discord.ButtonStyle.secondary, self.leaders_btn),
+        ]
+        for cid,label,style,cb in specs:
+            b=discord.ui.Button(label=label[:80],style=style,custom_id=cid,row=0)
+            b.callback=cb; self.add_item(b)
+        self.add_item(ArcadeLanguageSelect(bot,self.lang,row=1))
 
-    @discord.ui.button(label="🕹️ Mini Games", style=discord.ButtonStyle.success, custom_id="ggmw9:arcade:games", row=0)
-    async def open_games(self, interaction: discord.Interaction, button: discord.ui.Button):
-        lang = _lang(self.bot, interaction.guild.id, interaction.user.id)
-        await _upsert(
-            self.bot, interaction, "arcade",
-            content=_txt(lang, "choose_game"),
-            embed=build_games_menu_embed(lang),
-            view=GameMenuView(self.bot, interaction.user, lang),
-        )
+    def _sync(self, interaction):
+        return _lang(self.bot, interaction.guild.id, interaction.user.id)
 
-    @discord.ui.button(label="🧠 Trivia", style=discord.ButtonStyle.primary, custom_id="ggmw9:arcade:trivia", row=0)
-    async def trivia_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        lang = _lang(self.bot, interaction.guild.id, interaction.user.id)
-        await _upsert(
-            self.bot, interaction, "arcade",
-            content=None,
-            embed=build_trivia_embed(lang),
-            view=TriviaQuickView(self.bot, interaction.user, lang),
-        )
+    async def open_games(self, interaction):
+        lang=self._sync(interaction)
+        await _fresh_private(interaction,content=_txt(lang,"choose_game"),embed=build_games_menu_embed(lang),view=GameMenuView(self.bot,interaction.user,lang))
 
-    @discord.ui.button(label="🎰 Casino", style=discord.ButtonStyle.danger, custom_id="ggmw9:arcade:casino", row=0)
-    async def casino_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        lang = _lang(self.bot, interaction.guild.id, interaction.user.id)
+    async def trivia_btn(self, interaction):
+        lang=self._sync(interaction)
+        await _fresh_private(interaction,content=None,embed=build_trivia_embed(lang),view=TriviaQuickView(self.bot,interaction.user,lang))
+
+    async def casino_btn(self, interaction):
+        lang=self._sync(interaction)
         try:
             from cogs.gambling_panel import GamblingMenuView, build_session_menu_embed
         except ImportError:
             from gambling_panel import GamblingMenuView, build_session_menu_embed
-        await _upsert(
-            self.bot, interaction, "arcade",
-            content=None,
-            embed=build_session_menu_embed(self.bot, interaction.guild, interaction.user, lang=lang),
-            view=GamblingMenuView(self.bot, interaction.user, lang=lang),
-        )
+        await _fresh_private(interaction,content=None,embed=build_session_menu_embed(self.bot,interaction.guild,interaction.user,lang),view=GamblingMenuView(self.bot,interaction.user,lang=lang))
 
-    @discord.ui.button(label="💰 Economy", style=discord.ButtonStyle.primary, custom_id="ggmw9:arcade:economy", row=0)
-    async def economy_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        lang = _lang(self.bot, interaction.guild.id, interaction.user.id)
-        await _upsert(
-            self.bot, interaction, "arcade",
-            content=None,
-            embed=build_economy_quick_embed(lang),
-            view=ArcadeEconomyView(self.bot, interaction.user, lang),
-        )
+    async def economy_btn(self, interaction):
+        lang=self._sync(interaction)
+        await _fresh_private(interaction,content=None,embed=build_economy_quick_embed(lang),view=ArcadeEconomyView(self.bot,interaction.user,lang))
 
-    @discord.ui.button(label="🏆 Leaderboards", style=discord.ButtonStyle.secondary, custom_id="ggmw9:arcade:leaderboards", row=0)
-    async def leaders_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        lang = _lang(self.bot, interaction.guild.id, interaction.user.id)
-        await _upsert(
-            self.bot, interaction, "arcade",
-            content=_txt(lang, "leader_pick"),
-            embed=build_leaderboard_home_embed(lang),
-            view=LeaderboardPanelView(self.bot, owner=interaction.user, lang=lang, session_key="arcade", persistent=False),
-        )
+    async def leaders_btn(self, interaction):
+        lang=self._sync(interaction)
+        await _fresh_private(interaction,content=_txt(lang,"leader_pick"),embed=build_leaderboard_home_embed(lang),view=LeaderboardPanelView(self.bot,owner=interaction.user,lang=lang,session_key="arcade",persistent=False))
 
 
 def build_arcade_personal_embed(lang: str) -> discord.Embed:
@@ -506,37 +495,58 @@ class GameMenuView(discord.ui.View):
 # Dedicated Shop public panel
 # ═══════════════════════════════════════════════════════
 
+def build_shop_public_embed(lang: str = "darija") -> discord.Embed:
+    lang = lang if lang in {"darija","en","fr"} else "darija"
+    if lang=="en":
+        desc="This channel is the **official full Marketplace**. ARCADE is only a quick shortcut.\n\nOpen the Marketplace to browse categories, assets, utility and prestige items."
+        footer="GGMW9 Marketplace • official Shop • English"
+    elif lang=="fr":
+        desc="Ce salon est le **Marketplace officiel complet**. ARCADE sert uniquement de raccourci.\n\nOuvre la boutique pour parcourir les catégories, actifs, utilités et objets de prestige."
+        footer="GGMW9 Marketplace • Boutique officielle • Français"
+    else:
+        desc="هاد Channel هي **الواجهة الرسمية والكاملة للمتجر**. ARCADE غير Shortcut سريع ليها.\n\nفتح Marketplace باش تشوف Categories، Assets، Utility وPrestige items."
+        footer="GGMW9 Marketplace • المتجر الرسمي • Darija"
+    e=discord.Embed(title="🛒 GGMW9 Marketplace",description=desc,color=discord.Color.blurple(),timestamp=datetime.now())
+    e.add_field(name="🌐 Language",value="🇲🇦 Darija • 🇬🇧 English • 🇫🇷 Français\n↳ اختيار اللغة كيفتح Panel خاصة بيك؛ Dismiss آمن وتقدر تعاود تفتحها.",inline=False)
+    e.set_footer(text=footer); return e
+
+
 class ShopLanguageSelect(discord.ui.Select):
-    def __init__(self, bot):
-        self.bot=bot
+    def __init__(self, bot, lang: str="darija"):
+        self.bot=bot; self.lang=lang if lang in {"darija","en","fr"} else "darija"
         super().__init__(placeholder="🌐 اللغة / Language / Langue",options=[
-            discord.SelectOption(label="Darija",value="darija",emoji="🇲🇦"),
-            discord.SelectOption(label="English",value="en",emoji="🇬🇧"),
-            discord.SelectOption(label="Français",value="fr",emoji="🇫🇷"),
+            discord.SelectOption(label="Darija",value="darija",emoji="🇲🇦",default=self.lang=="darija"),
+            discord.SelectOption(label="English",value="en",emoji="🇬🇧",default=self.lang=="en"),
+            discord.SelectOption(label="Français",value="fr",emoji="🇫🇷",default=self.lang=="fr"),
         ],custom_id="ggmw9:shop_panel:language",row=1)
     async def callback(self,interaction):
-        lang=_set_lang(self.bot,interaction.guild.id,interaction.user.id,self.values[0]); eco=self.bot.get_cog("Economy")
+        lang=_set_lang(self.bot,interaction.guild.id,interaction.user.id,self.values[0])
+        eco=self.bot.get_cog("Economy")
         if not eco:
             await interaction.response.send_message(_txt(lang,"unavailable"),ephemeral=True); return
         try: from cogs.economy import ShopView, build_shop_home_embed
         except ImportError: from economy import ShopView, build_shop_home_embed
-        await _upsert(self.bot,interaction,"shop",content=None,embed=build_shop_home_embed(eco,interaction.guild,interaction.user,lang=lang),view=ShopView(eco,interaction.user,lang=lang,session_key="shop"))
+        await _fresh_private(interaction,content=_txt(lang,"language_saved"),embed=build_shop_home_embed(eco,interaction.guild,interaction.user,lang=lang),view=ShopView(eco,interaction.user,lang=lang,session_key="shop"))
 
 
 class ShopPanelView(discord.ui.View):
-    def __init__(self, bot: commands.Bot):
-        super().__init__(timeout=None); self.bot=bot; self.add_item(ShopLanguageSelect(bot))
+    def __init__(self, bot: commands.Bot, lang: str="darija"):
+        super().__init__(timeout=None); self.bot=bot; self.lang=lang if lang in {"darija","en","fr"} else "darija"
+        label="🛒 Open Marketplace" if self.lang=="en" else "🛒 Ouvrir la boutique" if self.lang=="fr" else "🛒 فتح Marketplace"
+        b=discord.ui.Button(label=label,style=discord.ButtonStyle.success,custom_id="ggmw9:shop_panel:open",row=0); b.callback=self.open_shop; self.add_item(b)
+        self.add_item(ShopLanguageSelect(bot,self.lang))
 
-    @discord.ui.button(label="🛒 فتح Marketplace",style=discord.ButtonStyle.success,custom_id="ggmw9:shop_panel:open",row=0)
-    async def open_shop(self,interaction,button):
+    async def open_shop(self,interaction):
         eco=self.bot.get_cog("Economy"); lang=_lang(self.bot,interaction.guild.id,interaction.user.id)
         if not eco:
             await interaction.response.send_message(_txt(lang,"unavailable"),ephemeral=True); return
         try: from cogs.economy import ShopView, build_shop_home_embed
         except ImportError: from economy import ShopView, build_shop_home_embed
-        await _upsert(self.bot,interaction,"shop",content=None,embed=build_shop_home_embed(eco,interaction.guild,interaction.user,lang=lang),view=ShopView(eco,interaction.user,lang=lang,session_key="shop"))
+        await _fresh_private(interaction,content=None,embed=build_shop_home_embed(eco,interaction.guild,interaction.user,lang=lang),view=ShopView(eco,interaction.user,lang=lang,session_key="shop"))
 
 
+# ═══════════════════════════════════════════════════════
+# Leaderboards
 # ═══════════════════════════════════════════════════════
 # Leaderboards
 # ═══════════════════════════════════════════════════════
@@ -575,28 +585,28 @@ class LeaderboardSelect(discord.ui.Select):
             if self.owner:
                 await interaction.response.edit_message(content=_txt(self.lang,"unavailable"),embed=None,view=LeaderboardPanelView(self.bot,owner=self.owner,lang=self.lang,session_key=self.session_key,persistent=False))
             else:
-                await _upsert(self.bot,interaction,self.session_key,content=_txt(self.lang,"unavailable"),embed=None,view=None)
+                lang=_lang(self.bot,interaction.guild.id,interaction.user.id)
+                await _fresh_private(interaction,content=_txt(lang,"unavailable"),embed=None,view=None)
             return
         embed=getattr(cog,lb["method"])(interaction.guild)
         if self.owner:
             await interaction.response.edit_message(content=None,embed=embed,view=LeaderboardPanelView(self.bot,owner=self.owner,lang=self.lang,session_key=self.session_key,persistent=False))
         else:
             lang=_lang(self.bot,interaction.guild.id,interaction.user.id)
-            await _upsert(self.bot,interaction,self.session_key,content=None,embed=embed,view=LeaderboardPanelView(self.bot,owner=interaction.user,lang=lang,session_key=self.session_key,persistent=False))
+            await _fresh_private(interaction,content=None,embed=embed,view=LeaderboardPanelView(self.bot,owner=interaction.user,lang=lang,session_key=self.session_key,persistent=False))
 
 
 class LeaderboardLanguageSelect(discord.ui.Select):
-    def __init__(self,bot):
-        self.bot=bot
+    def __init__(self,bot,lang="darija"):
+        self.bot=bot; self.lang=lang if lang in {"darija","en","fr"} else "darija"
         super().__init__(placeholder="🌐 اللغة / Language / Langue",options=[
-            discord.SelectOption(label="Darija",value="darija",emoji="🇲🇦"),
-            discord.SelectOption(label="English",value="en",emoji="🇬🇧"),
-            discord.SelectOption(label="Français",value="fr",emoji="🇫🇷"),
+            discord.SelectOption(label="Darija",value="darija",emoji="🇲🇦",default=self.lang=="darija"),
+            discord.SelectOption(label="English",value="en",emoji="🇬🇧",default=self.lang=="en"),
+            discord.SelectOption(label="Français",value="fr",emoji="🇫🇷",default=self.lang=="fr"),
         ],custom_id="ggmw9:leaderboards:language",row=1)
     async def callback(self,interaction):
         lang=_set_lang(self.bot,interaction.guild.id,interaction.user.id,self.values[0])
-        await _upsert(self.bot,interaction,"leaderboards",content=_txt(lang,"leader_pick"),embed=build_leaderboard_home_embed(lang),view=LeaderboardPanelView(self.bot,owner=interaction.user,lang=lang,session_key="leaderboards",persistent=False))
-
+        await _fresh_private(interaction,content=_txt(lang,"leader_pick"),embed=build_leaderboard_home_embed(lang),view=LeaderboardPanelView(self.bot,owner=interaction.user,lang=lang,session_key="leaderboards",persistent=False))
 
 
 class LeaderboardPrivateLanguageSelect(discord.ui.Select):
@@ -619,7 +629,7 @@ class LeaderboardPanelView(discord.ui.View):
         super().__init__(timeout=None if persistent else 900); self.bot=bot
         self.add_item(LeaderboardSelect(bot,owner=owner,lang=lang,session_key=session_key,persistent=persistent))
         if persistent:
-            self.add_item(LeaderboardLanguageSelect(bot))
+            self.add_item(LeaderboardLanguageSelect(bot, lang))
         elif owner is not None:
             if session_key == "arcade":
                 self.add_item(ArcadeSessionLanguageSelect(bot, owner, row=1))
@@ -635,9 +645,9 @@ class GamesPanel(commands.Cog):
     def __init__(self,bot): self.bot=bot
 
     async def cog_load(self):
-        self.bot.add_view(GamesPanelView(self.bot))
-        self.bot.add_view(ShopPanelView(self.bot))
-        self.bot.add_view(LeaderboardPanelView(self.bot,persistent=True))
+        self.bot.add_view(GamesPanelView(self.bot,"darija"))
+        self.bot.add_view(ShopPanelView(self.bot,"darija"))
+        self.bot.add_view(LeaderboardPanelView(self.bot,lang="darija",persistent=True))
         print("✅ [ARCADE] Persistent hub + Shop + Leaderboards registered.")
 
     async def _ensure_single(self,channel,match,embed,view):
@@ -661,37 +671,20 @@ class GamesPanel(commands.Cog):
     @commands.Cog.listener()
     async def on_ready(self):
         if cfg.GAMES_PANEL_CHANNEL_ID and (ch:=self.bot.get_channel(cfg.GAMES_PANEL_CHANNEL_ID)):
-            await self._ensure_single(ch,lambda t:("ARCADE" in t or "Mini Games" in t),self._build_arcade_embed(),GamesPanelView(self.bot))
+            await self._ensure_single(ch,lambda t:("ARCADE" in t or "Mini Games" in t),self._build_arcade_embed(),GamesPanelView(self.bot,"darija"))
         if getattr(cfg,"SHOP_PANEL_CHANNEL_ID",0) and (ch:=self.bot.get_channel(cfg.SHOP_PANEL_CHANNEL_ID)):
-            await self._ensure_single(ch,lambda t:("Marketplace" in t or "المتجر" in t),self._build_shop_panel_embed(),ShopPanelView(self.bot))
+            await self._ensure_single(ch,lambda t:("Marketplace" in t or "المتجر" in t),self._build_shop_panel_embed(),ShopPanelView(self.bot,"darija"))
         if getattr(cfg,"GAMES_LEADERBOARD_CHANNEL_ID",0) and (ch:=self.bot.get_channel(cfg.GAMES_LEADERBOARD_CHANNEL_ID)):
-            await self._ensure_single(ch,lambda t:"Leaderboards" in t,self._build_leaderboard_embed(),LeaderboardPanelView(self.bot,persistent=True))
+            await self._ensure_single(ch,lambda t:"Leaderboards" in t,self._build_leaderboard_embed(),LeaderboardPanelView(self.bot,lang="darija",persistent=True))
 
     def _build_arcade_embed(self):
-        bank=_channel_mention(getattr(cfg,"ECONOMY_BANK_CHANNEL_ID",0),"#bank"); shop=_channel_mention(getattr(cfg,"SHOP_PANEL_CHANNEL_ID",0),"#shop"); trivia=_channel_mention(getattr(cfg,"TRIVIA_CHANNEL_ID",0),"#trivia")
-        e=discord.Embed(
-            title="🎮・ARCADE — GGMW9",
-            description=(
-                "**هاد هي البوابة الرئيسية للترفيه والاقتصاد.** كل عضو كيدخل لجلسة خاصة وحدة، وكل اختيار جديد كيدير **Edit لنفس الرسالة** بلا Spam.\n\n"
-                "🕹️ **Mini Games** — Hangman • Wordle • Reaction • X/O • Counting\n"
-                f"🧠 **Trivia** — {trivia}\n"
-                "🎰 **Casino** — ألعاب الرهان والـFairness/Profile\n"
-                "💰 **Economy** — Quick Access للحساب والبنك والمتجر\n"
-                "🏆 **Leaderboards** — كاع الترتيبات من بلاصة وحدة"
-            ),color=discord.Color.blurple(),timestamp=datetime.now())
-        e.add_field(name="🏦 باش ما يكونش خلط",value=f"ARCADE = **Hub/Shortcuts** فقط.\nالبنك الرسمي: {bank}\nالمتجر الرسمي: {shop}",inline=False)
-        e.add_field(name="🌐 Languages",value="🇲🇦 **Darija (Default)** • 🇬🇧 English • 🇫🇷 Français\nاللغة كتتحفظ لكل عضو بوحدو.",inline=False)
-        e.set_footer(text="GGMW9 ARCADE • one hub • one private session • no panel spam")
-        return e
+        return build_arcade_personal_embed("darija")
 
     def _build_shop_panel_embed(self):
-        e=discord.Embed(title="🛒 GGMW9 Marketplace",description="هاد Channel هي **الواجهة الرسمية والكاملة للمتجر**. ARCADE غير Shortcut سريع ليها.\n\n🌐 Darija Default • English • Français",color=discord.Color.blurple(),timestamp=datetime.now())
-        e.set_footer(text="Open Marketplace → نفس الجلسة الخاصة كتتبدل بلا Spam")
-        return e
+        return build_shop_public_embed("darija")
 
     def _build_leaderboard_embed(self):
-        e=discord.Embed(title="🏆 Leaderboards",description="اختار أي لعبة؛ النتيجة كتبان فـ**رسالة خاصة وحدة** وكتتبدل مع كل اختيار.\n\n🧠 Trivia داخلة حتى هي هنا.\n🌐 Darija Default • English • Français",color=discord.Color.gold(),timestamp=datetime.now())
-        return e
+        return build_leaderboard_home_embed("darija")
 
 
 async def setup(bot: commands.Bot):

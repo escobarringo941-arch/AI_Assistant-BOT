@@ -215,6 +215,12 @@ async def _upsert(interaction: discord.Interaction, session_key: str, **kwargs):
         return await interaction.response.send_message(ephemeral=True, **kwargs)
     return await interaction.followup.send(ephemeral=True, **kwargs)
 
+async def _fresh(interaction: discord.Interaction, **kwargs):
+    """Open a new private Casino session from the public panel. Dismiss-safe."""
+    if not interaction.response.is_done():
+        return await interaction.response.send_message(ephemeral=True, **kwargs)
+    return await interaction.followup.send(ephemeral=True, **kwargs)
+
 
 def _game_desc(meta: dict, lang: str) -> str:
     if lang == "en":
@@ -490,32 +496,46 @@ def build_profile_embed(bot: commands.Bot, guild: discord.Guild, user: discord.M
     return embed
 
 
+def build_public_casino_embed(lang: str = "darija") -> discord.Embed:
+    lang = lang if lang in {"darija","en","fr"} else "darija"
+    if lang=="en":
+        games_name, limits_name, fairness_name = "🎮 Games", "💵 Table limits", "🛡️ Fairness"
+        footer="GGMW9 Fair Casino • USD • shared live English panel • no personalized rigging"
+    elif lang=="fr":
+        games_name, limits_name, fairness_name = "🎮 Jeux", "💵 Limites de mise", "🛡️ Équité"
+        footer="GGMW9 Fair Casino • USD • panneau Français en direct • aucune manipulation personnalisée"
+    else:
+        games_name, limits_name, fairness_name = "🎮 الألعاب", "💵 حدود الرهان", "🛡️ النزاهة"
+        footer="GGMW9 Fair Casino • USD • Darija public / private translations • بلا rigging شخصي"
+    embed=discord.Embed(title="🎰 GGMW9 Casino",description=_casino_text(lang,"public_desc"),color=discord.Color.gold(),timestamp=datetime.now())
+    embed.add_field(name=games_name,value="\n".join(f"{g['emoji']} **{g['label']}** — {_game_desc(g,lang)}" for g in GAMBLING_GAMES),inline=False)
+    embed.add_field(name=limits_name,value="\n".join(f"{g['emoji']} {cfg.fmt_money(_limits(g['id'])[0])} → {cfg.fmt_money(_limits(g['id'])[1])}" for g in GAMBLING_GAMES),inline=True)
+    embed.add_field(name=_casino_text(lang,"protection"),value=f"Per bet max **{getattr(cfg,'CASINO_MAX_BET_WALLET_PERCENT',10)}% Wallet**\nMax **{getattr(cfg,'CASINO_MAX_ROUNDS_30M',60)} rounds/30m**",inline=True)
+    embed.add_field(name=fairness_name,value=_casino_text(lang,"fairness_help"),inline=False)
+    live_note=("اختار اللغة من اللائحة باش تحل Panel خاصة بيك. Dismiss آمن وتقدر تعاود تفتحها." if lang=="darija" else "Choose a language to open your private Casino panel. Dismiss is safe; reopen it anytime." if lang=="en" else "Choisis une langue pour ouvrir ton panneau Casino privé. Tu peux le fermer et le rouvrir sans problème.")
+    embed.add_field(name=_casino_text(lang,"langs"),value=_casino_text(lang,"langs_value")+"\n"+live_note,inline=False)
+    embed.set_footer(text=footer)
+    return embed
+
+
 class CasinoLanguageSelect(discord.ui.Select):
-    def __init__(self, bot: commands.Bot, *, row: int = 1):
-        self.bot = bot
-        options = [
-            discord.SelectOption(label="Darija", value="darija", emoji="🇲🇦", description="اللغة الأساسية"),
-            discord.SelectOption(label="English", value="en", emoji="🇬🇧", description="English interface"),
-            discord.SelectOption(label="Français", value="fr", emoji="🇫🇷", description="Interface française"),
+    def __init__(self, bot: commands.Bot, lang: str = "darija", *, row: int = 1):
+        self.bot=bot; self.lang=lang if lang in {"darija","en","fr"} else "darija"
+        options=[
+            discord.SelectOption(label="Darija",value="darija",emoji="🇲🇦",default=self.lang=="darija"),
+            discord.SelectOption(label="English",value="en",emoji="🇬🇧",default=self.lang=="en"),
+            discord.SelectOption(label="Français",value="fr",emoji="🇫🇷",default=self.lang=="fr"),
         ]
-        super().__init__(
-            placeholder="🌍 Darija • English • Français",
-            options=options,
-            min_values=1,
-            max_values=1,
-            custom_id="ggmw9:casino:language",
-            row=row,
-        )
+        super().__init__(placeholder="🌍 Darija • English • Français",options=options,min_values=1,max_values=1,custom_id="ggmw9:casino:language",row=row)
 
-    async def callback(self, interaction: discord.Interaction):
-        lang = _set_lang(self.bot, interaction.guild.id, interaction.user.id, self.values[0])
-        await _upsert(
+    async def callback(self,interaction:discord.Interaction):
+        lang=_set_lang(self.bot,interaction.guild.id,interaction.user.id,self.values[0])
+        await _fresh(
             interaction,
-            "casino",
-            embed=build_session_menu_embed(self.bot, interaction.guild, interaction.user, lang),
-            view=GamblingMenuView(self.bot, interaction.user, lang=lang),
+            content=("✅ تحلات ليك نسخة Casino الخاصة بالدارجة." if lang=="darija" else "✅ Your private Casino panel is now English." if lang=="en" else "✅ Ton panneau Casino privé est maintenant en français."),
+            embed=build_session_menu_embed(self.bot,interaction.guild,interaction.user,lang),
+            view=GamblingMenuView(self.bot,interaction.user,lang=lang),
         )
-
 
 
 class CasinoSessionLanguageSelect(discord.ui.Select):
@@ -546,59 +566,52 @@ class CasinoSessionLanguageSelect(discord.ui.Select):
 
 
 class GamblingPanelView(discord.ui.View):
-    def __init__(self, bot: commands.Bot):
+    def __init__(self, bot: commands.Bot, lang: str = "darija"):
         super().__init__(timeout=None)
-        self.bot = bot
-        self.add_item(CasinoLanguageSelect(bot, row=1))
+        self.bot=bot; self.lang=lang if lang in {"darija","en","fr"} else "darija"
+        labels={
+            "darija":["🎰 لعب","💵 Wallet","📊 الإحصائيات","🧠 Profile","🛡️ النزاهة"],
+            "en":["🎰 Play","💵 Wallet","📊 Stats","🧠 Profile","🛡️ Fairness"],
+            "fr":["🎰 Jouer","💵 Wallet","📊 Stats","🧠 Profil","🛡️ Équité"],
+        }[self.lang]
+        specs=[
+            ("ggmw9:gambling_panel:open",labels[0],discord.ButtonStyle.success,self.open_menu),
+            ("ggmw9:gambling_panel:balance",labels[1],discord.ButtonStyle.secondary,self.balance_btn),
+            ("ggmw9:gambling_panel:stats",labels[2],discord.ButtonStyle.secondary,self.stats_btn),
+            ("ggmw9:gambling_panel:profile",labels[3],discord.ButtonStyle.primary,self.profile_btn),
+            ("ggmw9:gambling_panel:fairness",labels[4],discord.ButtonStyle.primary,self.fairness_btn),
+        ]
+        for cid,label,style,cb in specs:
+            b=discord.ui.Button(label=label[:80],style=style,custom_id=cid,row=0); b.callback=cb; self.add_item(b)
+        self.add_item(CasinoLanguageSelect(bot,self.lang,row=1))
 
-    def _user_lang(self, interaction: discord.Interaction) -> str:
-        return _lang(self.bot, interaction.guild.id, interaction.user.id)
+    def _sync(self,interaction):
+        return _lang(self.bot,interaction.guild.id,interaction.user.id)
 
-    @discord.ui.button(label="🎰 Play", style=discord.ButtonStyle.success, custom_id="ggmw9:gambling_panel:open", row=0)
-    async def open_menu(self, interaction: discord.Interaction, button: discord.ui.Button):
-        lang = self._user_lang(interaction)
-        await _upsert(
-            interaction, "casino",
-            embed=build_session_menu_embed(self.bot, interaction.guild, interaction.user, lang),
-            view=GamblingMenuView(self.bot, interaction.user, lang=lang),
-        )
+    async def open_menu(self,interaction):
+        lang=self._sync(interaction)
+        await _fresh(interaction,embed=build_session_menu_embed(self.bot,interaction.guild,interaction.user,lang),view=GamblingMenuView(self.bot,interaction.user,lang=lang))
 
-    @discord.ui.button(label="💵 Wallet", style=discord.ButtonStyle.secondary, custom_id="ggmw9:gambling_panel:balance", row=0)
-    async def balance_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        eco = self.bot.get_cog("Economy")
-        lang = self._user_lang(interaction)
+    async def balance_btn(self,interaction):
+        eco=self.bot.get_cog("Economy"); lang=self._sync(interaction)
         if not eco:
-            await interaction.response.send_message(_casino_text(lang, "unavailable"), ephemeral=True)
-            return
-        embed = discord.Embed(
-            title=_casino_text(lang, "wallet_title"),
-            description=_casino_text(
-                lang, "wallet_line",
-                wallet=cfg.fmt_money(eco.get_balance(interaction.guild.id, interaction.user.id)),
-                bank=cfg.fmt_money(eco.get_bank_balance(interaction.guild.id, interaction.user.id)),
-                daily=cfg.fmt_money(eco.daily_remaining(interaction.guild.id, interaction.user.id)),
-            ),
-            color=discord.Color.blurple(),
-        )
-        await _upsert(interaction, "casino", embed=embed, view=CasinoInfoBackView(self.bot, interaction.user, lang))
+            await interaction.response.send_message(_casino_text(lang,"unavailable"),ephemeral=True); return
+        embed=discord.Embed(title=_casino_text(lang,"wallet_title"),description=_casino_text(lang,"wallet_line",wallet=cfg.fmt_money(eco.get_balance(interaction.guild.id,interaction.user.id)),bank=cfg.fmt_money(eco.get_bank_balance(interaction.guild.id,interaction.user.id)),daily=cfg.fmt_money(eco.daily_remaining(interaction.guild.id,interaction.user.id))),color=discord.Color.blurple())
+        await _fresh(interaction,embed=embed,view=CasinoInfoBackView(self.bot,interaction.user,lang))
 
-    @discord.ui.button(label="📊 Stats", style=discord.ButtonStyle.secondary, custom_id="ggmw9:gambling_panel:stats", row=0)
-    async def stats_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        lang = self._user_lang(interaction)
-        embeds = [c.build_stats_embed(interaction.guild, interaction.user) for n in ("Dice", "Coinflip", "Slots", "Scratch", "Lottery") if (c := self.bot.get_cog(n))]
-        if not embeds:
-            embeds = [discord.Embed(description=_casino_text(lang, "stats_none"), color=discord.Color.blurple())]
-        await _upsert(interaction, "casino", embeds=embeds, view=CasinoInfoBackView(self.bot, interaction.user, lang))
+    async def stats_btn(self,interaction):
+        lang=self._sync(interaction)
+        embeds=[c.build_stats_embed(interaction.guild,interaction.user) for n in ("Dice","Coinflip","Slots","Scratch","Lottery") if (c:=self.bot.get_cog(n))]
+        if not embeds: embeds=[discord.Embed(description=_casino_text(lang,"stats_none"),color=discord.Color.blurple())]
+        await _fresh(interaction,embeds=embeds,view=CasinoInfoBackView(self.bot,interaction.user,lang))
 
-    @discord.ui.button(label="🧠 Profile", style=discord.ButtonStyle.primary, custom_id="ggmw9:gambling_panel:profile", row=0)
-    async def profile_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        lang = self._user_lang(interaction)
-        await _upsert(interaction, "casino", embed=build_profile_embed(self.bot, interaction.guild, interaction.user, lang), view=CasinoInfoBackView(self.bot, interaction.user, lang))
+    async def profile_btn(self,interaction):
+        lang=self._sync(interaction)
+        await _fresh(interaction,embed=build_profile_embed(self.bot,interaction.guild,interaction.user,lang),view=CasinoInfoBackView(self.bot,interaction.user,lang))
 
-    @discord.ui.button(label="🛡️ Fairness", style=discord.ButtonStyle.primary, custom_id="ggmw9:gambling_panel:fairness", row=0)
-    async def fairness_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        lang = self._user_lang(interaction)
-        await _upsert(interaction, "casino", embed=build_fairness_embed(lang), view=CasinoInfoBackView(self.bot, interaction.user, lang))
+    async def fairness_btn(self,interaction):
+        lang=self._sync(interaction)
+        await _fresh(interaction,embed=build_fairness_embed(lang),view=CasinoInfoBackView(self.bot,interaction.user,lang))
 
 
 class CasinoInfoBackView(discord.ui.View):
@@ -856,7 +869,7 @@ class GamblingPanel(commands.Cog):
         self.bot = bot
 
     async def cog_load(self):
-        self.bot.add_view(GamblingPanelView(self.bot))
+        self.bot.add_view(GamblingPanelView(self.bot,"darija"))
         print("✅ [CASINO] Multilang persistent panel registered.")
 
     @commands.Cog.listener()
@@ -877,35 +890,22 @@ class GamblingPanel(commands.Cog):
         try:
             if matches:
                 keep = matches[0]
-                await keep.edit(embed=embed, view=GamblingPanelView(self.bot))
+                await keep.edit(content=None, embed=embed, view=GamblingPanelView(self.bot,"darija"))
                 for old in matches[1:]:
                     try:
                         await old.delete()
                     except (discord.Forbidden, discord.NotFound, discord.HTTPException):
                         pass
             else:
-                await channel.send(embed=embed, view=GamblingPanelView(self.bot))
+                await channel.send(embed=embed, view=GamblingPanelView(self.bot,"darija"))
         except (discord.Forbidden, discord.HTTPException):
             pass
 
     def build_public_panel_embed(self, lang: str = "darija"):
-        # Public shared panel stays Darija by default. Language choice opens a personal localized session.
-        embed = discord.Embed(
-            title="🎰 GGMW9 Casino",
-            description=_casino_text(lang, "public_desc"),
-            color=discord.Color.gold(),
-            timestamp=datetime.now(),
-        )
-        embed.add_field(name="🎮 Games", value="\n".join(f"{g['emoji']} **{g['label']}** — {_game_desc(g, lang)}" for g in GAMBLING_GAMES), inline=False)
-        embed.add_field(name="💵 Table limits", value="\n".join(f"{g['emoji']} {cfg.fmt_money(_limits(g['id'])[0])} → {cfg.fmt_money(_limits(g['id'])[1])}" for g in GAMBLING_GAMES), inline=True)
-        embed.add_field(name=_casino_text(lang, "protection"), value=f"Per bet max **{getattr(cfg,'CASINO_MAX_BET_WALLET_PERCENT',10)}% Wallet**\nMax **{getattr(cfg,'CASINO_MAX_ROUNDS_30M',60)} rounds/30m**", inline=True)
-        embed.add_field(name="🛡️ Fairness", value=_casino_text(lang, "fairness_help"), inline=False)
-        embed.add_field(name=_casino_text(lang, "langs"), value=_casino_text(lang, "langs_value"), inline=False)
-        embed.set_footer(text="GGMW9 Fair Casino • USD • no personalized rigging")
-        return embed
+        return build_public_casino_embed(lang)
 
     async def _send_panel(self, channel):
-        await channel.send(embed=self.build_public_panel_embed("darija"), view=GamblingPanelView(self.bot))
+        await channel.send(embed=self.build_public_panel_embed("darija"), view=GamblingPanelView(self.bot,"darija"))
 
     @commands.command(name="gamblingpanel", hidden=True)
     @commands.has_permissions(administrator=True)

@@ -70,6 +70,12 @@ async def _upsert_panel(bot: commands.Bot, interaction: discord.Interaction, key
     else:
         await interaction.followup.send(ephemeral=True, **kwargs)
 
+async def _fresh_panel(interaction: discord.Interaction, **kwargs):
+    """Fresh private session from a public panel; safe after Dismiss."""
+    if not interaction.response.is_done():
+        return await interaction.response.send_message(ephemeral=True, **kwargs)
+    return await interaction.followup.send(ephemeral=True, **kwargs)
+
 
 def _eco_t(lang: str, key: str) -> str:
     data = {
@@ -168,7 +174,7 @@ class Economy(commands.Cog):
         self.bank_interest_loop.start()
         self.fx_rates_loop.start()
         # Persistent View: ما كيزيد حتى Slash Command جديد.
-        self.bot.add_view(EconomyBankPanelView(self))
+        self.bot.add_view(EconomyBankPanelView(self,"darija"))
 
     def cog_unload(self):
         self.expire_purchases_loop.cancel()
@@ -1712,7 +1718,7 @@ class Economy(commands.Cog):
         return discord.Embed(title=title,description="\n".join(lines),color=discord.Color.blurple())
 
     async def ensure_bank_panel(self, guild: discord.Guild):
-        """Keep exactly one official public Bank panel; member work happens privately."""
+        """Keep exactly one official Darija Bank panel; localized sessions are private."""
         channel_id = int(getattr(cfg, "ECONOMY_BANK_CHANNEL_ID", 0) or 0)
         channel = guild.get_channel(channel_id) if channel_id else None
         if not channel:
@@ -1731,14 +1737,14 @@ class Economy(commands.Cog):
         try:
             if matches:
                 keep = matches[0]
-                await keep.edit(embed=embed, view=EconomyBankPanelView(self))
+                await keep.edit(content=None, embed=embed, view=EconomyBankPanelView(self,"darija"))
                 for old in matches[1:]:
                     try:
                         await old.delete()
                     except (discord.NotFound, discord.Forbidden, discord.HTTPException):
                         pass
             else:
-                await channel.send(embed=embed, view=EconomyBankPanelView(self))
+                await channel.send(embed=embed, view=EconomyBankPanelView(self,"darija"))
         except (discord.Forbidden, discord.HTTPException):
             pass
 
@@ -2340,22 +2346,48 @@ class BankSessionView(discord.ui.View):
 
 
 class BankLanguageSelect(discord.ui.Select):
-    def __init__(self,cog):
-        self.cog=cog; super().__init__(placeholder="🌐 اللغة / Language / Langue",options=[discord.SelectOption(label="Darija",value="darija",emoji="🇲🇦"),discord.SelectOption(label="English",value="en",emoji="🇬🇧"),discord.SelectOption(label="Français",value="fr",emoji="🇫🇷")],custom_id="ggmw9:economy:language",row=1)
+    """Public Darija Bank selector; opens a fresh private localized bank session."""
+    def __init__(self,cog,lang="darija"):
+        self.cog=cog; self.lang=lang if lang in {"darija","en","fr"} else "darija"
+        super().__init__(
+            placeholder="🌐 اللغة / Language / Langue",
+            options=[
+                discord.SelectOption(label="Darija",value="darija",emoji="🇲🇦",default=self.lang=="darija"),
+                discord.SelectOption(label="English",value="en",emoji="🇬🇧",default=self.lang=="en"),
+                discord.SelectOption(label="Français",value="fr",emoji="🇫🇷",default=self.lang=="fr"),
+            ],
+            custom_id="ggmw9:economy:language",row=1,
+        )
     async def callback(self,interaction):
-        lang=_set_panel_lang(self.cog.bot,interaction.guild.id,interaction.user.id,self.values[0]); await _upsert_panel(self.cog.bot,interaction,"bank",content=_eco_t(lang,"lang_saved"),embed=self.cog.build_user_account_embed(interaction.guild,interaction.user,lang=lang),view=BankSessionView(self.cog,interaction.user,lang,"bank"))
+        lang=_set_panel_lang(self.cog.bot,interaction.guild.id,interaction.user.id,self.values[0])
+        await _fresh_panel(
+            interaction,
+            content=_eco_t(lang,"lang_saved"),
+            embed=self.cog.build_user_account_embed(interaction.guild,interaction.user,lang=lang),
+            view=BankSessionView(self.cog,interaction.user,lang,"bank"),
+        )
 
 
 class EconomyBankPanelView(discord.ui.View):
-    """Clean public bank: overview stays public, member actions stay in one private session."""
-    def __init__(self,cog):
-        super().__init__(timeout=None); self.cog=cog; self.add_item(BankLanguageSelect(cog))
-    @discord.ui.button(label="🏦 فتح البنك ديالي",style=discord.ButtonStyle.success,custom_id="ggmw9:economy:open_bank",row=0)
-    async def open_bank(self,interaction,button):
-        lang=_panel_lang(self.cog.bot,interaction.guild.id,interaction.user.id); await _upsert_panel(self.cog.bot,interaction,"bank",content=None,embed=self.cog.build_user_account_embed(interaction.guild,interaction.user,lang=lang),view=BankSessionView(self.cog,interaction.user,lang,"bank"))
-    @discord.ui.button(label="📊 Economy Stats",style=discord.ButtonStyle.secondary,custom_id="ggmw9:economy:public_stats",row=0)
-    async def stats(self,interaction,button):
-        lang=_panel_lang(self.cog.bot,interaction.guild.id,interaction.user.id); await _upsert_panel(self.cog.bot,interaction,"bank",content=None,embed=self.cog.build_global_economy_embed(interaction.guild,lang=lang),view=BankSessionView(self.cog,interaction.user,lang,"bank"))
+    """Official public Bank panel stays Darija; personal/localized sessions are private."""
+    def __init__(self,cog,lang="darija"):
+        super().__init__(timeout=None); self.cog=cog; self.lang=lang if lang in {"darija","en","fr"} else "darija"
+        open_label="🏦 Open My Bank" if self.lang=="en" else "🏦 Ouvrir ma banque" if self.lang=="fr" else "🏦 فتح البنك ديالي"
+        stats_label="📊 Economy Stats" if self.lang=="en" else "📊 Statistiques économie" if self.lang=="fr" else "📊 إحصائيات الاقتصاد"
+        b1=discord.ui.Button(label=open_label,style=discord.ButtonStyle.success,custom_id="ggmw9:economy:open_bank",row=0); b1.callback=self.open_bank; self.add_item(b1)
+        b2=discord.ui.Button(label=stats_label,style=discord.ButtonStyle.secondary,custom_id="ggmw9:economy:public_stats",row=0); b2.callback=self.stats; self.add_item(b2)
+        self.add_item(BankLanguageSelect(cog,self.lang))
+
+    def _sync(self,interaction):
+        return _panel_lang(self.cog.bot,interaction.guild.id,interaction.user.id)
+
+    async def open_bank(self,interaction):
+        lang=self._sync(interaction)
+        await _fresh_panel(interaction,content=None,embed=self.cog.build_user_account_embed(interaction.guild,interaction.user,lang=lang),view=BankSessionView(self.cog,interaction.user,lang,"bank"))
+
+    async def stats(self,interaction):
+        lang=self._sync(interaction)
+        await _fresh_panel(interaction,content=None,embed=self.cog.build_global_economy_embed(interaction.guild,lang=lang),view=BankSessionView(self.cog,interaction.user,lang,"bank"))
 
 
 def build_shop_home_embed(cog:"Economy",guild:discord.Guild,user:discord.Member,lang="darija"):
