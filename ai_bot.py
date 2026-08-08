@@ -4142,7 +4142,7 @@ def _build_blacklist_embed(lang: str = "darija") -> discord.Embed:
         ]
         if REPORTS_CHANNEL_ID:
             fields.append(("🚨 How to report a violation", "Use the server **Support Center**: choose **Report member** for a specific person or **General report** for a broader issue. Reports are private and go directly to staff."))
-        footer = "GGMW9 | نظام المراقبة والعقوبات الأوتوماتيكي"
+        footer = "GGMW9 | Automatic Moderation & Penalty System"
     else:
         # IMPORTANT: the public Darija wording stays the main/source message.
         embed = discord.Embed(
@@ -5432,6 +5432,319 @@ class SuggestionReviewView(discord.ui.View):
                 pass
 
 
+def _suggestion_t(lang: str, key: str, **fmt) -> str:
+    data = {
+        "darija": {
+            "title": "💡 اقتراحات GGMW9",
+            "desc": (
+                "عندك فكرة تقدر تحسن السيرفر؟ صيفطها من هنا مباشرة.\n\n"
+                "📌 الاقتراح ديالك غادي يبان **فنفس قناة الاقتراحات** تحت هاد البانل.\n"
+                "👍👎 الأعضاء يقدرو يصوتو عليه، والإدارة كتراجعو وتقبلو ولا ترفضو."
+            ),
+            "create": "دير اقتراح",
+            "saved": "✅ تحلات ليك واجهة الاقتراحات بالدارجة.",
+            "modal_title": "💡 اقتراح جديد",
+            "idea_label": "شرح الفكرة",
+            "idea_placeholder": "شرح الفكرة بوضوح: شنو بغيتي يتزاد أو يتبدل، وعلاش غادي يفيد السيرفر؟",
+            "sent": "✅ الاقتراح ديالك **#{id}** تبعث وظهر فـ {channel}.",
+            "failed": "❌ ما قدرناش نصيفطو الاقتراح دابا. جرب من بعد أو بلغ الإدارة.",
+            "not_yours": "❌ هاد الجلسة ماشي ديالك.",
+        },
+        "en": {
+            "title": "💡 GGMW9 Suggestions",
+            "desc": (
+                "Have an idea that could improve the server? Submit it directly here.\n\n"
+                "📌 Your suggestion will appear **in this Suggestions channel** below the main panel.\n"
+                "👍👎 Members can vote on it, and staff can review and accept or reject it."
+            ),
+            "create": "Submit Suggestion",
+            "saved": "✅ Your Suggestions panel is now in English.",
+            "modal_title": "💡 New Suggestion",
+            "idea_label": "Describe your idea",
+            "idea_placeholder": "Explain clearly what should be added or changed and why it would help the server.",
+            "sent": "✅ Suggestion **#{id}** was submitted and posted in {channel}.",
+            "failed": "❌ We couldn't submit the suggestion right now. Try again later or contact staff.",
+            "not_yours": "❌ This session belongs to another member.",
+        },
+        "fr": {
+            "title": "💡 Suggestions GGMW9",
+            "desc": (
+                "Tu as une idée pour améliorer le serveur ? Envoie-la directement ici.\n\n"
+                "📌 Ta suggestion apparaîtra **dans ce salon Suggestions** sous le panneau principal.\n"
+                "👍👎 Les membres pourront voter, puis le staff pourra l'accepter ou la refuser."
+            ),
+            "create": "Faire une suggestion",
+            "saved": "✅ Ton panneau Suggestions est maintenant en français.",
+            "modal_title": "💡 Nouvelle suggestion",
+            "idea_label": "Décris ton idée",
+            "idea_placeholder": "Explique clairement ce qu'il faudrait ajouter ou modifier et pourquoi ce serait utile au serveur.",
+            "sent": "✅ La suggestion **#{id}** a été envoyée et publiée dans {channel}.",
+            "failed": "❌ Impossible d'envoyer la suggestion pour le moment. Réessaie plus tard ou contacte le staff.",
+            "not_yours": "❌ Cette session appartient à un autre membre.",
+        },
+    }
+    lang = lang if lang in data else "darija"
+    value = data[lang].get(key, data["darija"].get(key, key))
+    return value.format(**fmt) if fmt else value
+
+
+def _suggestions_home_embed(lang: str = "darija") -> discord.Embed:
+    lang = lang if lang in {"darija", "en", "fr"} else "darija"
+    embed = discord.Embed(
+        title=_suggestion_t(lang, "title"),
+        description=_suggestion_t(lang, "desc"),
+        color=discord.Color.blurple(),
+        timestamp=datetime.now(),
+    )
+
+    if lang == "en":
+        embed.add_field(
+            name="✅ Good suggestions",
+            value="• New bot feature\n• New channel/role\n• Event or competition\n• Server organization improvement\n• Any useful server idea",
+            inline=False,
+        )
+        embed.add_field(
+            name="🚫 Use Support instead for",
+            value="• Bugs/technical problems\n• Reports about a member\n• Staff applications",
+            inline=False,
+        )
+        embed.set_footer(text=f"{SERVER_NAME} | Suggestions • English")
+    elif lang == "fr":
+        embed.add_field(
+            name="✅ Bonnes suggestions",
+            value="• Nouvelle fonction du bot\n• Nouveau salon/rôle\n• Événement ou compétition\n• Amélioration de l'organisation\n• Toute idée utile au serveur",
+            inline=False,
+        )
+        embed.add_field(
+            name="🚫 Utilise plutôt le Support pour",
+            value="• Bugs/problèmes techniques\n• Signalement d'un membre\n• Candidatures Staff",
+            inline=False,
+        )
+        embed.set_footer(text=f"{SERVER_NAME} | Suggestions • Français")
+    else:
+        embed.add_field(
+            name="✅ شنو تقدر تقترح",
+            value="• ميزة جديدة فالبوت\n• قناة ولا رول جديد\n• فعالية ولا مسابقة\n• تحسين فتنظيم السيرفر\n• أي فكرة مفيدة للسيرفر",
+            inline=False,
+        )
+        embed.add_field(
+            name="🚫 شنو ديرو فمركز المساعدة بلاصة الاقتراحات",
+            value="• بوغ ولا مشكل تقني\n• بلاغ على عضو\n• طلب الانضمام للإدارة",
+            inline=False,
+        )
+        embed.set_footer(text=f"{SERVER_NAME} | نظام الاقتراحات • الدارجة")
+    return embed
+
+
+async def _create_suggestion_from_panel(
+    guild: discord.Guild,
+    author: discord.abc.User,
+    idea: str,
+) -> tuple:
+    """Single source of truth for Panel and /suggest fallback."""
+    if not SUGGESTIONS_CHANNEL_ID:
+        return False, None, None, "SUGGESTIONS_CHANNEL_ID missing"
+
+    channel = bot.get_channel(SUGGESTIONS_CHANNEL_ID)
+    if not channel:
+        return False, None, None, "Suggestions channel not found"
+
+    sug_id = int(suggestions_db.get("next_id", 1))
+    embed = discord.Embed(
+        title=f"💡 اقتراح #{sug_id}",
+        description=str(idea).strip()[:1000],
+        color=discord.Color.blurple(),
+        timestamp=datetime.now(),
+    )
+    embed.set_author(name=str(author), icon_url=author.display_avatar.url)
+    embed.set_footer(text=f"{SERVER_NAME} | اقتراح #{sug_id} | قيد المراجعة")
+
+    try:
+        msg = await channel.send(embed=embed, view=SuggestionReviewView())
+        await msg.add_reaction("👍")
+        await msg.add_reaction("👎")
+    except Exception as exc:
+        print(f"[SUGGESTIONS] submit failed: {type(exc).__name__}: {exc}")
+        return False, None, channel, str(exc)
+
+    suggestions_db["next_id"] = sug_id + 1
+    suggestions_db.setdefault("suggestions", {})[str(sug_id)] = {
+        "author_id": int(author.id),
+        "text": str(idea).strip(),
+        "status": "pending",
+        "message_id": int(msg.id),
+        "channel_id": int(channel.id),
+        "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "decided_by": None,
+        "decided_at": None,
+    }
+    save_suggestions()
+    return True, sug_id, channel, None
+
+
+class SuggestionModal(discord.ui.Modal):
+    def __init__(self, lang: str = "darija"):
+        self.lang = lang if lang in {"darija", "en", "fr"} else "darija"
+        super().__init__(title=_suggestion_t(self.lang, "modal_title"))
+        self.idea = discord.ui.TextInput(
+            label=_suggestion_t(self.lang, "idea_label"),
+            placeholder=_suggestion_t(self.lang, "idea_placeholder"),
+            style=discord.TextStyle.paragraph,
+            min_length=10,
+            max_length=1000,
+            required=True,
+        )
+        self.add_item(self.idea)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if not interaction.guild:
+            await interaction.response.send_message(
+                _suggestion_t(self.lang, "failed"),
+                ephemeral=True,
+            )
+            return
+
+        ok, sug_id, channel, _ = await _create_suggestion_from_panel(
+            interaction.guild,
+            interaction.user,
+            self.idea.value,
+        )
+        if not ok:
+            await interaction.response.send_message(
+                _suggestion_t(self.lang, "failed"),
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.send_message(
+            _suggestion_t(
+                self.lang,
+                "sent",
+                id=sug_id,
+                channel=channel.mention,
+            ),
+            ephemeral=True,
+        )
+
+
+class SuggestionsPrivateLanguageSelect(discord.ui.Select):
+    def __init__(self, user_id: int, lang: str = "darija"):
+        self.user_id = int(user_id)
+        self.lang = lang
+        super().__init__(
+            placeholder="🌐 اللغة / Language / Langue",
+            options=[
+                discord.SelectOption(label="Darija", value="darija", emoji="🇲🇦", default=lang == "darija"),
+                discord.SelectOption(label="English", value="en", emoji="🇬🇧", default=lang == "en"),
+                discord.SelectOption(label="Français", value="fr", emoji="🇫🇷", default=lang == "fr"),
+            ],
+            min_values=1,
+            max_values=1,
+            row=1,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message(
+                _suggestion_t(self.lang, "not_yours"),
+                ephemeral=True,
+            )
+            return
+
+        lang = set_panel_language(
+            interaction.guild.id,
+            interaction.user.id,
+            self.values[0],
+        )
+        await interaction.response.edit_message(
+            content=_suggestion_t(lang, "saved"),
+            embed=_suggestions_home_embed(lang),
+            view=SuggestionsPrivateView(self.user_id, lang),
+        )
+
+
+class SuggestionsPrivateView(discord.ui.View):
+    def __init__(self, user_id: int, lang: str = "darija"):
+        super().__init__(timeout=1800)
+        self.user_id = int(user_id)
+        self.lang = lang if lang in {"darija", "en", "fr"} else "darija"
+
+        create = discord.ui.Button(
+            label="💡 " + _suggestion_t(self.lang, "create"),
+            style=discord.ButtonStyle.success,
+            row=0,
+        )
+        create.callback = self.create_suggestion
+        self.add_item(create)
+        self.add_item(SuggestionsPrivateLanguageSelect(self.user_id, self.lang))
+
+    async def create_suggestion(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message(
+                _suggestion_t(self.lang, "not_yours"),
+                ephemeral=True,
+            )
+            return
+        await interaction.response.send_modal(SuggestionModal(self.lang))
+
+
+class SuggestionsPublicLanguageSelect(discord.ui.Select):
+    def __init__(self):
+        super().__init__(
+            placeholder="🌐 اللغة / Language / Langue",
+            options=[
+                discord.SelectOption(label="Darija", value="darija", emoji="🇲🇦"),
+                discord.SelectOption(label="English", value="en", emoji="🇬🇧"),
+                discord.SelectOption(label="Français", value="fr", emoji="🇫🇷"),
+            ],
+            min_values=1,
+            max_values=1,
+            custom_id="ggmw9:suggestions:language",
+            row=1,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        lang = set_panel_language(
+            interaction.guild.id,
+            interaction.user.id,
+            self.values[0],
+        )
+        # Always a fresh private session. Dismiss is safe; the public panel
+        # can open another session immediately afterwards.
+        await interaction.response.send_message(
+            content=_suggestion_t(lang, "saved"),
+            embed=_suggestions_home_embed(lang),
+            view=SuggestionsPrivateView(interaction.user.id, lang),
+            ephemeral=True,
+        )
+
+
+class SuggestionsPanelView(discord.ui.View):
+    """Persistent public Darija Suggestions panel."""
+
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="💡 دير اقتراح",
+        style=discord.ButtonStyle.success,
+        custom_id="ggmw9:suggestions:create",
+        row=0,
+    )
+    async def create_suggestion(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+        await interaction.response.send_modal(SuggestionModal("darija"))
+
+    def add_language_selector(self):
+        if not any(isinstance(x, SuggestionsPublicLanguageSelect) for x in self.children):
+            self.add_item(SuggestionsPublicLanguageSelect())
+        return self
+
+
+
 # ═══════════════════════════════════════════════════════
 # ║   🔎 /aicheck — تشيك مباشر على الموديل والرصيد ديال OpenRouter   ║
 # ═══════════════════════════════════════════════════════
@@ -5541,101 +5854,57 @@ async def aicheck_cmd(ctx):
 
 @bot.hybrid_command(name="suggest")
 async def suggest_cmd(ctx, *, idea: str):
-    """كيبعث اقتراح جديد للإدارة، والأعضاء يقدرو يصوتو عليه بـ 👍/👎"""
-    if not SUGGESTIONS_CHANNEL_ID:
-        await ctx.send("❌ نظام الاقتراحات ماعادش معطي (`SUGGESTIONS_CHANNEL_ID` فارغة)، بلغ الإدارة.", delete_after=8)
+    """Compatibility fallback. The main Suggestions flow is now the panel."""
+    if not ctx.guild:
         return
-    channel = bot.get_channel(SUGGESTIONS_CHANNEL_ID)
-    if not channel:
-        await ctx.send("❌ ما لقيتش channel الاقتراحات، بلغ الإدارة.", delete_after=8)
-        return
-
-    sug_id = suggestions_db.get("next_id", 1)
-
-    embed = discord.Embed(
-        title=f"💡 اقتراح #{sug_id}",
-        description=idea[:1000],
-        color=discord.Color.blurple(),
-        timestamp=datetime.now()
+    ok, sug_id, channel, error = await _create_suggestion_from_panel(
+        ctx.guild,
+        ctx.author,
+        idea,
     )
-    embed.set_author(name=str(ctx.author), icon_url=ctx.author.display_avatar.url)
-    embed.set_footer(text=f"{SERVER_NAME} | Suggestion #{sug_id} | Pending")
-
-    try:
-        msg = await channel.send(embed=embed, view=SuggestionReviewView())
-        await msg.add_reaction("👍")
-        await msg.add_reaction("👎")
-    except Exception as e:
-        await ctx.send(f"❌ خطأ فـ بعث الاقتراح: {e}", delete_after=8)
+    if not ok:
+        await ctx.send(
+            "❌ ما قدرناش نصيفطو الاقتراح دابا. جرب من بعد أو بلغ الإدارة.",
+            delete_after=8,
+        )
         return
-
-    suggestions_db["next_id"] = sug_id + 1
-    suggestions_db.setdefault("suggestions", {})[str(sug_id)] = {
-        "author_id": ctx.author.id,
-        "text": idea,
-        "status": "pending",
-        "message_id": msg.id,
-        "channel_id": msg.channel.id,
-        "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "decided_by": None,
-        "decided_at": None,
-    }
-    save_suggestions()
 
     if channel.id != ctx.channel.id:
-        await ctx.send(f"✅ تم بعث الاقتراح ديالك (#{sug_id}) فـ {channel.mention}!", delete_after=8)
+        await ctx.send(
+            f"✅ تم بعث الاقتراح ديالك (#{sug_id}) فـ {channel.mention}!",
+            delete_after=8,
+        )
     else:
-        await ctx.send(f"✅ تم بعث الاقتراح ديالك (#{sug_id})!", delete_after=5)
+        await ctx.send(
+            f"✅ تم بعث الاقتراح ديالك (#{sug_id})!",
+            delete_after=5,
+        )
 
 
 async def setup_suggestions_info(guild: discord.Guild):
-    """Refresh the Suggestions info message in-place; create it only if missing."""
+    """Keep ONE public Darija Suggestions panel; language sessions are private."""
     if not SUGGESTIONS_CHANNEL_ID:
         return False
     channel = bot.get_channel(SUGGESTIONS_CHANNEL_ID)
     if not channel:
         return False
 
-    embed = discord.Embed(
-        title="💡 مرحبا بيك فـ channel الاقتراحات",
-        description=(
-            "هادي هي البلاصة فين تقدر تقترح أي فكرة باش نزيدو نطورو السيرفر سوا. "
-            "كل اقتراح كيبان هنا وكيقدر كل واحد يصوت عليه بـ 👍/👎، والإدارة كتراجعو وكتقرر."
-        ),
-        color=discord.Color.blurple(),
-        timestamp=datetime.now()
-    )
-    embed.add_field(
-        name="✅ شنو تقدر تقترح",
-        value=(
-            "• شي feature/أمر جديد تحب تزاد للبوت\n"
-            "• شي channel/role جديد يفيد السيرفر\n"
-            "• شي فعالية، مسابقة، ولا event تحب تشوفو\n"
-            "• تعديل على القوانين ولا التنظيم ديال السيرفر\n"
-            "• أي فكرة أخرى تحس بلي غادي تحسن السيرفر"
-        ), inline=False
-    )
-    embed.add_field(
-        name="🚫 شنو ماشي مكانو هنا",
-        value=(
-            "• مشكل تقني ولا بوغ فالبوت → دير Ticket بدل الاقتراح\n"
-            "• شكاية على عضو معين ولا تبليغ → استعمل Support Center\n"
-            "• طلب انضمام للإدارة → عندو channel خاص بيه (Applications)"
-        ), inline=False
-    )
-    embed.add_field(
-        name="📝 كيفاش تقترح؟",
-        value=(
-            "استعمل نظام الاقتراحات ديال السيرفر وكتب الفكرة بالتفصيل.\n\n"
-            "كون واضح ومباشر باش الإدارة تفهم الفكرة بسرعة، والأعضاء يقدرو يصوتو عليها."
-        ), inline=False
-    )
-    embed.set_footer(text=f"{SERVER_NAME} | نظام الاقتراحات")
+    embed = _suggestions_home_embed("darija")
+    view = SuggestionsPanelView().add_language_selector()
 
     matches = []
     try:
-        async for message in channel.history(limit=30):
-            if message.author == bot.user and message.embeds and "الاقتراحات" in (message.embeds[0].title or ""):
+        async for message in channel.history(limit=40):
+            if (
+                message.author == bot.user
+                and message.embeds
+                and (
+                    "الاقتراحات" in (message.embeds[0].title or "")
+                    or "اقتراحات GGMW9" in (message.embeds[0].title or "")
+                    or "GGMW9 Suggestions" in (message.embeds[0].title or "")
+                    or "Suggestions GGMW9" in (message.embeds[0].title or "")
+                )
+            ):
                 matches.append(message)
     except discord.Forbidden:
         return False
@@ -5643,16 +5912,20 @@ async def setup_suggestions_info(guild: discord.Guild):
     try:
         if matches:
             keep = matches[0]
-            await keep.edit(embed=embed)
+            await keep.edit(content=None, embed=embed, view=view)
             for extra in matches[1:]:
-                try:
-                    await extra.delete()
-                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                    pass
+                # Only clean duplicate panel/info messages, never suggestion posts.
+                title = extra.embeds[0].title if extra.embeds else ""
+                if title and "اقتراح #" not in title:
+                    try:
+                        await extra.delete()
+                    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                        pass
         else:
-            await channel.send(embed=embed)
+            await channel.send(embed=embed, view=view)
         return True
-    except (discord.Forbidden, discord.HTTPException):
+    except (discord.Forbidden, discord.HTTPException) as exc:
+        print(f"[SUGGESTIONS] panel update failed: {exc}")
         return False
 
 
@@ -13235,6 +13508,7 @@ async def on_ready():
     bot.add_view(BlacklistLanguageView())  # Blacklist public Darija + personal translation selector
     bot.add_view(ApplicationReviewView())  # باش أزرار قبول/رفض الطلبات يبقاو خدامين
     bot.add_view(SuggestionReviewView())   # باش أزرار قبول/رفض الاقتراحات يبقاو خدامين
+    bot.add_view(SuggestionsPanelView().add_language_selector())  # Public Suggestions panel
     bot.add_view(RoomMuteToggleView())     # باش زر كتم/فك كتم الروم يبقى خدام حتى بعد ريستارت البوت
     bot.add_view(TempVoiceControlView())    # Panel: Private/Allow/Deny/Block/Kick/VoiceMute/ChatMute
 
