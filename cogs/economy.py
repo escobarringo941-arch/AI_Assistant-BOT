@@ -349,6 +349,10 @@ class Economy(commands.Cog):
             "total_interest_paid": 0,
             "bank_transfer_daily": {},
             "total_transfer_fees": 0,
+            # role_id -> {"original_color": int, "fallback_role_id": int}
+            # Used so Admin/Moderator can keep their sidebar group while
+            # a lower personal color role controls only the visible name color.
+            "staff_color_passthrough": {},
         }
         for key, value in defaults.items():
             if key not in root:
@@ -2068,6 +2072,199 @@ class Economy(commands.Cog):
             "المالك","مالك","الإدارة","ادارة","أدمن","ادمن","مود","موديراتور","مشرف","المشرفين",
         }
 
+    def _staff_color_state(self, guild_id: int) -> dict:
+        return self._system(guild_id).setdefault("staff_color_passthrough", {})
+
+    def _active_personal_color_role_id(self, guild_id: int, user_id: int) -> int:
+        purchase = self._find_active_purchase(
+            guild_id,
+            user_id,
+            effect_key="personal_color",
+            item_ids={"color_basic", "color_month", "permanent_color"},
+        )
+        return int(purchase.get("role_id") or 0) if purchase else 0
+
+    async def _ensure_staff_color_passthrough(self, guild: discord.Guild) -> list:
+        """Preserve staff grouping/permissions while allowing personal colors.
+
+        Staff/Admin/Moderator roles stay ABOVE Shop colors and keep their hoist.
+        If a protected staff role has a real color, we:
+          1) remember that color,
+          2) create a no-permission, non-hoisted fallback role with that color,
+          3) make the staff role itself colorless,
+          4) assign fallback to staff members.
+
+        A purchased Personal Color sits above the fallback, so it wins visually.
+        Without a purchase, the fallback preserves the staff's old color.
+        """
+        notes = []
+        me = guild.me or (guild.get_member(self.bot.user.id) if self.bot.user else None)
+        if not me or not me.guild_permissions.manage_roles:
+            return ["⚠️ البوت خاصو Manage Roles باش يدير Staff Color Passthrough."]
+
+        state = self._staff_color_state(guild.id)
+        changed_state = False
+
+        protected = [
+            r for r in guild.roles
+            if r.id != me.top_role.id
+            and not r.managed
+            and self._is_protected_staff_role(r)
+            and r < me.top_role
+        ]
+        protected_ids = {r.id for r in protected}
+
+        for role in protected:
+            key = str(role.id)
+            entry = state.get(key) or {}
+            original_color = int(entry.get("original_color") or 0)
+            fallback_role = guild.get_role(int(entry.get("fallback_role_id") or 0)) if entry.get("fallback_role_id") else None
+
+            # First migration: capture the current staff color before neutralizing it.
+            if not entry:
+                original_color = int(role.colour.value or 0)
+                entry = {
+                    "original_color": original_color,
+                    "fallback_role_id": None,
+                    "staff_role_name": role.name,
+                }
+                state[key] = entry
+                changed_state = True
+
+            # If an admin manually changes the staff role color later, treat it as
+            # the new base/fallback color and neutralize the staff role again.
+            current_staff_color = int(role.colour.value or 0)
+            if current_staff_color != 0:
+                original_color = current_staff_color
+                entry["original_color"] = original_color
+                changed_state = True
+
+            # No fallback is necessary for a role that has always been colorless.
+            # It still remains a valid hoisted staff grouping role.
+            if original_color == 0 and fallback_role is None:
+                if current_staff_color != 0:
+                    try:
+                        await role.edit(
+                            colour=discord.Colour.default(),
+                            reason="GGMW9 Shop — staff color passthrough",
+                        )
+                    except Exception as exc:
+                        notes.append(f"⚠️ {role.name}: {exc}")
+                continue
+
+            # Create/recreate the fallback role.
+            if fallback_role is None:
+                try:
+                    fallback_role = await guild.create_role(
+                        name=f"🎨 Staff Base • {role.name}"[:100],
+                        colour=discord.Colour(original_color),
+                        permissions=discord.Permissions.none(),
+                        hoist=False,
+                        mentionable=False,
+                        reason="GGMW9 Shop — preserve staff base color",
+                    )
+                    entry["fallback_role_id"] = fallback_role.id
+                    changed_state = True
+                except (discord.Forbidden, discord.HTTPException) as exc:
+                    notes.append(f"⚠️ ماقدرتش نصاوب fallback ديال {role.name}: {exc}")
+                    continue
+            else:
+                # Keep fallback visual-only and synced to the remembered base color.
+                try:
+                    if (
+                        int(fallback_role.colour.value or 0) != original_color
+                        or fallback_role.hoist
+                        or fallback_role.permissions.value != 0
+                    ):
+                        await fallback_role.edit(
+                            colour=discord.Colour(original_color),
+                            permissions=discord.Permissions.none(),
+                            hoist=False,
+                            mentionable=False,
+                            reason="GGMW9 Shop — sync staff base color",
+                        )
+                except (discord.Forbidden, discord.HTTPException) as exc:
+                    notes.append(f"⚠️ ماقدرتش نحدّث fallback ديال {role.name}: {exc}")
+
+            # Staff role remains the real authority/grouping role, but with no color.
+            if int(role.colour.value or 0) != 0:
+                try:
+                    await role.edit(
+                        colour=discord.Colour.default(),
+                        reason="GGMW9 Shop — personal colors without changing staff group",
+                    )
+                except (discord.Forbidden, discord.HTTPException) as exc:
+                    notes.append(f"⚠️ ماقدرتش نخلي {role.name} بلا لون: {exc}")
+                    continue
+
+            # Sync fallback membership to the actual staff-role membership.
+            # Purchased personal color is higher than fallback, so it overrides.
+            if fallback_role:
+                for member in role.members:
+                    if fallback_role not in member.roles:
+                        try:
+                            await member.add_roles(
+                                fallback_role,
+                                reason="GGMW9 Shop — staff base color fallback",
+                            )
+                        except (discord.Forbidden, discord.HTTPException):
+                            pass
+
+                # Remove fallback from members who no longer have that staff role.
+                for member in list(fallback_role.members):
+                    if role not in member.roles:
+                        try:
+                            await member.remove_roles(
+                                fallback_role,
+                                reason="GGMW9 Shop — staff role removed",
+                            )
+                        except (discord.Forbidden, discord.HTTPException):
+                            pass
+
+        # Clean stale passthrough entries if a protected staff role was deleted.
+        for key in list(state.keys()):
+            try:
+                rid = int(key)
+            except Exception:
+                continue
+            if rid in protected_ids:
+                continue
+            entry = state.get(key) or {}
+            fallback = guild.get_role(int(entry.get("fallback_role_id") or 0)) if entry.get("fallback_role_id") else None
+            if fallback:
+                try:
+                    await fallback.delete(reason="GGMW9 Shop — stale staff color fallback")
+                except (discord.Forbidden, discord.HTTPException):
+                    pass
+            state.pop(key, None)
+            changed_state = True
+
+        if changed_state:
+            self.system_db.save()
+
+        return notes
+
+    async def _sync_staff_fallback_for_member(self, member: discord.Member):
+        """Lightweight role-change repair for a single member."""
+        guild = member.guild
+        state = self._staff_color_state(guild.id)
+        for role in guild.roles:
+            if str(role.id) not in state:
+                continue
+            entry = state[str(role.id)]
+            fallback = guild.get_role(int(entry.get("fallback_role_id") or 0)) if entry.get("fallback_role_id") else None
+            if not fallback:
+                continue
+            has_staff = role in member.roles
+            has_fallback = fallback in member.roles
+            try:
+                if has_staff and not has_fallback:
+                    await member.add_roles(fallback, reason="GGMW9 Shop — staff fallback sync")
+                elif not has_staff and has_fallback:
+                    await member.remove_roles(fallback, reason="GGMW9 Shop — staff fallback sync")
+            except (discord.Forbidden, discord.HTTPException):
+                pass
+
     def _shop_role_records(self, guild: discord.Guild):
         item_types = {i.get("id"): i.get("type") for i in getattr(cfg, "SHOP_ITEMS", [])}
         records = {}
@@ -2083,12 +2280,19 @@ class Economy(commands.Cog):
                 if effect_key == "personal_color" or item_type in {"role_color","role_color_perm"}:
                     priority = 0
                 elif item_type == "custom_role" or effect_key.startswith("custom_role:"):
-                    priority = 1
-                elif item_type in {"legend_tag","title_role"} or effect_key.startswith("shared_role:"):
                     priority = 2
-                else:
+                elif item_type in {"legend_tag","title_role"} or effect_key.startswith("shared_role:"):
                     priority = 3
+                else:
+                    priority = 4
                 records[rid] = min(priority, records.get(rid, priority))
+        # Staff base-color fallbacks live BELOW personal colors but ABOVE
+        # custom/prestige roles. They have no permissions and hoist=False.
+        for entry in self._staff_color_state(guild.id).values():
+            rid = int(entry.get("fallback_role_id") or 0)
+            if rid:
+                records[rid] = min(1, records.get(rid, 1))
+
         return records
 
     async def sync_shop_role_hierarchy(
@@ -2145,7 +2349,7 @@ class Economy(commands.Cog):
                 "طلع رول البوت وRoles ديال Admin/Moderator لفوق."
             )
 
-        # Highest inside Shop block: Personal Color > Custom/Decoration > Prestige.
+        # Highest inside Shop block: Personal Color > Staff Base Fallback > Custom/Decoration > Prestige.
         ordered = sorted(shop_roles, key=lambda x: (x[0], x[1].id))
         if len(ordered) > target_top:
             return False, "عدد Shop Roles كبير بزاف مقارنة بالبلاصة المتوفرة."
@@ -2263,7 +2467,8 @@ class Economy(commands.Cog):
         return notes
 
     async def repair_guild_shop_roles(self, guild: discord.Guild):
-        """Repair active personal color roles after restart."""
+        """Repair Shop colors + staff passthrough + purchased-role hierarchy."""
+        await self._ensure_staff_color_passthrough(guild)
         guild_data = self.db.guild(guild.id)
         for uid, acc in list(guild_data.items()):
             purchases = acc.get("purchases", []) or []
@@ -2283,6 +2488,19 @@ class Economy(commands.Cog):
             await self.repair_member_shop_roles(guild, member)
 
         await self.sync_shop_role_hierarchy(guild)
+
+    @commands.Cog.listener()
+    async def on_member_update(self, before: discord.Member, after: discord.Member):
+        if before.guild.id != after.guild.id:
+            return
+        before_ids = {r.id for r in before.roles}
+        after_ids = {r.id for r in after.roles}
+        if before_ids == after_ids:
+            return
+
+        watched = {int(k) for k in self._staff_color_state(after.guild.id).keys() if str(k).isdigit()}
+        if watched.intersection(before_ids.symmetric_difference(after_ids)):
+            await self._sync_staff_fallback_for_member(after)
 
     # ════════════════════════════════════════════════
     # API داخلي
@@ -3011,6 +3229,15 @@ def build_my_purchases_embed(cog:"Economy", guild:discord.Guild, user:discord.Me
         except Exception:
             pass
 
+    credits = _shoutout_credits(cog,guild.id,user.id)
+    if credits > 0:
+        if lang=="en":
+            lines.append(f"• **📣 Public Shoutout** — **{credits}** ready to publish")
+        elif lang=="fr":
+            lines.append(f"• **📣 Public Shoutout** — **{credits}** prêt(s) à publier")
+        else:
+            lines.append(f"• **📣 نشر عام** — عندك **{credits}** جاهزين للنشر")
+
     # Permanent assets
     assets = cog.get_owned_assets(guild.id, user.id)
     if assets:
@@ -3030,7 +3257,7 @@ def build_my_purchases_embed(cog:"Economy", guild:discord.Guild, user:discord.Me
     else:
         title=f"🧾 مشتريات {user.display_name}"
         desc="\n\n".join(lines) if lines else "📭 ماعندك حتى امتياز خدام من المتجر دابا."
-        footer="كل شراء خاصو يكون عندو تأثير حقيقي • البوت كيفحص ويصلح رولات المتجر أوتوماتيكياً"
+        footer="كل شراء عندو تأثير حقيقي • اللون ما كيبدلش Group ديال العضو فالليست • Staff كيبقا Staff"
 
     embed=discord.Embed(title=title,description=desc,color=discord.Color.teal(),timestamp=datetime.now())
     effective = cog._effective_colored_role(user)
@@ -3051,6 +3278,7 @@ class ShopPurchasesView(discord.ui.View):
         super().__init__(timeout=900)
         self.cog,self.user,self.lang,self.session_key=cog,user,lang,session_key
         self.add_item(ShopBackButton(cog,user,lang,session_key))
+        self.add_item(RedeemShoutoutButton(cog,user,lang,session_key))
         self.add_item(ShopSessionLanguageSelect(cog,user,lang,session_key,row=2))
 
 
@@ -3075,6 +3303,343 @@ class MyPurchasesButton(discord.ui.Button):
             content=None,
             embed=embed,
             view=ShopPurchasesView(self.cog,interaction.user,self.lang,self.session_key),
+        )
+
+
+SHOUTOUT_TYPES = {
+    "promo": {
+        "emoji": "🛍️",
+        "color": 0xE91E63,
+        "darija": "إشهار / مشروع",
+        "en": "Promotion / Project",
+        "fr": "Promotion / Projet",
+        "title_d": "🛍️ إشهار من مجتمع GGMW9",
+        "title_e": "🛍️ GGMW9 Community Promotion",
+        "title_f": "🛍️ Promotion de la communauté GGMW9",
+    },
+    "announcement": {
+        "emoji": "📢",
+        "color": 0x3498DB,
+        "darija": "إعلان عام",
+        "en": "Public Announcement",
+        "fr": "Annonce publique",
+        "title_d": "📢 إعلان للمجتمع",
+        "title_e": "📢 Community Announcement",
+        "title_f": "📢 Annonce à la communauté",
+    },
+    "achievement": {
+        "emoji": "🎉",
+        "color": 0xF1C40F,
+        "darija": "إنجاز / مناسبة",
+        "en": "Achievement / Celebration",
+        "fr": "Réussite / Célébration",
+        "title_d": "🎉 إنجاز أو مناسبة",
+        "title_e": "🎉 Achievement / Celebration",
+        "title_f": "🎉 Réussite / Célébration",
+    },
+    "event": {
+        "emoji": "🎮",
+        "color": 0x9B59B6,
+        "darija": "فعالية / تجمع",
+        "en": "Event / Meetup",
+        "fr": "Événement / Rencontre",
+        "title_d": "🎮 فعالية من المجتمع",
+        "title_e": "🎮 Community Event",
+        "title_f": "🎮 Événement communautaire",
+    },
+    "looking": {
+        "emoji": "🔎",
+        "color": 0x2ECC71,
+        "darija": "طلب / كنقلب على...",
+        "en": "Looking For...",
+        "fr": "Je recherche...",
+        "title_d": "🔎 كنقلب على...",
+        "title_e": "🔎 Looking For...",
+        "title_f": "🔎 Je recherche...",
+    },
+    "community": {
+        "emoji": "💬",
+        "color": 0x5865F2,
+        "darija": "رسالة للمجتمع",
+        "en": "Community Message",
+        "fr": "Message à la communauté",
+        "title_d": "💬 رسالة للمجتمع",
+        "title_e": "💬 Community Message",
+        "title_f": "💬 Message à la communauté",
+    },
+}
+
+
+def _shoutout_type_name(kind: str, lang: str) -> str:
+    meta = SHOUTOUT_TYPES.get(kind, SHOUTOUT_TYPES["community"])
+    return meta.get(lang, meta["darija"])
+
+
+def _shoutout_credits(cog: "Economy", guild_id: int, user_id: int) -> int:
+    return max(0, int(cog._acc(guild_id, user_id).get("shoutout_credits", 0) or 0))
+
+
+def build_shoutout_studio_embed(cog:"Economy", guild:discord.Guild, user:discord.Member, lang="darija") -> discord.Embed:
+    lang = lang if lang in {"darija","en","fr"} else "darija"
+    credits = _shoutout_credits(cog, guild.id, user.id)
+    channel_id = int(getattr(cfg, "SHOP_SHOUTOUT_CHANNEL_ID", 0) or 0)
+    channel = guild.get_channel(channel_id) if channel_id else None
+    ch = channel.mention if channel else "⚠️ غير مضبوطة"
+
+    if lang == "en":
+        title = "📣 Public Shoutout Studio"
+        desc = (
+            f"You have **{credits}** Public Shoutout credit(s).\n\n"
+            "Choose what you want to publish. After that, a form opens for the title, message and optional link.\n"
+            "A credit is consumed **only after the post is successfully published**."
+        )
+        footer = "No @everyone/@here pings • one credit = one public post"
+        field = "Publishing channel"
+    elif lang == "fr":
+        title = "📣 Studio Public Shoutout"
+        desc = (
+            f"Tu as **{credits}** crédit(s) Public Shoutout.\n\n"
+            "Choisis le type de publication, puis remplis le titre, le message et le lien optionnel.\n"
+            "Le crédit est utilisé **uniquement après une publication réussie**."
+        )
+        footer = "Aucun ping @everyone/@here • un crédit = une publication"
+        field = "Salon de publication"
+    else:
+        title = "📣 ستوديو النشر العام"
+        desc = (
+            f"عندك **{credits}** Shoutout جاهزة للنشر.\n\n"
+            "اختار شنو بغيتي توصل للناس، ومن بعد كتتحل ليك استمارة تكتب فيها العنوان، الرسالة والرابط إلا كان.\n"
+            "الرصيد كيتنقص **غير من بعد ما المنشور يتبعث بنجاح**."
+        )
+        footer = "بلا @everyone/@here • كل Shoutout = منشور عام واحد"
+        field = "قناة النشر"
+
+    embed = discord.Embed(title=title, description=desc, color=discord.Color.gold(), timestamp=datetime.now())
+    embed.add_field(name=f"📍 {field}", value=ch, inline=False)
+    embed.set_thumbnail(url=user.display_avatar.url)
+    embed.set_footer(text=footer)
+    return embed
+
+
+class ShoutoutTypeSelect(discord.ui.Select):
+    def __init__(self,cog,user,lang="darija",session_key="shop"):
+        self.cog,self.user,self.lang,self.session_key=cog,user,lang,session_key
+        options=[]
+        for key,meta in SHOUTOUT_TYPES.items():
+            options.append(discord.SelectOption(
+                label=_shoutout_type_name(key,lang)[:100],
+                value=key,
+                emoji=meta["emoji"],
+            ))
+        placeholder = (
+            "📣 شنو النوع ديال المنشور؟"
+            if lang=="darija"
+            else "📣 What kind of post?"
+            if lang=="en"
+            else "📣 Quel type de publication ?"
+        )
+        super().__init__(placeholder=placeholder,options=options,min_values=1,max_values=1,row=0)
+
+    async def callback(self,interaction):
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message(_eco_t(self.lang,"not_yours"),ephemeral=True)
+            return
+        credits=_shoutout_credits(self.cog,interaction.guild.id,interaction.user.id)
+        if credits <= 0:
+            msg = (
+                "❌ ماعندك حتى Shoutout جاهزة. شري وحدة من المتجر أولاً."
+                if self.lang=="darija"
+                else "❌ You have no Shoutout credit. Buy one from the Shop first."
+                if self.lang=="en"
+                else "❌ Tu n’as aucun crédit Shoutout. Achète-en un dans la boutique."
+            )
+            await interaction.response.edit_message(
+                content=msg,
+                embed=build_shop_home_embed(self.cog,interaction.guild,interaction.user,self.lang),
+                view=ShopView(self.cog,interaction.user,self.lang,self.session_key),
+            )
+            return
+        await interaction.response.send_modal(
+            ShoutoutComposeModal(self.cog,self.values[0],self.lang,self.session_key)
+        )
+
+
+class ShoutoutStudioView(discord.ui.View):
+    def __init__(self,cog,user,lang="darija",session_key="shop"):
+        super().__init__(timeout=900)
+        self.cog,self.user,self.lang,self.session_key=cog,user,lang,session_key
+        self.add_item(ShoutoutTypeSelect(cog,user,lang,session_key))
+        self.add_item(ShopBackButton(cog,user,lang,session_key))
+        self.add_item(ShopSessionLanguageSelect(cog,user,lang,session_key,row=2))
+
+
+class ShoutoutComposeModal(discord.ui.Modal):
+    def __init__(self,cog,kind,lang="darija",session_key="shop"):
+        self.cog,self.kind,self.lang,self.session_key=cog,kind,lang,session_key
+        meta=SHOUTOUT_TYPES.get(kind,SHOUTOUT_TYPES["community"])
+        title = (
+            f"{meta['emoji']} {_shoutout_type_name(kind,lang)}"
+        )[:45]
+        super().__init__(title=title)
+
+        self.headline=discord.ui.TextInput(
+            label=(
+                "العنوان (اختياري)" if lang=="darija"
+                else "Headline (optional)" if lang=="en"
+                else "Titre (optionnel)"
+            ),
+            placeholder=(
+                "مثال: سيرفر جديد / فعالية السبت / إنجاز مهم"
+                if lang=="darija"
+                else "Example: New project / Saturday event / Big achievement"
+                if lang=="en"
+                else "Ex. : Nouveau projet / événement samedi / belle réussite"
+            ),
+            required=False,max_length=80,
+        )
+        self.message=discord.ui.TextInput(
+            label=(
+                "شنو بغيتي تقول للناس؟" if lang=="darija"
+                else "What do you want to tell everyone?" if lang=="en"
+                else "Que veux-tu dire à la communauté ?"
+            ),
+            placeholder=(
+                "كتب الرسالة بوضوح..."
+                if lang=="darija"
+                else "Write your message clearly..."
+                if lang=="en"
+                else "Écris ton message clairement..."
+            ),
+            style=discord.TextStyle.paragraph,
+            min_length=10,max_length=900,required=True,
+        )
+        self.link=discord.ui.TextInput(
+            label=(
+                "رابط (اختياري)" if lang=="darija"
+                else "Link (optional)" if lang=="en"
+                else "Lien (optionnel)"
+            ),
+            placeholder="https://...",
+            required=False,max_length=300,
+        )
+        self.add_item(self.headline)
+        self.add_item(self.message)
+        self.add_item(self.link)
+
+    async def on_submit(self,interaction):
+        if not interaction.guild:
+            await interaction.response.send_message("❌ Server only.",ephemeral=True)
+            return
+
+        credits=_shoutout_credits(self.cog,interaction.guild.id,interaction.user.id)
+        if credits <= 0:
+            await interaction.response.send_message(
+                "❌ ماعندك حتى Shoutout جاهزة." if self.lang=="darija" else "❌ No Shoutout credit available.",
+                ephemeral=True,
+            )
+            return
+
+        channel_id=int(getattr(cfg,"SHOP_SHOUTOUT_CHANNEL_ID",0) or 0)
+        channel=interaction.guild.get_channel(channel_id) if channel_id else None
+        if not channel:
+            await interaction.response.send_message(
+                "❌ قناة النشر العام ماشي مضبوطة. الرصيد ديالك بقى محفوظ."
+                if self.lang=="darija"
+                else "❌ The Shoutout channel is not configured. Your credit was kept.",
+                ephemeral=True,
+            )
+            return
+
+        meta=SHOUTOUT_TYPES.get(self.kind,SHOUTOUT_TYPES["community"])
+        clean_head=discord.utils.escape_mentions(str(self.headline.value).strip())
+        clean_msg=discord.utils.escape_mentions(str(self.message.value).strip())
+        clean_link=discord.utils.escape_mentions(str(self.link.value).strip())
+
+        default_title = (
+            meta["title_d"] if self.lang=="darija"
+            else meta["title_e"] if self.lang=="en"
+            else meta["title_f"]
+        )
+        embed=discord.Embed(
+            title=(clean_head or default_title)[:256],
+            description=clean_msg[:4096],
+            color=int(meta["color"]),
+            timestamp=datetime.now(),
+        )
+        embed.set_author(
+            name=f"{interaction.user.display_name} • {_shoutout_type_name(self.kind,self.lang)}",
+            icon_url=interaction.user.display_avatar.url,
+        )
+        if clean_link:
+            embed.add_field(
+                name="🔗 الرابط" if self.lang=="darija" else "🔗 Link" if self.lang=="en" else "🔗 Lien",
+                value=clean_link[:1024],
+                inline=False,
+            )
+        embed.set_footer(text="GGMW9 • Public Shoutout • منشور مدفوع من المتجر")
+
+        try:
+            posted=await channel.send(
+                embed=embed,
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+        except (discord.Forbidden,discord.HTTPException) as exc:
+            print(f"[SHOUTOUT] publish failed: {type(exc).__name__}: {exc}")
+            await interaction.response.send_message(
+                "❌ النشر فشل، وما تحيد حتى Shoutout من رصيدك."
+                if self.lang=="darija"
+                else "❌ Publishing failed. Your Shoutout credit was not consumed.",
+                ephemeral=True,
+            )
+            return
+
+        acc=self.cog._acc(interaction.guild.id,interaction.user.id)
+        acc["shoutout_credits"]=max(0,int(acc.get("shoutout_credits",0) or 0)-1)
+        history=acc.setdefault("shoutout_history",[])
+        history.append({
+            "kind":self.kind,
+            "message_id":posted.id,
+            "channel_id":channel.id,
+            "created_at":datetime.now(timezone.utc).isoformat(),
+        })
+        del history[:-20]
+        self.cog.db.save()
+
+        remaining=int(acc.get("shoutout_credits",0) or 0)
+        if self.lang=="en":
+            msg=f"✅ Published in {channel.mention}. Remaining Shoutouts: **{remaining}**."
+        elif self.lang=="fr":
+            msg=f"✅ Publié dans {channel.mention}. Shoutouts restants : **{remaining}**."
+        else:
+            msg=f"✅ المنشور تبعث فـ {channel.mention}. بقاو عندك **{remaining}** Shoutout."
+
+        await interaction.response.send_message(
+            msg,
+            ephemeral=True,
+        )
+
+
+class RedeemShoutoutButton(discord.ui.Button):
+    def __init__(self,cog,user,lang="darija",session_key="shop"):
+        credits=_shoutout_credits(cog,user.guild.id,user.id) if isinstance(user,discord.Member) else 0
+        label=(
+            f"📣 استعمل Shoutout ({credits})"
+            if lang=="darija"
+            else f"📣 Use Shoutout ({credits})"
+            if lang=="en"
+            else f"📣 Utiliser Shoutout ({credits})"
+        )
+        super().__init__(label=label[:80],style=discord.ButtonStyle.success,row=1,disabled=credits<=0)
+        self.cog,self.user,self.lang,self.session_key=cog,user,lang,session_key
+
+    async def callback(self,interaction):
+        if interaction.user.id!=self.user.id:
+            await interaction.response.send_message(_eco_t(self.lang,"not_yours"),ephemeral=True)
+            return
+        await interaction.response.edit_message(
+            content=None,
+            embed=build_shoutout_studio_embed(self.cog,interaction.guild,interaction.user,self.lang),
+            view=ShoutoutStudioView(self.cog,interaction.user,self.lang,self.session_key),
         )
 
 
@@ -3115,7 +3680,21 @@ class ShopItemSelect(discord.ui.Select):
             await interaction.response.edit_message(content=f"🎨 {item['name']} — {cfg.fmt_money(price)}",embed=None,view=ColorPickView(self.cog,self.user,priced,self.category_id,self.lang,self.session_key)); return
         if item["type"]=="custom_role":
             await interaction.response.send_modal(CustomRoleModal(self.cog,priced,self.category_id,self.lang,self.session_key)); return
-        await interaction.response.defer(ephemeral=True); ok,msg,_=await execute_purchase(self.cog,interaction.guild,interaction.user,priced); prefix="✅ " if ok else "❌ "; await interaction.edit_original_response(content=prefix+msg,embed=build_shop_category_embed(self.cog,interaction.guild,interaction.user,self.category_id,self.lang),view=ShopItemsView(self.cog,self.user,self.category_id,self.lang,self.session_key))
+        await interaction.response.defer(ephemeral=True)
+        ok,msg,_=await execute_purchase(self.cog,interaction.guild,interaction.user,priced)
+        if ok and item.get("type")=="shoutout":
+            await interaction.edit_original_response(
+                content="✅ "+msg,
+                embed=build_shoutout_studio_embed(self.cog,interaction.guild,interaction.user,self.lang),
+                view=ShoutoutStudioView(self.cog,interaction.user,self.lang,self.session_key),
+            )
+            return
+        prefix="✅ " if ok else "❌ "
+        await interaction.edit_original_response(
+            content=prefix+msg,
+            embed=build_shop_category_embed(self.cog,interaction.guild,interaction.user,self.category_id,self.lang),
+            view=ShopItemsView(self.cog,self.user,self.category_id,self.lang,self.session_key),
+        )
 
 
 def _palette_name(palette: dict, lang: str) -> str:
@@ -3428,6 +4007,11 @@ async def apply_purchase(cog: "Economy", guild: discord.Guild, user: discord.Mem
                     reason=f"GGMW9 Shop color change — {user}",
                 )
 
+            # If buyer is staff, neutralize only the staff role COLOR while
+            # preserving its position/permissions/hoist. A fallback role keeps
+            # the old staff color for staff members without a purchased color.
+            await cog._ensure_staff_color_passthrough(guild)
+
             ok, reason = await cog._position_cosmetic_role(guild, role)
             if not ok:
                 raise RuntimeError(reason)
@@ -3511,7 +4095,7 @@ async def apply_purchase(cog: "Economy", guild: discord.Guild, user: discord.Mem
                 mentionable=False,
                 reason=f"رول خاص من المتجر — {user}",
             )
-            ok, reason = await cog._position_shop_role(guild, role, priority=1)
+            ok, reason = await cog._position_shop_role(guild, role, priority=3)
             if not ok:
                 try:
                     await role.delete(reason="Rollback custom role hierarchy failure")
@@ -3544,7 +4128,7 @@ async def apply_purchase(cog: "Economy", guild: discord.Guild, user: discord.Mem
             role = discord.utils.get(guild.roles, name="👑 LEGEND")
             if not role:
                 role = await guild.create_role(name="👑 LEGEND", colour=discord.Colour.gold(), mentionable=False, reason="Legend Tag shop")
-            ok, reason = await cog._position_shop_role(guild, role, priority=2)
+            ok, reason = await cog._position_shop_role(guild, role, priority=3)
             if not ok:
                 return False, reason
             await user.add_roles(role, reason="Legend Tag purchase")
@@ -3640,21 +4224,21 @@ async def apply_purchase(cog: "Economy", guild: discord.Guild, user: discord.Mem
         return True, f"{item.get('emoji','🏠')} **{item['name']}** دخلات للممتلكات ديالك. القيمة المسجلة {cfg.fmt_money(paid)} • إعادة البيع {cfg.fmt_money(resale)}."
 
     if item_type == "shoutout":
-        channel_id = getattr(cfg, "SHOP_SHOUTOUT_CHANNEL_ID", 0) or getattr(cfg, "GAMES_PANEL_CHANNEL_ID", 0)
+        channel_id = int(getattr(cfg, "SHOP_SHOUTOUT_CHANNEL_ID", 0) or 0)
         channel = guild.get_channel(channel_id) if channel_id else None
         if not channel:
-            return False, "قناة الإشهار ماشي مضبوطة."
-        embed = discord.Embed(
-            title="📣 GGMW9 Shoutout",
-            description=f"✨ إشهار رسمي لـ {user.mention}!",
-            color=discord.Color.gold(), timestamp=datetime.now(),
+            return False, "قناة النشر العام ماشي مضبوطة."
+
+        acc = cog._acc(guild.id, user.id)
+        acc["shoutout_credits"] = int(acc.get("shoutout_credits", 0) or 0) + 1
+        cog.db.save()
+        credits = int(acc["shoutout_credits"])
+        return True, (
+            f"📣 شريتي **Public Shoutout** وحدة. عندك دابا **{credits}** جاهزة للنشر.\n"
+            "اختار النوع من ستوديو النشر، ومن بعد كتب الرسالة ديالك. "
+            "إلا سديتي البانل، الرصيد كيبقى محفوظ فـ **🧾 مشترياتي**."
         )
-        embed.set_thumbnail(url=user.display_avatar.url)
-        try:
-            await channel.send(embed=embed)
-        except discord.Forbidden:
-            return False, "البوت ماعندوش صلاحية يكتب فـقناة الإشهار."
-        return True, f"📣 الإشهار تبعث فـ <#{channel_id}>."
+
 
     return False, "هاد النوع ديال المنتوج مازال ماخدامش."
 

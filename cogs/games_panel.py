@@ -204,7 +204,6 @@ class GamesPanelView(discord.ui.View):
             ("ggmw9:arcade:games", _txt(self.lang,"games"), discord.ButtonStyle.success, self.open_games),
             ("ggmw9:arcade:trivia", _txt(self.lang,"trivia"), discord.ButtonStyle.primary, self.trivia_btn),
             ("ggmw9:arcade:casino", _txt(self.lang,"casino"), discord.ButtonStyle.danger, self.casino_btn),
-            ("ggmw9:arcade:economy", _txt(self.lang,"economy"), discord.ButtonStyle.primary, self.economy_btn),
             ("ggmw9:arcade:leaderboards", _txt(self.lang,"leaders"), discord.ButtonStyle.secondary, self.leaders_btn),
         ]
         for cid,label,style,cb in specs:
@@ -231,9 +230,6 @@ class GamesPanelView(discord.ui.View):
             from gambling_panel import GamblingMenuView, build_session_menu_embed
         await _fresh_private(interaction,content=None,embed=build_session_menu_embed(self.bot,interaction.guild,interaction.user,lang),view=GamblingMenuView(self.bot,interaction.user,lang=lang))
 
-    async def economy_btn(self, interaction):
-        lang=self._sync(interaction)
-        await _fresh_private(interaction,content=None,embed=build_economy_quick_embed(lang),view=ArcadeEconomyView(self.bot,interaction.user,lang))
 
     async def leaders_btn(self, interaction):
         lang=self._sync(interaction)
@@ -261,24 +257,27 @@ class GamesPanelView(discord.ui.View):
 def build_arcade_personal_embed(lang: str) -> discord.Embed:
     if lang == "en":
         desc = (
-            "**ARCADE is the heart of GGMW9.** Games, Trivia, Casino and quick access to the economy live here.\n\n"
-            "🕹️ Mini Games • 🧠 Trivia • 🎰 Casino • 💰 Economy • 🏆 Leaderboards\n"
-            "🏦 The dedicated **Bank** and 🛒 **Shop** channels remain the official full panels."
+            "**ARCADE is the gaming heart of GGMW9.** Everything here is for playing and competition.\n\n"
+            "🕹️ Mini Games • 🧠 Trivia • 🎰 Casino • 🏆 Leaderboards\n\n"
+            "💰 **Economy has its own dedicated section:** use the official Bank and Shop channels for money, savings, transfers and purchases."
         )
+        footer="🌐 Darija default • English • Français | Economy stays in its dedicated channels"
     elif lang == "fr":
         desc = (
-            "**ARCADE est le cœur de GGMW9.** Jeux, Trivia, Casino et accès rapide à l'économie sont réunis ici.\n\n"
-            "🕹️ Mini-jeux • 🧠 Trivia • 🎰 Casino • 💰 Économie • 🏆 Classements\n"
-            "🏦 Les salons **Bank** et 🛒 **Shop** restent les panneaux officiels complets."
+            "**ARCADE est le cœur gaming de GGMW9.** Tout ici est consacré au jeu et à la compétition.\n\n"
+            "🕹️ Mini-jeux • 🧠 Trivia • 🎰 Casino • 🏆 Classements\n\n"
+            "💰 **L'économie a sa propre section :** utilise les salons officiels Bank et Shop pour l'argent, l'épargne, les transferts et les achats."
         )
+        footer="🌐 Darija par défaut • English • Français | L'économie reste dans ses salons dédiés"
     else:
         desc = (
-            "**الأركيد هو القلب ديال GGMW9.** الألعاب، تحدي المعلومات، الرهانات والوصول السريع للاقتصاد مجموعين هنا.\n\n"
-            "🕹️ الألعاب • 🧠 تحدي المعلومات • 🎰 الرهانات • 💰 الاقتصاد • 🏆 الترتيب\n"
-            "🏦 **البنك** و🛒 **المتجر** فقسم الاقتصاد ديال GGMW9 باقين هما البانلات الرسمية والكاملة."
+            "**الأركيد هو القلب ديال اللعب فـGGMW9.** هنا كاين غير اللعب، التحدي والمنافسة.\n\n"
+            "🕹️ الألعاب • 🧠 تحدي المعلومات • 🎰 الرهانات • 🏆 الترتيب\n\n"
+            "💰 **الاقتصاد عندو القسم ديالو بوحدو:** البنك والمتجر هما البلايص الرسمية للفلوس، الادخار، التحويلات والمشتريات."
         )
+        footer="🌐 الدارجة هي الأساسية • الإنجليزية • الفرنسية | الاقتصاد فالقنوات ديالو"
     e = discord.Embed(title="🎮・ARCADE — GGMW9", description=desc, color=discord.Color.blurple())
-    e.set_footer(text="🌐 Darija default • English • Français")
+    e.set_footer(text=footer)
     return e
 
 
@@ -396,7 +395,6 @@ class ArcadePrivateHomeView(discord.ui.View):
             (_txt(lang,"games"), discord.ButtonStyle.success, self.games),
             (_txt(lang,"trivia"), discord.ButtonStyle.primary, self.trivia),
             (_txt(lang,"casino"), discord.ButtonStyle.danger, self.casino),
-            (_txt(lang,"economy"), discord.ButtonStyle.primary, self.economy),
             (_txt(lang,"leaders"), discord.ButtonStyle.secondary, self.leaders),
         ]
         for label, style, cb in items:
@@ -421,9 +419,6 @@ class ArcadePrivateHomeView(discord.ui.View):
         except ImportError:
             from gambling_panel import GamblingMenuView, build_session_menu_embed
         await interaction.response.edit_message(content=None,embed=build_session_menu_embed(self.bot,interaction.guild,interaction.user,lang=self.lang),view=GamblingMenuView(self.bot,self.user,lang=self.lang))
-    async def economy(self, interaction):
-        if not await self._ok(interaction): return
-        await interaction.response.edit_message(content=None,embed=build_economy_quick_embed(self.lang),view=ArcadeEconomyView(self.bot,self.user,self.lang))
     async def leaders(self, interaction):
         if not await self._ok(interaction): return
         await interaction.response.edit_message(content=_txt(self.lang,"leader_pick"),embed=build_leaderboard_home_embed(self.lang),view=LeaderboardPanelView(self.bot,owner=self.user,lang=self.lang,session_key="arcade",persistent=False))
