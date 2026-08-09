@@ -9,6 +9,7 @@ import traceback
 
 from cogs.bootstrap import bot
 from cogs._component_runtime import runtime_namespace, runtime_value
+from cogs.panel_registry import upsert_fixed_panel
 
 
 # Dependency-safe order of the split source sections plus focused new systems.
@@ -70,6 +71,11 @@ REQUIRED_STANDALONE_COGS = {"cogs.unverified_visibility"}
 
 
 def _configure_cog_bridge(shared):
+    # All public fixed panels use the same lock-aware upsert primitive.  The
+    # mechanically split core components resolve globals from ``shared`` at
+    # call time, so exposing it here keeps their source independent of the
+    # standalone cogs while still serialising ready/loop/owner refreshes.
+    shared["upsert_fixed_panel"] = upsert_fixed_panel
     bot.gg = {
         "DATA_DIR": shared["DATA_DIR"],
         "OWNER_ID": shared["OWNER_ID"],
@@ -79,6 +85,7 @@ def _configure_cog_bridge(shared):
         "get_panel_language": shared["get_panel_language"],
         "set_panel_language": shared["set_panel_language"],
         "upsert_ephemeral_panel": shared["upsert_ephemeral_panel"],
+        "upsert_fixed_panel": upsert_fixed_panel,
         "get_user_level_data": shared["get_user_level_data"],
         "get_level_perks": shared["get_level_perks"],
         "save_levels": shared["save_levels"],
