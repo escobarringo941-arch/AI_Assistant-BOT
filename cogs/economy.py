@@ -2403,11 +2403,19 @@ class Economy(commands.Cog):
         await upsert_fixed_panel(
             self.bot,
             channel,
-            key="economy_bank",
+            # v2 forces one migration scan after the old matcher only looked
+            # for the English title while the public panel is Darija.
+            key="economy_bank_v2",
             matches=lambda msg: (
-                msg.author == self.bot.user
-                and bool(msg.embeds)
-                and (msg.embeds[0].title or "") == "🏦 GGMW9 Central Bank"
+                # The bank channel is dedicated to this panel.  Match the
+                # exact localized titles even when an older deployment used a
+                # different bot user, so stale copies can be removed too.
+                bool(msg.embeds)
+                and (msg.embeds[0].title or "") in {
+                    "🏦 GGMW9 Central Bank",
+                    "🏦 البنك المركزي ديال GGMW9",
+                    "🏦 Banque centrale GGMW9",
+                }
             ),
             content=None,
             embed=embed,
