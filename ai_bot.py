@@ -567,7 +567,7 @@ for _flag in AUTO_REACT_FLAGS:
 JOIN_TO_CREATE_ENABLED = True
 JOIN_TO_CREATE_CHANNEL_ID = 1533290892947882064   # ← ID ديال الـ voice channel "➕ دير روم" (العضو كيدخل ليه فيتخلق ليه روم خاص بيه)
 TEMP_VC_CATEGORY_ID = 1533257707543461939          # ← ID ديال الـ Category فين غادي تتخلق الروومات المؤقتة (0 = نفس category ديال JOIN_TO_CREATE_CHANNEL_ID)
-TEMP_VC_NAME_TEMPLATE = "{name}'s Room 🔊"
+TEMP_VC_NAME_TEMPLATE = "🔊 روم ديال {name}"
 TEMP_VC_DEFAULT_LIMIT = 0        # ← 0 = بلا حد أقصى للأعضاء
 # Block fallback خصوصاً للي عندهم Administrator: 1/2 خروج+إنذار، المحاولة 3 = Kick من السيرفر إذا hierarchy تسمح
 TEMP_VC_DENY_MAX_ATTEMPTS = 3
@@ -7677,6 +7677,44 @@ async def _open_temp_voice_action_picker(interaction: discord.Interaction, actio
         await interaction.response.send_modal(TempVoiceMemberIdModal(ch.id, action))
 
 
+
+class JockieVolumeModal(discord.ui.Modal, title="🎵 Jockie Music Volume"):
+    volume = discord.ui.TextInput(
+        label="دخل الصوت (0 - 100)",
+        placeholder="مثال: 50",
+        max_length=3,
+        required=True
+    )
+
+    def __init__(self, voice_channel):
+        super().__init__()
+        self.voice_channel = voice_channel
+
+    async def on_submit(self, interaction: discord.Interaction):
+        ch = self.voice_channel
+        value = str(self.volume.value).strip()
+
+        if not value.isdigit() or not 0 <= int(value) <= 100:
+            await interaction.response.send_message("❌ دخل رقم بين 0 و 100.", ephemeral=True)
+            return
+
+        jockie = next((m for m in ch.members if m.bot and "jockie" in m.name.lower()), None)
+        if not jockie:
+            await interaction.response.send_message("❌ Jockie Music ما كاينش فهاد الروم الصوتي.", ephemeral=True)
+            return
+
+        try:
+            await ch.send(f"m!volume {int(value)}")
+            await interaction.response.send_message(
+                f"✅ تبدل صوت Jockie Music إلى **{value}%**.",
+                ephemeral=True
+            )
+        except Exception as e:
+            await interaction.response.send_message(
+                f"❌ ماقدرتش نرسل الأمر: `{e}`",
+                ephemeral=True
+            )
+
 class TempVoiceControlView(discord.ui.View):
     """Persistent panel: 11 buttons. كل action كتحل UserSelect ephemeral باش تختار العضو."""
     def __init__(self, private: bool = False):
@@ -7741,6 +7779,14 @@ class TempVoiceControlView(discord.ui.View):
     @discord.ui.button(label="💬🔊 Chat Unmute", style=discord.ButtonStyle.secondary, custom_id="temp_voice_chat_unmute_button", row=1)
     async def chat_unmute_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await _open_temp_voice_action_picker(interaction, "chat_unmute")
+
+
+    @discord.ui.button(label="🎵 Music Volume", style=discord.ButtonStyle.primary, custom_id="temp_voice_music_volume_button", row=2)
+    async def music_volume_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        ch = await _temp_voice_require_owner(interaction)
+        if not ch:
+            return
+        await interaction.response.send_modal(JockieVolumeModal(ch))
 
 
 async def reconcile_temp_voice_rooms(guild: discord.Guild):
