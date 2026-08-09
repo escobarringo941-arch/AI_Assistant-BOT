@@ -127,16 +127,65 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
 
             guild = interaction.guild
             author = guild.get_member(record["author_id"]) if guild else None
+            if author is None:
+                try:
+                    author = await bot.fetch_user(int(record["author_id"]))
+                except Exception:
+                    author = None
             if author:
                 try:
                     if accepted:
-                        await author.send(f"🎉 الاقتراح ديالك (#{sug_id}) تقبل من طرف الإدارة فـ **{SERVER_NAME}**!")
-                    else:
-                        await author.send(
-                            f"❌ الاقتراح ديالك (#{sug_id}) تُرفض هاد المرة فـ **{SERVER_NAME}**.\n"
-                            f"السبب: {reason or 'ما تعطاتش شي تفاصيل إضافية.'}"
+                        dm_title = f"✅ الاقتراح ديالك تقبل • #{sug_id}"
+                        dm_description = (
+                            "شكراً على الفكرة ديالك! الإدارة راجعاتها وقررات أنها مناسبة "
+                            "لتطوير السيرفر."
                         )
+                        dm_color = discord.Color.green()
+                    else:
+                        dm_title = f"❌ الاقتراح ديالك ترفض • #{sug_id}"
+                        dm_description = (
+                            "شكراً على المشاركة. الإدارة راجعات الاقتراح، ولكن ما غاديش "
+                            "نعتمدو هاد الفكرة دابا."
+                        )
+                        dm_color = discord.Color.red()
+
+                    dm_embed = discord.Embed(
+                        title=dm_title,
+                        description=dm_description,
+                        color=dm_color,
+                        timestamp=datetime.now(),
+                    )
+                    dm_embed.add_field(
+                        name="💡 الاقتراح ديالك",
+                        value=str(record.get("text") or "—")[:1024],
+                        inline=False,
+                    )
+                    dm_embed.add_field(
+                        name="👤 القرار من طرف",
+                        value=f"{member.display_name}\n📅 {decided_at}",
+                        inline=True,
+                    )
+                    if not accepted:
+                        dm_embed.add_field(
+                            name="📝 سبب الرفض",
+                            value=reason or "ما تعطاتش شي تفاصيل إضافية.",
+                            inline=False,
+                        )
+                    jump_url = getattr(message, "jump_url", None)
+                    if jump_url:
+                        dm_embed.add_field(
+                            name="🔗 التفاصيل",
+                            value=f"[شوف الاقتراح فالسيرفر]({jump_url})",
+                            inline=False,
+                        )
+                    dm_embed.set_footer(text=f"{SERVER_NAME} • GGMW9 Suggestions")
+                    await author.send(
+                        embed=dm_embed,
+                        allowed_mentions=discord.AllowedMentions.none(),
+                    )
                 except Exception:
+                    # A closed DM must never undo a decision already recorded
+                    # in the suggestions channel.
                     pass
     
     

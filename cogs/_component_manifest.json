@@ -1,6 +1,6 @@
 {
   "description": "Hashes lock the reviewed component bytes and execution order; intentional feature revisions update this baseline.",
-  "joined_sha256": "1febac921aa5c86af639daa2d267b4d2bfcf13ccbf9b8b00f16249792cb8114d",
+  "joined_sha256": "2d2e4fd0b053b33cc01437d075b3ae385a68dcfb63a480fcc095aa4fa1044fd2",
   "events_before_setup_hook": [
     "on_voice_state_update",
     "on_member_join",
@@ -99,7 +99,7 @@
       "path": "cogs/suggestions.py",
       "original_start_line": 5376,
       "original_end_line": 5943,
-      "sha256": "5c78b5d219d8da35df316002bf89090f38a1f1418f8702766824a69f03f9e1fb"
+      "sha256": "adba3fd2992c4f688dafa15ddc7a089c1bdbee071eb1c2daf904f1732edc0692"
     },
     {
       "name": "birthdays",
