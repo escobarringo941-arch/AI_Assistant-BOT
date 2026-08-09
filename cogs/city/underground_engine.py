@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 import discord
+from cogs.panel_registry import upsert_fixed_panel
 
 from . import config
 from .underground import (
@@ -671,13 +672,25 @@ class UndergroundEngineMixin:
         for key,(pkey,title,desc,view) in mapping.items():
             ch=self.underground_channel(guild,key)
             if not isinstance(ch,discord.TextChannel): continue
-            mid=int(panels.get(pkey) or 0); msg=None
-            if mid:
-                try: msg=await ch.fetch_message(mid)
-                except (discord.NotFound,discord.Forbidden,discord.HTTPException): msg=None
             e=discord.Embed(title=title,description=desc,color=discord.Color.dark_grey()); e.set_footer(text=f"GGMW9 UNDERGROUND • {pkey}")
-            if msg:
-                await msg.edit(embed=e,view=view)
-            else:
-                msg=await ch.send(embed=e,view=view); panels[pkey]=msg.id
+            def remember(message_id: int, panel_key=pkey):
+                panels[panel_key] = int(message_id)
+
+            await upsert_fixed_panel(
+                self.bot,
+                ch,
+                key=f"underground:{pkey}",
+                matches=lambda message, panel_key=pkey: (
+                    message.author == self.bot.user
+                    and bool(message.embeds)
+                    and f"GGMW9 UNDERGROUND • {panel_key}" in (
+                        message.embeds[0].footer.text if message.embeds[0].footer else ""
+                    )
+                ),
+                embed=e,
+                view=view,
+                message_id=panels.get(pkey),
+                save_message_id=remember,
+                history_limit=100,
+            )
         self.store.save()

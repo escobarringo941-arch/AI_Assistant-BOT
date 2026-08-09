@@ -73,17 +73,22 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             temp_voice_housekeeping_loop.start()
     
     
-        bot.add_view(RulesVerifyView())  # باش الأزرار يبقاو خدامين حتى بعد ريستارت البوت
-        bot.add_view(RolePickerView())   # باش الـ Dropdown ديال الأدوار يبقى خدام حتى بعد ريستارت البوت
-        bot.add_view(TicketPanelView())    # Legacy compatibility إلا بقات شي رسالة قديمة قبل migration
-        bot.add_view(TicketControlView())  # Claim/Close ديال Tickets المفتوحة
-        bot.add_view(ApplicationPanelView())   # باش زر "قدم طلب Staff" يبقى خدام حتى بعد ريستارت البوت
-        bot.add_view(BlacklistLanguageView())  # Blacklist public Darija + personal translation selector
-        bot.add_view(ApplicationReviewView())  # باش أزرار قبول/رفض الطلبات يبقاو خدامين
-        bot.add_view(SuggestionReviewView())   # باش أزرار قبول/رفض الاقتراحات يبقاو خدامين
-        bot.add_view(SuggestionsPanelView().add_language_selector())  # Public Suggestions panel
-        bot.add_view(RoomMuteToggleView())     # باش زر كتم/فك كتم الروم يبقى خدام حتى بعد ريستارت البوت
-        bot.add_view(TempVoiceControlView())    # Panel: ACL/Kick/Mutes + Music helper
+        # Persistent views are registered once per process.  ``on_ready`` may
+        # fire repeatedly after a reconnect; re-registering the same view tree
+        # is unnecessary and can make dispatch ambiguous.
+        if not getattr(bot, "_ggmw9_ready_views_registered", False):
+            bot.add_view(RulesVerifyView())  # باش الأزرار يبقاو خدامين حتى بعد ريستارت البوت
+            bot.add_view(RolePickerView())   # باش الـ Dropdown ديال الأدوار يبقى خدام حتى بعد ريستارت البوت
+            bot.add_view(TicketPanelView())    # Legacy compatibility إلا بقات شي رسالة قديمة قبل migration
+            bot.add_view(TicketControlView())  # Claim/Close ديال Tickets المفتوحة
+            bot.add_view(ApplicationPanelView())   # باش زر "قدم طلب Staff" يبقى خدام حتى بعد ريستارت البوت
+            bot.add_view(BlacklistLanguageView())  # Blacklist public Darija + personal translation selector
+            bot.add_view(ApplicationReviewView())  # باش أزرار قبول/رفض الطلبات يبقاو خدامين
+            bot.add_view(SuggestionReviewView())   # باش أزرار قبول/رفض الاقتراحات يبقاو خدامين
+            bot.add_view(SuggestionsPanelView().add_language_selector())  # Public Suggestions panel
+            bot.add_view(RoomMuteToggleView())     # باش زر كتم/فك كتم الروم يبقى خدام حتى بعد ريستارت البوت
+            bot.add_view(TempVoiceControlView())    # Panel: ACL/Kick/Mutes + Music helper
+            bot._ggmw9_ready_views_registered = True
     
         for guild in bot.guilds:
             # ═══ Self-healing ديال Auto AFK tracking بعد restart ═══

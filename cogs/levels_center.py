@@ -539,22 +539,33 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             )
             embed.set_footer(text=f"{SERVER_NAME} | Leveling System")
     
-        if msg_id:
-            try:
-                msg = await channel.fetch_message(int(msg_id))
-                await msg.edit(embed=embed)
-                return
-            except (discord.NotFound, discord.Forbidden):
-                pass
-            except Exception as e:
-                print(f"[LEADERBOARD] refresh فوري فشل: {e}")
-    
-        try:
-            new_msg = await channel.send(embed=embed)
-            leaderboard_message_ids[str(guild.id)] = new_msg.id
-            save_leaderboard_message_ids()
-        except Exception as e:
-            print(f"[LEADERBOARD] refresh فوري — خطأ فالبعث: {e}")
+        def remember(message_id: int):
+            if leaderboard_message_ids.get(str(guild.id)) != int(message_id):
+                leaderboard_message_ids[str(guild.id)] = int(message_id)
+                save_leaderboard_message_ids()
+
+        await upsert_fixed_panel(
+            bot,
+            channel,
+            key="xp_leaderboard",
+            matches=lambda msg: (
+                msg.author == bot.user
+                and bool(msg.embeds)
+                and (msg.embeds[0].title or "") == "🏆 لائحة الشرف (Leaderboard)"
+                and (
+                    f"{SERVER_NAME} | Leveling System" in (
+                        msg.embeds[0].footer.text if msg.embeds[0].footer else ""
+                    )
+                    or f"{SERVER_NAME} | غير الأعضاء الحاليين" in (
+                        msg.embeds[0].footer.text if msg.embeds[0].footer else ""
+                    )
+                )
+            ),
+            embed=embed,
+            message_id=msg_id,
+            save_message_id=remember,
+            history_limit=100,
+        )
     
     
     @tasks.loop(minutes=LEADERBOARD_UPDATE_MINUTES)

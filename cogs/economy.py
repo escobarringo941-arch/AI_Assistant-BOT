@@ -25,6 +25,7 @@ import aiohttp
 
 from storage import JsonStore
 import games_config as cfg
+from cogs.panel_registry import panel_lock, upsert_fixed_panel
 
 
 def _today_key() -> str:
@@ -589,44 +590,45 @@ class Economy(commands.Cog):
 
     async def ensure_big_win_channel(self, guild: discord.Guild):
         """Find/create public read-only highlight feed for exceptional one-bet wins."""
-        configured = int(getattr(cfg, "CASINO_BIG_WIN_CHANNEL_ID", 0) or 0)
-        if configured:
-            ch = guild.get_channel(configured)
+        async with panel_lock(self.bot, guild, "big_win_channel"):
+            configured = int(getattr(cfg, "CASINO_BIG_WIN_CHANNEL_ID", 0) or 0)
+            if configured:
+                ch = guild.get_channel(configured)
+                if ch:
+                    return ch
+            sys = self._system(guild.id)
+            saved = int(sys.get("big_win_channel_id") or 0)
+            if saved:
+                ch = guild.get_channel(saved)
+                if ch:
+                    return ch
+            ch = discord.utils.get(guild.text_channels, name="💎・big-wins") or discord.utils.get(guild.text_channels, name="big-wins")
             if ch:
+                sys["big_win_channel_id"] = ch.id
+                self.system_db.save()
                 return ch
-        sys = self._system(guild.id)
-        saved = int(sys.get("big_win_channel_id") or 0)
-        if saved:
-            ch = guild.get_channel(saved)
-            if ch:
+            category = guild.get_channel(int(getattr(cfg, "ECONOMY_CATEGORY_ID", 0) or 0))
+            if category is not None and not isinstance(category, discord.CategoryChannel):
+                category = None
+            me = guild.me
+            overwrites = {
+                guild.default_role: discord.PermissionOverwrite(view_channel=True, read_message_history=True, send_messages=False),
+            }
+            if me:
+                overwrites[me] = discord.PermissionOverwrite(view_channel=True, read_message_history=True, send_messages=True, embed_links=True)
+            try:
+                ch = await guild.create_text_channel(
+                    "💎・big-wins",
+                    category=category,
+                    topic="GGMW9 Casino — exceptional single-wager wins only. Read-only highlight feed.",
+                    overwrites=overwrites,
+                    reason="GGMW9 Economy: dedicated large casino wins feed",
+                )
+                sys["big_win_channel_id"] = ch.id
+                self.system_db.save()
                 return ch
-        ch = discord.utils.get(guild.text_channels, name="💎・big-wins") or discord.utils.get(guild.text_channels, name="big-wins")
-        if ch:
-            sys["big_win_channel_id"] = ch.id
-            self.system_db.save()
-            return ch
-        category = guild.get_channel(int(getattr(cfg, "ECONOMY_CATEGORY_ID", 0) or 0))
-        if category is not None and not isinstance(category, discord.CategoryChannel):
-            category = None
-        me = guild.me
-        overwrites = {
-            guild.default_role: discord.PermissionOverwrite(view_channel=True, read_message_history=True, send_messages=False),
-        }
-        if me:
-            overwrites[me] = discord.PermissionOverwrite(view_channel=True, read_message_history=True, send_messages=True, embed_links=True)
-        try:
-            ch = await guild.create_text_channel(
-                "💎・big-wins",
-                category=category,
-                topic="GGMW9 Casino — exceptional single-wager wins only. Read-only highlight feed.",
-                overwrites=overwrites,
-                reason="GGMW9 Economy: dedicated large casino wins feed",
-            )
-            sys["big_win_channel_id"] = ch.id
-            self.system_db.save()
-            return ch
-        except (discord.Forbidden, discord.HTTPException):
-            return None
+            except (discord.Forbidden, discord.HTTPException):
+                return None
 
     async def _post_big_win(self, guild: discord.Guild, user: discord.abc.User, *, game: str, bet: int, payout: int, profit: int, details: str = "", is_jackpot: bool = False):
         threshold = int(getattr(cfg, "CASINO_BIG_WIN_MIN_PROFIT", 25000) or 25000)
@@ -2397,30 +2399,21 @@ class Economy(commands.Cog):
         channel = guild.get_channel(channel_id) if channel_id else None
         if not channel:
             return
-        matches = []
-        try:
-            async for msg in channel.history(limit=60):
-                if (
-                    msg.author == self.bot.user and msg.embeds
-                    and (msg.embeds[0].title or "") == "🏦 GGMW9 Central Bank"
-                ):
-                    matches.append(msg)
-        except discord.Forbidden:
-            return
         embed = self.build_bank_panel_embed(guild, lang="darija")
-        try:
-            if matches:
-                keep = matches[0]
-                await keep.edit(content=None, embed=embed, view=EconomyBankPanelView(self,"darija"))
-                for old in matches[1:]:
-                    try:
-                        await old.delete()
-                    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                        pass
-            else:
-                await channel.send(embed=embed, view=EconomyBankPanelView(self,"darija"))
-        except (discord.Forbidden, discord.HTTPException):
-            pass
+        await upsert_fixed_panel(
+            self.bot,
+            channel,
+            key="economy_bank",
+            matches=lambda msg: (
+                msg.author == self.bot.user
+                and bool(msg.embeds)
+                and (msg.embeds[0].title or "") == "🏦 GGMW9 Central Bank"
+            ),
+            content=None,
+            embed=embed,
+            view=EconomyBankPanelView(self,"darija"),
+            history_limit=None,
+        )
 
     async def refresh_economy_stats(self, guild: discord.Guild):
         channel_id = int(getattr(cfg, "ECONOMY_STATS_CHANNEL_ID", 0) or 0)
@@ -2429,37 +2422,26 @@ class Economy(commands.Cog):
             return
 
         sys = self._system(guild.id)
-        msg = None
-        msg_id = sys.get("stats_message_id")
-        if msg_id:
-            try:
-                msg = await channel.fetch_message(int(msg_id))
-            except (discord.NotFound, discord.Forbidden, discord.HTTPException, TypeError, ValueError):
-                msg = None
-
-        if msg is None:
-            try:
-                async for old in channel.history(limit=25):
-                    if (
-                        old.author == self.bot.user and old.embeds
-                        and (old.embeds[0].title or "") in {"📊 اقتصاد GGMW9 — Live","📊 اقتصاد GGMW9 — مباشر"}
-                    ):
-                        msg = old
-                        break
-            except discord.Forbidden:
-                return
-
         embed = self.build_global_economy_embed(guild)
-        try:
-            if msg:
-                await msg.edit(embed=embed)
-            else:
-                msg = await channel.send(embed=embed)
-            if sys.get("stats_message_id") != msg.id:
-                sys["stats_message_id"] = msg.id
+        def remember(message_id: int):
+            if sys.get("stats_message_id") != int(message_id):
+                sys["stats_message_id"] = int(message_id)
                 self.system_db.save()
-        except (discord.Forbidden, discord.HTTPException):
-            pass
+
+        await upsert_fixed_panel(
+            self.bot,
+            channel,
+            key="economy_stats",
+            matches=lambda msg: (
+                msg.author == self.bot.user
+                and bool(msg.embeds)
+                and (msg.embeds[0].title or "") in {"📊 اقتصاد GGMW9 — Live", "📊 اقتصاد GGMW9 — مباشر"}
+            ),
+            embed=embed,
+            message_id=sys.get("stats_message_id"),
+            save_message_id=remember,
+            history_limit=100,
+        )
 
     @tasks.loop(minutes=2)
     async def economy_stats_loop(self):

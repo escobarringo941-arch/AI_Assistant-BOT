@@ -87,25 +87,26 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         channel = bot.get_channel(LEVELS_INFO_CHANNEL_ID)
         if not channel:
             return
-        existing = None
-        try:
-            async for message in channel.history(limit=30):
-                if message.author != bot.user or not message.embeds:
-                    continue
-                title = message.embeds[0].title or ""
-                if any(x in title for x in ("نظام المستويات", "Levels & XP", "Niveaux & XP")):
-                    existing = message
-                    break
-        except discord.Forbidden:
-            return
         embed = build_levels_info_embed(guild, "darija")
-        try:
-            if existing:
-                await existing.edit(content=None, embed=embed, view=LevelsInfoView("darija"))
-            else:
-                await channel.send(embed=embed, view=LevelsInfoView("darija"))
-        except (discord.Forbidden, discord.HTTPException) as e:
-            print(f"[LEVEL INFO] ما قدرتش نحدّث الرسالة: {e}")
+        message = await upsert_fixed_panel(
+            bot,
+            channel,
+            key="levels_info",
+            matches=lambda message: (
+                message.author == bot.user
+                and bool(message.embeds)
+                and any(
+                    marker in (message.embeds[0].title or "")
+                    for marker in ("نظام المستويات", "Levels & XP", "Niveaux & XP")
+                )
+            ),
+            content=None,
+            embed=embed,
+            view=LevelsInfoView("darija"),
+            history_limit=None,
+        )
+        if message is None:
+            print("[LEVEL INFO] ما قدرتش نحدّث الرسالة دابا.")
     
     
     @bot.command(name="setuplevels", hidden=True)

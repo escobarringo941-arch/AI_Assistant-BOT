@@ -1134,28 +1134,22 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         if not channel:
             return
     
-        existing = None
-        try:
-            async for msg in channel.history(limit=30):
-                if (
-                    msg.author == bot.user
-                    and msg.embeds
-                    and msg.embeds[0].title
-                    and "Owner Control Center" in msg.embeds[0].title
-                ):
-                    existing = msg
-                    break
-        except discord.Forbidden:
-            return
-    
         embed = _owner_control_embed(guild)
-        try:
-            if existing:
-                await existing.edit(embed=embed, view=OwnerControlCenterView())
-            else:
-                await channel.send(embed=embed, view=OwnerControlCenterView())
-        except (discord.Forbidden, discord.HTTPException) as e:
-            print(f"[OWNER CENTER] ما قدرتش نصاوب/نحدث Panel: {e}")
+        message = await upsert_fixed_panel(
+            bot,
+            channel,
+            key="owner_control",
+            matches=lambda message: (
+                message.author == bot.user
+                and bool(message.embeds)
+                and "Owner Control Center" in (message.embeds[0].title or "")
+            ),
+            embed=embed,
+            view=OwnerControlCenterView(),
+            history_limit=None,
+        )
+        if message is None:
+            print("[OWNER CENTER] ما قدرتش نصاوب/نحدث Panel دابا.")
     
     
 # ORIGINAL SOURCE END

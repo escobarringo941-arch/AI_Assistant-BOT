@@ -9,6 +9,7 @@ import discord
 from discord.ext import commands
 
 import games_config as cfg
+from cogs.panel_registry import upsert_fixed_panel
 from storage import JsonStore
 
 
@@ -879,26 +880,19 @@ class GamblingPanel(commands.Cog):
         if not channel:
             return
         embed = self.build_public_panel_embed("darija")
-        matches = []
-        try:
-            async for msg in channel.history(limit=60):
-                if msg.author == self.bot.user and msg.embeds and any(x in (msg.embeds[0].title or "") for x in ("قمار", "Casino")):
-                    matches.append(msg)
-        except discord.Forbidden:
-            return
-        try:
-            if matches:
-                keep = matches[0]
-                await keep.edit(embed=embed, view=GamblingPanelView(self.bot))
-                for old in matches[1:]:
-                    try:
-                        await old.delete()
-                    except (discord.Forbidden, discord.NotFound, discord.HTTPException):
-                        pass
-            else:
-                await channel.send(embed=embed, view=GamblingPanelView(self.bot))
-        except (discord.Forbidden, discord.HTTPException):
-            pass
+        await upsert_fixed_panel(
+            self.bot,
+            channel,
+            key="casino",
+            matches=lambda msg: (
+                msg.author == self.bot.user
+                and bool(msg.embeds)
+                and (msg.embeds[0].title or "") in {"🎰 GGMW9 Casino", "🎰 GGMW9 Casino — Français", "🎰 GGMW9 Casino — English"}
+            ),
+            embed=embed,
+            view=GamblingPanelView(self.bot),
+            history_limit=None,
+        )
 
     def build_public_panel_embed(self, lang: str = "darija"):
         # Public shared panel stays Darija by default. Language choice opens a personal localized session.
@@ -921,7 +915,19 @@ class GamblingPanel(commands.Cog):
         return embed
 
     async def _send_panel(self, channel):
-        await channel.send(embed=self.build_public_panel_embed("darija"), view=GamblingPanelView(self.bot))
+        await upsert_fixed_panel(
+            self.bot,
+            channel,
+            key="casino",
+            matches=lambda msg: (
+                msg.author == self.bot.user
+                and bool(msg.embeds)
+                and (msg.embeds[0].title or "") in {"🎰 GGMW9 Casino", "🎰 GGMW9 Casino — Français", "🎰 GGMW9 Casino — English"}
+            ),
+            embed=self.build_public_panel_embed("darija"),
+            view=GamblingPanelView(self.bot),
+            history_limit=None,
+        )
 
     @commands.command(name="gamblingpanel", hidden=True)
     @commands.has_permissions(administrator=True)

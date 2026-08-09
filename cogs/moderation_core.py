@@ -262,38 +262,27 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         embed.set_thumbnail(url=guild.icon.url if guild.icon else None)
         embed.set_footer(text="GGMW9 | Verification System")
     
-        matches = []
-        try:
-            async for message in verify_channel.history(limit=30):
-                if message.author != bot.user:
-                    continue
-                title = message.embeds[0].title if message.embeds else ""
-                if title == "✅ تفعيل العضوية":
-                    matches.append(message)
-        except discord.Forbidden:
+        keep = await upsert_fixed_panel(
+            bot,
+            verify_channel,
+            key="legacy_verify",
+            matches=lambda message: (
+                message.author == bot.user
+                and bool(message.embeds)
+                and (message.embeds[0].title or "") == "✅ تفعيل العضوية"
+            ),
+            embed=embed,
+            history_limit=None,
+        )
+        if keep is None:
             return False
-    
         try:
-            if matches:
-                keep = matches[0]
-                await keep.edit(embed=embed)
-                try:
-                    # Keep the classic ✅ reaction verification fresh as well.
-                    if not any(str(r.emoji) == "✅" for r in keep.reactions):
-                        await keep.add_reaction("✅")
-                except (discord.Forbidden, discord.HTTPException):
-                    pass
-                for extra in matches[1:]:
-                    try:
-                        await extra.delete()
-                    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                        pass
-            else:
-                keep = await verify_channel.send(embed=embed)
+            # Keep the classic ✅ reaction verification fresh as well.
+            if not any(str(r.emoji) == "✅" for r in keep.reactions):
                 await keep.add_reaction("✅")
-            return True
         except (discord.Forbidden, discord.HTTPException):
-            return False
+            pass
+        return True
     
     
 # ORIGINAL SOURCE END

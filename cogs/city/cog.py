@@ -20,6 +20,7 @@ from .payroll import next_pay_at, pay_due
 from .projects import parse_milestones, current_milestone
 from .notifications import CityNotifier
 from .underground_engine import UndergroundEngineMixin
+from cogs.panel_registry import panel_lock, upsert_fixed_panel
 
 
 def _iso_now() -> str:
@@ -217,25 +218,30 @@ class CareerCity(UndergroundEngineMixin, commands.Cog):
 
     async def _upsert_panel(self, channel: discord.TextChannel, *, key: str, embed: discord.Embed, view: discord.ui.View | None):
         g=self.store.guild(channel.guild.id); panels=g.setdefault("setup",{}).setdefault("panels",{})
-        msg=None; mid=int(panels.get(key) or 0)
-        if mid:
-            try: msg=await channel.fetch_message(mid)
-            except (discord.NotFound,discord.Forbidden,discord.HTTPException): msg=None
-        if msg is None:
-            # Conservative recovery: only reuse a bot embed whose footer contains CITY PANEL KEY.
-            try:
-                async for old in channel.history(limit=30):
-                    if old.author==self.bot.user and old.embeds:
-                        footer=(old.embeds[0].footer.text or "") if old.embeds[0].footer else ""
-                        if f"CITY:{key}" in footer:
-                            msg=old; break
-            except discord.Forbidden:
-                pass
-        if msg:
-            await msg.edit(content=None,embed=embed,view=view)
-        else:
-            msg=await channel.send(embed=embed,view=view)
-        panels[key]=msg.id; self.store.save(); return msg
+        mid=int(panels.get(key) or 0)
+
+        def remember(message_id: int):
+            panels[key] = int(message_id)
+            self.store.save()
+
+        return await upsert_fixed_panel(
+            self.bot,
+            channel,
+            key=f"city:{key}",
+            matches=lambda message: (
+                message.author == self.bot.user
+                and bool(message.embeds)
+                and f"CITY:{key}" in (
+                    message.embeds[0].footer.text if message.embeds[0].footer else ""
+                )
+            ),
+            content=None,
+            embed=embed,
+            view=view,
+            message_id=mid,
+            save_message_id=remember,
+            history_limit=100,
+        )
 
     async def refresh_city_panels(self, guild: discord.Guild):
         from .ui import CareerPublicView, ServicesPublicView, ProjectsPublicView

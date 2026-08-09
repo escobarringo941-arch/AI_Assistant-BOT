@@ -524,41 +524,31 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         embed = _suggestions_home_embed("darija")
         view = SuggestionsPanelView().add_language_selector()
     
-        matches = []
-        try:
-            async for message in channel.history(limit=40):
-                if (
-                    message.author == bot.user
-                    and message.embeds
-                    and (
-                        "الاقتراحات" in (message.embeds[0].title or "")
-                        or "اقتراحات GGMW9" in (message.embeds[0].title or "")
-                        or "GGMW9 Suggestions" in (message.embeds[0].title or "")
-                        or "Suggestions GGMW9" in (message.embeds[0].title or "")
+        message = await upsert_fixed_panel(
+            bot,
+            channel,
+            key="suggestions_info",
+            matches=lambda message: (
+                message.author == bot.user
+                and bool(message.embeds)
+                and any(
+                    marker in (message.embeds[0].title or "")
+                    for marker in (
+                        "الاقتراحات",
+                        "اقتراحات GGMW9",
+                        "GGMW9 Suggestions",
+                        "Suggestions GGMW9",
                     )
-                ):
-                    matches.append(message)
-        except discord.Forbidden:
-            return False
-    
-        try:
-            if matches:
-                keep = matches[0]
-                await keep.edit(content=None, embed=embed, view=view)
-                for extra in matches[1:]:
-                    # Only clean duplicate panel/info messages, never suggestion posts.
-                    title = extra.embeds[0].title if extra.embeds else ""
-                    if title and "اقتراح #" not in title:
-                        try:
-                            await extra.delete()
-                        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                            pass
-            else:
-                await channel.send(embed=embed, view=view)
-            return True
-        except (discord.Forbidden, discord.HTTPException) as exc:
-            print(f"[SUGGESTIONS] panel update failed: {exc}")
-            return False
+                )
+            ),
+            content=None,
+            embed=embed,
+            view=view,
+            history_limit=None,
+        )
+        if message is None:
+            print("[SUGGESTIONS] panel update failed")
+        return message is not None
     
     
     @bot.hybrid_command(name="setupsuggestions")

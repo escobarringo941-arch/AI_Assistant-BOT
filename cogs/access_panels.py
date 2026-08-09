@@ -547,32 +547,24 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         )
         embed.set_thumbnail(url=guild.icon.url if guild.icon else None)
         embed.set_footer(text="GGMW9 | القوانين والتفعيل • الدارجة هي الأساسية")
-    
-        matches = []
-        try:
-            async for message in rules_channel.history(limit=30):
-                if message.author != bot.user or not message.embeds:
-                    continue
-                title = message.embeds[0].title or ""
-                if "قوانين السيرفر" in title or "Server Rules" in title or "Règles du serveur" in title:
-                    matches.append(message)
-        except discord.Forbidden:
-            return False
-    
-        try:
-            if matches:
-                keep = matches[0]
-                await keep.edit(embed=embed, view=RulesVerifyView())
-                for extra in matches[1:]:
-                    try:
-                        await extra.delete()
-                    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                        pass
-            else:
-                await rules_channel.send(embed=embed, view=RulesVerifyView())
-            return True
-        except (discord.Forbidden, discord.HTTPException):
-            return False
+        message = await upsert_fixed_panel(
+            bot,
+            rules_channel,
+            key="rules",
+            matches=lambda message: (
+                message.author == bot.user
+                and bool(message.embeds)
+                and any(
+                    marker in (message.embeds[0].title or "")
+                    for marker in ("قوانين السيرفر", "Server Rules", "Règles du serveur")
+                )
+            ),
+            content=None,
+            embed=embed,
+            view=RulesVerifyView(),
+            history_limit=None,
+        )
+        return message is not None
     
     
     def _build_blacklist_embed(lang: str = "darija") -> discord.Embed:
@@ -737,40 +729,29 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         if not channel:
             return
     
-        darija_messages = []
-        translated_messages = []
-        try:
-            async for message in channel.history(limit=40):
-                if message.author != bot.user or not message.embeds:
-                    continue
-                title = message.embeds[0].title or ""
-                if "الممنوعات والعقوبات" in title:
-                    darija_messages.append(message)
-                elif "Règles et Sanctions" in title or "Rules & Penalties" in title:
-                    translated_messages.append(message)
-        except discord.Forbidden:
-            return
-    
-        # Keep the SAME existing message regardless of its current language.
-        all_panels = darija_messages + translated_messages
-        all_panels.sort(key=lambda m: m.id)
-        keep = all_panels[0] if all_panels else None
-        try:
-            if keep:
-                await keep.edit(content=None, embed=_build_blacklist_embed("darija"), view=BlacklistLanguageView("darija"))
-            else:
-                keep = await channel.send(embed=_build_blacklist_embed("darija"), view=BlacklistLanguageView("darija"))
-    
-            # Clean only true duplicates; never delete the kept original message.
-            for old in all_panels:
-                if keep and old.id == keep.id:
-                    continue
-                try:
-                    await old.delete()
-                except (discord.Forbidden, discord.NotFound, discord.HTTPException):
-                    pass
-        except (discord.Forbidden, discord.HTTPException) as e:
-            print(f"[BLACKLIST] ما قدرتش نحدّث الواجهة: {e}")
+        message = await upsert_fixed_panel(
+            bot,
+            channel,
+            key="blacklist",
+            matches=lambda message: (
+                message.author == bot.user
+                and bool(message.embeds)
+                and any(
+                    marker in (message.embeds[0].title or "")
+                    for marker in (
+                        "الممنوعات والعقوبات",
+                        "Règles et Sanctions",
+                        "Rules & Penalties",
+                    )
+                )
+            ),
+            content=None,
+            embed=_build_blacklist_embed("darija"),
+            view=BlacklistLanguageView("darija"),
+            history_limit=None,
+        )
+        if message is None:
+            print("[BLACKLIST] ما قدرتش نحدّث الواجهة دابا.")
     
     
 # ORIGINAL SOURCE END

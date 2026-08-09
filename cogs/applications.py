@@ -231,21 +231,25 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         if not APPLICATIONS_PANEL_CHANNEL_ID: return
         channel=bot.get_channel(APPLICATIONS_PANEL_CHANNEL_ID)
         if not channel: return
-        matches=[]
-        try:
-            async for message in channel.history(limit=30):
-                if message.author==bot.user and message.embeds and ("قدم لفريق الإدارة" in (message.embeds[0].title or "") or "Staff Applications" in (message.embeds[0].title or "") or "Candidatures Staff" in (message.embeds[0].title or "")):
-                    matches.append(message)
-        except discord.Forbidden: return
         embed=_application_home_embed("darija"); view=ApplicationPanelView("darija")
-        try:
-            if matches:
-                keep=matches[0]; await keep.edit(embed=embed,view=view)
-                for old in matches[1:]:
-                    try: await old.delete()
-                    except (discord.Forbidden,discord.NotFound,discord.HTTPException): pass
-            else: await channel.send(embed=embed,view=view)
-        except (discord.Forbidden,discord.HTTPException) as e: print(f"[APPLICATIONS] panel update failed: {e}")
+        message = await upsert_fixed_panel(
+            bot,
+            channel,
+            key="applications",
+            matches=lambda message: (
+                message.author == bot.user
+                and bool(message.embeds)
+                and any(
+                    marker in (message.embeds[0].title or "")
+                    for marker in ("قدم لفريق الإدارة", "Staff Applications", "Candidatures Staff")
+                )
+            ),
+            embed=embed,
+            view=view,
+            history_limit=None,
+        )
+        if message is None:
+            print("[APPLICATIONS] panel update failed")
     
     
     @bot.hybrid_command(name="setupapplications")

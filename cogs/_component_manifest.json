@@ -1,6 +1,6 @@
 {
   "description": "Hashes lock the reviewed component bytes and execution order; intentional feature revisions update this baseline.",
-  "joined_sha256": "5aa1634061b635d9deb3d8c4fa2ca8f2bcc6c1224b4edccad9bd16ed1e71034e",
+  "joined_sha256": "e376d4917d2ee1af872654238da212a75327d3d1b623e3ff27b2ede729218b34",
   "events_before_setup_hook": [
     "on_voice_state_update",
     "on_member_join",
@@ -71,35 +71,35 @@
       "path": "cogs/moderation_core.py",
       "original_start_line": 3231,
       "original_end_line": 3521,
-      "sha256": "da57c8a1f690f61e1ee62d172bc96d01d8eb87650f7b1e33ecd1a4b9a8d6600d"
+      "sha256": "aeab46d7c0bb967466a5297574e2dc87d9f4598daa1288389f15e92170e7cd2c"
     },
     {
       "name": "access_panels",
       "path": "cogs/access_panels.py",
       "original_start_line": 3522,
       "original_end_line": 4289,
-      "sha256": "2ba3dc6d96004b5414999864c9eb7627dccdac092aec25ad7ae46bd325cd507e"
+      "sha256": "f43a8102d84080421962a667b8563d325c2c42f07b4bddfeafbd2c0e9a35116b"
     },
     {
       "name": "support_system",
       "path": "cogs/support_system.py",
       "original_start_line": 4290,
       "original_end_line": 5092,
-      "sha256": "ef3378a5a82490bbddb838aa1b0f9bf62ec3c0cf950cc381d747adf214230285"
+      "sha256": "e61dbc0146cd137cb29147d023ff911f65062480e866b13ac5dfe95a3134ef38"
     },
     {
       "name": "applications",
       "path": "cogs/applications.py",
       "original_start_line": 5093,
       "original_end_line": 5375,
-      "sha256": "e762a264457edb42fdfdd4bd6e3cb0ddc2a6d1ff3954d0ae7e2203ae79538c90"
+      "sha256": "5b3e833665c78ec50f47a8c5103f88503bcc6d9bb1a9be5c71a627b0b7ca5955"
     },
     {
       "name": "suggestions",
       "path": "cogs/suggestions.py",
       "original_start_line": 5376,
       "original_end_line": 5943,
-      "sha256": "8fd0c2640eab10460a04925646cefe2c12fdfbadd936b58ed5f3c722de4d8800"
+      "sha256": "44fba3b5e4cbe05df14ecb5cc0ce7fb9bddfb9c3ebc53edcf0af304231be4f72"
     },
     {
       "name": "birthdays",
@@ -120,7 +120,7 @@
       "path": "cogs/temp_voice.py",
       "original_start_line": 6736,
       "original_end_line": 7844,
-      "sha256": "6c816a4ecae6436ddde30aa4266195eb796e9b444e1ef5e3f270cac247940d1e"
+      "sha256": "aea95fc583fc81cf50d55c533ca376a3eae5f2584afa0d9a16bc159b719ea2ea"
     },
     {
       "name": "temp_music",
@@ -141,7 +141,7 @@
       "path": "cogs/server_setup.py",
       "original_start_line": 8414,
       "original_end_line": 8842,
-      "sha256": "783e16903b09e44c55c6c728efd2de3c54be7e04ba61fe0f518c03e4a896fd99"
+      "sha256": "cb4731ef54fa02623991cb54d10dd8f31796fa3a6a15121b66fc8ec4888c1f1a"
     },
     {
       "name": "member_events",
@@ -183,7 +183,7 @@
       "path": "cogs/levels_center.py",
       "original_start_line": 10873,
       "original_end_line": 11444,
-      "sha256": "fb906d3d5af8be06c6116ed77d044998f75929c7998423ed1f6a0106b5ad96c2"
+      "sha256": "cf4081542ef4dbbba73fab7d22c12d1f6d2ce2be7a269a2f6f14a4e825ec654b"
     },
     {
       "name": "verification_commands",
@@ -204,21 +204,21 @@
       "path": "cogs/automation_tasks.py",
       "original_start_line": 12021,
       "original_end_line": 12455,
-      "sha256": "9368bbe79c1372755a7406098dd61745fd19e191092e5252886dacc07ab5b118"
+      "sha256": "3498cb05b78fc7919ebf12199fb80d307b2d04b16e10078666b61c1f8a0ce427"
     },
     {
       "name": "owner_control",
       "path": "cogs/owner_control.py",
       "original_start_line": 12456,
       "original_end_line": 13608,
-      "sha256": "7decc5204ae8e8aba977b503d332716e0e59ca48a433cb937c66178c98fe880c"
+      "sha256": "f658c141a34c58522895c5f79f807eff5471e9bd873ff469a46f213b82b3c3c2"
     },
     {
       "name": "ready_events",
       "path": "cogs/ready_events.py",
       "original_start_line": 13609,
       "original_end_line": 13761,
-      "sha256": "3596910adea0656fa12fa914834404427c85b5ebc3eac5d62d1bd5cd428a84e0"
+      "sha256": "d982d4a6e351fce8438aded340ab70c499e1e3f40236d7129497dacdc92960bf"
     }
   ]
 }

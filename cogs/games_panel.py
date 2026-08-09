@@ -12,6 +12,7 @@ import discord
 from discord.ext import commands
 
 import games_config as cfg
+from cogs.panel_registry import upsert_fixed_panel
 
 
 # ═══════════════════════════════════════════════════════
@@ -717,32 +718,29 @@ class GamesPanel(commands.Cog):
         self.bot.add_view(LeaderboardPanelView(self.bot,lang="darija",persistent=True))
         print("✅ [ARCADE] Persistent hub + Shop + Leaderboards registered.")
 
-    async def _ensure_single(self,channel,match,embed,view):
-        matches=[]
-        try:
-            async for msg in channel.history(limit=60):
-                if msg.author!=self.bot.user or not msg.embeds: continue
-                title=msg.embeds[0].title or ""
-                if match(title): matches.append(msg)
-            if matches:
-                keep=matches[0]
-                await keep.edit(embed=embed,view=view)
-                for extra in matches[1:]:
-                    try: await extra.delete()
-                    except (discord.Forbidden,discord.HTTPException): pass
-            else:
-                await channel.send(embed=embed,view=view)
-        except (discord.Forbidden,discord.HTTPException):
-            pass
+    async def _ensure_single(self, channel, match, embed, view, *, key="panel"):
+        await upsert_fixed_panel(
+            self.bot,
+            channel,
+            key=f"games:{key}",
+            matches=lambda msg: (
+                msg.author == self.bot.user
+                and bool(msg.embeds)
+                and match(msg.embeds[0].title or "")
+            ),
+            embed=embed,
+            view=view,
+            history_limit=None,
+        )
 
     @commands.Cog.listener()
     async def on_ready(self):
         if cfg.GAMES_PANEL_CHANNEL_ID and (ch:=self.bot.get_channel(cfg.GAMES_PANEL_CHANNEL_ID)):
-            await self._ensure_single(ch,lambda t:("ARCADE" in t or "Mini Games" in t),self._build_arcade_embed(),GamesPanelView(self.bot,"darija"))
+            await self._ensure_single(ch,lambda t:t == "🎮・ARCADE — GGMW9",self._build_arcade_embed(),GamesPanelView(self.bot,"darija"),key="arcade")
         if getattr(cfg,"SHOP_PANEL_CHANNEL_ID",0) and (ch:=self.bot.get_channel(cfg.SHOP_PANEL_CHANNEL_ID)):
-            await self._ensure_single(ch,lambda t:("Marketplace" in t or "المتجر" in t),self._build_shop_panel_embed(),ShopPanelView(self.bot,"darija"))
+            await self._ensure_single(ch,lambda t:t in {"🛒 GGMW9 Marketplace", "🛒 متجر GGMW9", "🛒 Boutique GGMW9"},self._build_shop_panel_embed(),ShopPanelView(self.bot,"darija"),key="shop")
         if getattr(cfg,"GAMES_LEADERBOARD_CHANNEL_ID",0) and (ch:=self.bot.get_channel(cfg.GAMES_LEADERBOARD_CHANNEL_ID)):
-            await self._ensure_single(ch,lambda t:"Leaderboards" in t,self._build_leaderboard_embed(),LeaderboardPanelView(self.bot,lang="darija",persistent=True))
+            await self._ensure_single(ch,lambda t:t in {"🏆 Leaderboards", "🏆 الترتيب", "🏆 Classements"},self._build_leaderboard_embed(),LeaderboardPanelView(self.bot,lang="darija",persistent=True),key="leaderboards")
 
     def _build_arcade_embed(self):
         return build_arcade_personal_embed("darija")

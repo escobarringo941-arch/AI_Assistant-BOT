@@ -751,37 +751,58 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         if not is_temp_voice_channel(channel):
             return None
         rec = get_temp_voice_acl(channel)
-        msg_id = rec.get("panel_message_id")
-        if msg_id:
-            try:
-                msg = await channel.fetch_message(int(msg_id))
-                await msg.edit(embed=build_temp_voice_control_embed(channel), view=TempVoiceControlView(bool(rec.get("private"))))
-                return msg
-            except (discord.NotFound, discord.Forbidden, discord.HTTPException, AttributeError, TypeError, ValueError) as e:
-                print(f"[TEMP-VOICE PANEL] refresh فشل فـ {channel.id}: {e}")
-                rec["panel_message_id"] = None
-                save_temp_voice_acl()
-        if create_if_missing:
-            return await send_temp_voice_control_panel(channel)
-        return None
+        embed = build_temp_voice_control_embed(channel)
+        view = TempVoiceControlView(bool(rec.get("private")))
+
+        def remember(message_id: int):
+            rec["panel_message_id"] = int(message_id)
+            save_temp_voice_acl()
+
+        message = await upsert_fixed_panel(
+            bot,
+            channel,
+            key="temp_voice_control",
+            matches=lambda message: (
+                message.author == bot.user
+                and bool(message.embeds)
+                and (message.embeds[0].title or "") == "🎛️ تحكم كامل فالروم المؤقتة"
+            ),
+            content=f"<@{get_temp_voice_owner_id(channel)}> هادي لوحة التحكم الكاملة ديال الروم ديالك 👇",
+            embed=embed,
+            view=view,
+            message_id=rec.get("panel_message_id"),
+            save_message_id=remember,
+            history_limit=100,
+            create_if_missing=create_if_missing,
+        )
+        return message
     
     
     async def send_temp_voice_control_panel(channel: discord.VoiceChannel):
         if not is_temp_voice_channel(channel):
             return None
         rec = get_temp_voice_acl(channel)
-        try:
-            msg = await channel.send(
-                content=f"<@{get_temp_voice_owner_id(channel)}> هادي لوحة التحكم الكاملة ديال الروم ديالك 👇",
-                embed=build_temp_voice_control_embed(channel),
-                view=TempVoiceControlView(bool(rec.get("private")))
-            )
-            rec["panel_message_id"] = msg.id
+        def remember(message_id: int):
+            rec["panel_message_id"] = int(message_id)
             save_temp_voice_acl()
-            return msg
-        except (discord.Forbidden, discord.HTTPException, AttributeError, TypeError, ValueError) as e:
-            print(f"[TEMP-VOICE PANEL] ما قدرتش نبعث البانل فـ {channel.id}: {e}")
-            return None
+
+        return await upsert_fixed_panel(
+            bot,
+            channel,
+            key="temp_voice_control",
+            matches=lambda message: (
+                message.author == bot.user
+                and bool(message.embeds)
+                and (message.embeds[0].title or "") == "🎛️ تحكم كامل فالروم المؤقتة"
+            ),
+            content=f"<@{get_temp_voice_owner_id(channel)}> هادي لوحة التحكم الكاملة ديال الروم ديالك 👇",
+            embed=build_temp_voice_control_embed(channel),
+            view=TempVoiceControlView(bool(rec.get("private"))),
+            message_id=rec.get("panel_message_id"),
+            save_message_id=remember,
+            history_limit=100,
+            create_if_missing=True,
+        )
     
     
     def temp_voice_permission_problems(guild: discord.Guild) -> list:

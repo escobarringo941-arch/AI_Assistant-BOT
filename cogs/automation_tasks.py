@@ -218,23 +218,28 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         guild = channel.guild
         embed = await build_stats_embed(guild)
         msg_id = stats_message_ids.get(str(guild.id))
-    
-        if msg_id:
-            try:
-                msg = await channel.fetch_message(int(msg_id))
-                await msg.edit(embed=embed)
-                return
-            except (discord.NotFound, discord.Forbidden):
-                pass
-            except Exception as e:
-                print(f"[STATS] خطأ فـ التعديل: {e}")
-    
-        try:
-            new_msg = await channel.send(embed=embed)
-            stats_message_ids[str(guild.id)] = new_msg.id
-            save_stats_message_ids()
-        except Exception as e:
-            print(f"[STATS] خطأ فـ البعث: {e}")
+        def remember(message_id: int):
+            if stats_message_ids.get(str(guild.id)) != int(message_id):
+                stats_message_ids[str(guild.id)] = int(message_id)
+                save_stats_message_ids()
+
+        await upsert_fixed_panel(
+            bot,
+            channel,
+            key="server_status",
+            matches=lambda msg: (
+                msg.author == bot.user
+                and bool(msg.embeds)
+                and (msg.embeds[0].title or "") == f"📊 {SERVER_NAME} STATUS"
+                and f"{SERVER_NAME} | آخر تحديث" in (
+                    msg.embeds[0].footer.text if msg.embeds[0].footer else ""
+                )
+            ),
+            embed=embed,
+            message_id=msg_id,
+            save_message_id=remember,
+            history_limit=100,
+        )
     
     
     @update_stats.before_loop
@@ -310,23 +315,28 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         guild = channel.guild
         embed = await build_admin_list_embed(guild)
         msg_id = admin_list_message_ids.get(str(guild.id))
-    
-        if msg_id:
-            try:
-                msg = await channel.fetch_message(int(msg_id))
-                await msg.edit(embed=embed)
-                return
-            except (discord.NotFound, discord.Forbidden):
-                pass
-            except Exception as e:
-                print(f"[ADMIN_LIST] خطأ فـ التعديل: {e}")
-    
-        try:
-            new_msg = await channel.send(embed=embed)
-            admin_list_message_ids[str(guild.id)] = new_msg.id
-            save_admin_list_message_ids()
-        except Exception as e:
-            print(f"[ADMIN_LIST] خطأ فـ البعث: {e}")
+        def remember(message_id: int):
+            if admin_list_message_ids.get(str(guild.id)) != int(message_id):
+                admin_list_message_ids[str(guild.id)] = int(message_id)
+                save_admin_list_message_ids()
+
+        await upsert_fixed_panel(
+            bot,
+            channel,
+            key="admin_list",
+            matches=lambda msg: (
+                msg.author == bot.user
+                and bool(msg.embeds)
+                and (msg.embeds[0].title or "") == "👑 لائحة الإدارة"
+                and f"{SERVER_NAME} | آخر تحديث" in (
+                    msg.embeds[0].footer.text if msg.embeds[0].footer else ""
+                )
+            ),
+            embed=embed,
+            message_id=msg_id,
+            save_message_id=remember,
+            history_limit=100,
+        )
     
     
     @update_admin_list.before_loop

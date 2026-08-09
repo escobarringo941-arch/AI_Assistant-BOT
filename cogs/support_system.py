@@ -770,26 +770,26 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             return
     
         await cleanup_legacy_ticket_panel(guild)
-        existing = None
-        try:
-            async for message in channel.history(limit=30):
-                if message.author != bot.user or not message.embeds:
-                    continue
-                title = message.embeds[0].title or ""
-                if "Support Center" in title or "Centre d'assistance" in title:
-                    existing = message
-                    break
-        except discord.Forbidden:
-            return
-    
         embed = build_support_center_embed("darija")
-        try:
-            if existing:
-                await existing.edit(content=None, embed=embed, view=SupportCenterView("darija"))
-            else:
-                await channel.send(embed=embed, view=SupportCenterView("darija"))
-        except (discord.Forbidden, discord.HTTPException) as e:
-            print(f"[SUPPORT] ❌ ما قدرتش نصاوب/نحدث Support Center: {e}")
+        message = await upsert_fixed_panel(
+            bot,
+            channel,
+            key="support_center",
+            matches=lambda message: (
+                message.author == bot.user
+                and bool(message.embeds)
+                and any(
+                    marker in (message.embeds[0].title or "")
+                    for marker in ("Support Center", "Centre d'assistance")
+                )
+            ),
+            content=None,
+            embed=embed,
+            view=SupportCenterView("darija"),
+            history_limit=None,
+        )
+        if message is None:
+            print("[SUPPORT] ❌ ما قدرتش نصاوب/نحدث Support Center دابا.")
     
     
     # Compatibility wrapper — ما كيتستعملش كواجهة مستقلة.

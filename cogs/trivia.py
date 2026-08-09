@@ -38,6 +38,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 from storage import JsonStore
+from cogs.panel_registry import upsert_fixed_panel
 from games_config import (
     DATA_DIR,
     CURRENCY_NAME, CURRENCY_NAME_PLURAL, CURRENCY_EMOJI, COINS_DAILY_CAP, fmt_money,
@@ -952,33 +953,26 @@ class Trivia(commands.Cog):
 
         embed = build_trivia_panel_embed(guild, "darija")
 
-        matches = []
-        try:
-            async for message in channel.history(limit=40):
-                if (
-                    message.author == self.bot.user
-                    and message.embeds
-                    and "Trivia" in (message.embeds[0].title or "")
-                ):
-                    matches.append(message)
-        except discord.Forbidden:
-            return False
-
-        try:
-            if matches:
-                keep = matches[0]
-                await keep.edit(embed=embed, view=TriviaGamePanelView(self))
-                for extra in matches[1:]:
-                    try:
-                        await extra.delete()
-                    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                        pass
-            else:
-                await channel.send(embed=embed, view=TriviaGamePanelView(self))
-            return True
-        except discord.HTTPException as e:
-            print(f"[TRIVIA] ما قدرتش نحدّث panel: {e}")
-            return False
+        message = await upsert_fixed_panel(
+            self.bot,
+            channel,
+            key="trivia",
+            matches=lambda message: (
+                message.author == self.bot.user
+                and bool(message.embeds)
+                and (message.embeds[0].title or "") in {
+                    "🧠 مرحبا بيك فـ لعبة Trivia",
+                    "🧠 Welcome to Trivia",
+                    "🧠 Bienvenue dans Trivia",
+                }
+            ),
+            embed=embed,
+            view=TriviaGamePanelView(self),
+            history_limit=None,
+        )
+        if message is None:
+            print("[TRIVIA] ما قدرتش نحدّث panel دابا.")
+        return message is not None
 
     # ═══════════════════════════════════════════════════
     # ║                    الأوامر                          ║
