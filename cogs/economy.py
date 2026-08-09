@@ -353,6 +353,15 @@ class Economy(commands.Cog):
             # Used so Admin/Moderator can keep their sidebar group while
             # a lower personal color role controls only the visible name color.
             "staff_color_passthrough": {},
+            # GGMW9 CITY — money never disappears outside the central ledger.
+            "city_escrow": {},
+            "city_business_accounts": {},
+            "city_wage_protection": {"date": None, "used": 0},
+            "city_seed_done": False,
+            "total_city_tax": 0,
+            "total_city_payroll": 0,
+            "total_city_services": 0,
+            "total_city_projects": 0,
         }
         for key, value in defaults.items():
             if key not in root:
@@ -760,6 +769,291 @@ class Economy(commands.Cog):
         return granted
 
     # ════════════════════════════════════════════════
+    # GGMW9 CITY — Escrow / Business / Payroll API
+    # ════════════════════════════════════════════════
+
+    def city_business_account(self, guild_id: int, business_id: str) -> dict:
+        sys = self._system(guild_id)
+        return sys.setdefault("city_business_accounts", {}).setdefault(
+            str(business_id),
+            {"operating": 0, "payroll": 0, "profit": 0, "revenue": 0, "payroll_paid": 0},
+        )
+
+    def city_business_totals(self, guild_id: int) -> dict:
+        accounts = self._system(guild_id).get("city_business_accounts", {}) or {}
+        totals = {"operating": 0, "payroll": 0, "profit": 0, "revenue": 0, "payroll_paid": 0}
+        for acc in accounts.values():
+            for key in totals:
+                totals[key] += max(0, int(acc.get(key, 0) or 0))
+        return totals
+
+    def city_escrow_total(self, guild_id: int) -> int:
+        total = 0
+        for entry in (self._system(guild_id).get("city_escrow", {}) or {}).values():
+            total += max(0, int((entry or {}).get("amount", 0) or 0))
+        return total
+
+    def city_get_escrow(self, guild_id: int, escrow_key: str) -> dict:
+        return dict((self._system(guild_id).get("city_escrow", {}) or {}).get(str(escrow_key)) or {})
+
+    def city_hold_escrow(
+        self,
+        guild_id: int,
+        user_id: int,
+        escrow_key: str,
+        amount: int,
+        *,
+        kind: str,
+        description: str,
+    ) -> bool:
+        amount = max(0, int(amount))
+        if amount <= 0 or not self.spend(guild_id, user_id, amount):
+            return False
+        sys = self._system(guild_id)
+        key = str(escrow_key)
+        if key in sys.setdefault("city_escrow", {}):
+            # Defensive rollback: a duplicate escrow key must never double-charge.
+            self.add_coins(guild_id, user_id, amount, source="city_escrow_rollback", respect_cap=False, count_as_earned=False)
+            return False
+        sys["city_escrow"][key] = {
+            "amount": amount,
+            "owner_id": int(user_id),
+            "kind": str(kind),
+            "description": str(description)[:300],
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        self._record_transaction(
+            guild_id,
+            user_id=user_id,
+            kind="city_escrow_hold",
+            amount=-amount,
+            source=kind,
+            description=description,
+            splits={"escrow_key": key},
+        )
+        self.system_db.save()
+        return True
+
+    def city_refund_escrow(self, guild_id: int, escrow_key: str, *, reason: str = "refund") -> int:
+        sys = self._system(guild_id)
+        entry = sys.setdefault("city_escrow", {}).pop(str(escrow_key), None)
+        if not entry:
+            return 0
+        amount = max(0, int(entry.get("amount", 0) or 0))
+        user_id = int(entry.get("owner_id", 0) or 0)
+        if user_id and amount:
+            self.add_coins(guild_id, user_id, amount, source="city_escrow_refund", respect_cap=False, count_as_earned=False)
+            self._record_transaction(
+                guild_id,
+                user_id=user_id,
+                kind="city_escrow_refund",
+                amount=amount,
+                source=str(entry.get("kind") or "city"),
+                description=reason,
+                splits={"escrow_key": str(escrow_key)},
+            )
+        self.system_db.save()
+        return amount
+
+    def city_release_service_escrow(
+        self,
+        guild_id: int,
+        escrow_key: str,
+        *,
+        worker_id: int,
+        business_id: str,
+        worker_share_bps: int,
+        tax_bps: int,
+        description: str,
+    ) -> dict:
+        sys = self._system(guild_id)
+        entry = sys.setdefault("city_escrow", {}).pop(str(escrow_key), None)
+        if not entry:
+            return {"gross": 0, "worker": 0, "tax": 0, "business": 0}
+        gross = max(0, int(entry.get("amount", 0) or 0))
+        tax_bps = max(0, min(3000, int(tax_bps)))
+        worker_share_bps = max(0, min(9500, int(worker_share_bps)))
+        tax = gross * tax_bps // 10000
+        distributable = gross - tax
+        worker_pay = distributable * worker_share_bps // 10000
+        business_total = distributable - worker_pay
+
+        payroll_bps = int(getattr(cfg, "CITY_BUSINESS_PAYROLL_SHARE_BPS", 5500) or 5500)
+        operating_bps = int(getattr(cfg, "CITY_BUSINESS_OPERATING_SHARE_BPS", 3000) or 3000)
+        payroll = business_total * payroll_bps // 10000
+        operating = business_total * operating_bps // 10000
+        profit = business_total - payroll - operating
+
+        if worker_pay:
+            self._set_bank_balance(guild_id, worker_id, self.get_bank_balance(guild_id, worker_id) + worker_pay)
+        business = self.city_business_account(guild_id, business_id)
+        business["payroll"] = max(0, int(business.get("payroll", 0) or 0)) + payroll
+        business["operating"] = max(0, int(business.get("operating", 0) or 0)) + operating
+        business["profit"] = max(0, int(business.get("profit", 0) or 0)) + profit
+        business["revenue"] = max(0, int(business.get("revenue", 0) or 0)) + gross
+        sys["treasury"] = max(0, int(sys.get("treasury", 0) or 0)) + tax
+        sys["total_city_tax"] = int(sys.get("total_city_tax", 0) or 0) + tax
+        sys["total_city_services"] = int(sys.get("total_city_services", 0) or 0) + gross
+
+        self._record_transaction(
+            guild_id,
+            user_id=worker_id,
+            kind="city_service_income",
+            amount=worker_pay,
+            source="services_market",
+            description=description,
+            splits={
+                "gross": gross, "tax": tax, "business": business_total,
+                "payroll": payroll, "operating": operating, "profit": profit,
+            },
+        )
+        self.system_db.save()
+        return {
+            "gross": gross, "worker": worker_pay, "tax": tax, "business": business_total,
+            "payroll": payroll, "operating": operating, "profit": profit,
+        }
+
+    def city_release_project_escrow(
+        self,
+        guild_id: int,
+        escrow_key: str,
+        *,
+        worker_id: int,
+        release_amount: int,
+        tax_bps: int,
+        description: str,
+    ) -> dict:
+        sys = self._system(guild_id)
+        key = str(escrow_key)
+        entry = sys.setdefault("city_escrow", {}).get(key)
+        if not entry:
+            return {"gross": 0, "worker": 0, "tax": 0, "remaining": 0}
+        remaining = max(0, int(entry.get("amount", 0) or 0))
+        gross = min(remaining, max(0, int(release_amount)))
+        if gross <= 0:
+            return {"gross": 0, "worker": 0, "tax": 0, "remaining": remaining}
+        tax = gross * max(0, min(3000, int(tax_bps))) // 10000
+        worker_pay = gross - tax
+        entry["amount"] = remaining - gross
+        if int(entry["amount"]) <= 0:
+            sys["city_escrow"].pop(key, None)
+        if worker_pay:
+            self._set_bank_balance(guild_id, worker_id, self.get_bank_balance(guild_id, worker_id) + worker_pay)
+        sys["treasury"] = max(0, int(sys.get("treasury", 0) or 0)) + tax
+        sys["total_city_tax"] = int(sys.get("total_city_tax", 0) or 0) + tax
+        sys["total_city_projects"] = int(sys.get("total_city_projects", 0) or 0) + gross
+        self._record_transaction(
+            guild_id,
+            user_id=worker_id,
+            kind="city_project_income",
+            amount=worker_pay,
+            source="projects_board",
+            description=description,
+            splits={"gross": gross, "tax": tax, "escrow_key": key},
+        )
+        self.system_db.save()
+        return {"gross": gross, "worker": worker_pay, "tax": tax, "remaining": max(0, remaining-gross)}
+
+    def city_direct_tip(self, guild_id: int, customer_id: int, worker_id: int, amount: int, description: str) -> bool:
+        amount = max(0, int(amount))
+        if amount <= 0 or not self.spend(guild_id, customer_id, amount):
+            return False
+        self._set_bank_balance(guild_id, worker_id, self.get_bank_balance(guild_id, worker_id) + amount)
+        self._record_transaction(
+            guild_id, user_id=customer_id, kind="city_tip_sent", amount=-amount,
+            source="city_tip", description=description, splits={"worker_id": worker_id},
+        )
+        self._record_transaction(
+            guild_id, user_id=worker_id, kind="city_tip_received", amount=amount,
+            source="city_tip", description=description, splits={"customer_id": customer_id},
+        )
+        self.system_db.save()
+        return True
+
+    def city_treasury_bonus_to_bank(self, guild_id: int, user_id: int, amount: int, description: str) -> int:
+        sys = self._system(guild_id)
+        amount = min(max(0, int(amount)), max(0, int(sys.get("treasury", 0) or 0)))
+        if amount <= 0:
+            return 0
+        sys["treasury"] -= amount
+        self._set_bank_balance(guild_id, user_id, self.get_bank_balance(guild_id, user_id) + amount)
+        self._record_transaction(
+            guild_id, user_id=user_id, kind="city_treasury_bonus", amount=amount,
+            source="ggmw9_city", description=description, splits={"treasury": -amount},
+        )
+        self.system_db.save()
+        return amount
+
+    def city_pay_salary(
+        self,
+        guild_id: int,
+        business_id: str,
+        worker_id: int,
+        amount: int,
+        description: str,
+    ) -> dict:
+        amount = max(0, int(amount))
+        business = self.city_business_account(guild_id, business_id)
+        payroll_available = max(0, int(business.get("payroll", 0) or 0))
+        from_business = min(amount, payroll_available)
+        short = amount - from_business
+
+        sys = self._system(guild_id)
+        today = datetime.now(timezone.utc).date().isoformat()
+        protection = sys.setdefault("city_wage_protection", {"date": None, "used": 0})
+        if protection.get("date") != today:
+            protection.clear(); protection.update({"date": today, "used": 0})
+        treasury = max(0, int(sys.get("treasury", 0) or 0))
+        dynamic_cap = treasury * int(getattr(cfg, "CITY_WAGE_PROTECTION_TREASURY_BPS", 300) or 300) // 10000
+        daily_cap = min(int(getattr(cfg, "CITY_WAGE_PROTECTION_DAILY_CAP", 25000) or 25000), dynamic_cap)
+        remaining_protection = max(0, daily_cap - int(protection.get("used", 0) or 0))
+        from_protection = min(short, treasury, remaining_protection)
+        paid = from_business + from_protection
+
+        if from_business:
+            business["payroll"] = payroll_available - from_business
+        if from_protection:
+            sys["treasury"] = treasury - from_protection
+            protection["used"] = int(protection.get("used", 0) or 0) + from_protection
+        if paid:
+            self._set_bank_balance(guild_id, worker_id, self.get_bank_balance(guild_id, worker_id) + paid)
+            business["payroll_paid"] = int(business.get("payroll_paid", 0) or 0) + paid
+            sys["total_city_payroll"] = int(sys.get("total_city_payroll", 0) or 0) + paid
+            self._record_transaction(
+                guild_id, user_id=worker_id, kind="city_salary", amount=paid,
+                source=str(business_id), description=description,
+                splits={"business_payroll": from_business, "wage_protection": from_protection, "due": amount-paid},
+            )
+        self.system_db.save()
+        return {"requested": amount, "paid": paid, "due": max(0, amount-paid), "business": from_business, "protection": from_protection}
+
+    def city_seed_business_payroll(self, guild_id: int, business_ids: list) -> dict:
+        sys = self._system(guild_id)
+        if sys.get("city_seed_done"):
+            return {"seeded": 0, "businesses": 0, "already_done": True}
+        treasury = max(0, int(sys.get("treasury", 0) or 0))
+        cap = min(
+            int(getattr(cfg, "CITY_INITIAL_PAYROLL_SEED_CAP", 50000) or 50000),
+            treasury * int(getattr(cfg, "CITY_INITIAL_PAYROLL_SEED_BPS", 800) or 800) // 10000,
+        )
+        ids = [str(x) for x in dict.fromkeys(business_ids) if x]
+        if not ids or cap <= 0:
+            sys["city_seed_done"] = True
+            self.system_db.save()
+            return {"seeded": 0, "businesses": len(ids), "already_done": False}
+        each = cap // len(ids)
+        used = 0
+        for bid in ids:
+            if each <= 0: break
+            acc = self.city_business_account(guild_id, bid)
+            acc["payroll"] = int(acc.get("payroll", 0) or 0) + each
+            used += each
+        sys["treasury"] = max(0, treasury - used)
+        sys["city_seed_done"] = True
+        self.system_db.save()
+        return {"seeded": used, "businesses": len(ids), "already_done": False}
+
+    # ════════════════════════════════════════════════
     # Real Bank — Savings interest / transfers / assets
     # ════════════════════════════════════════════════
 
@@ -786,7 +1080,14 @@ class Economy(commands.Cog):
         boost = int(getattr(cfg, "BANK_INTEREST_BOOST_BPS", 5) or 5) if self._perk_active(
             guild_id, user_id, "bank_interest_boost_expires"
         ) else 0
-        return max(0, base + level_bonus + boost)
+        career_bonus = 0
+        career = self.bot.get_cog("CareerCity")
+        if career and hasattr(career, "get_bank_interest_bonus_bps"):
+            try:
+                career_bonus = int(career.get_bank_interest_bonus_bps(guild_id, user_id) or 0)
+            except Exception:
+                career_bonus = 0
+        return max(0, base + level_bonus + boost + career_bonus)
 
     def get_bank_interest_rate_text(self, guild_id: int, user_id: int) -> str:
         bps = self.get_bank_interest_bps(guild_id, user_id)
@@ -1049,7 +1350,15 @@ class Economy(commands.Cog):
 
     def get_shop_discount_percent(self, guild_id: int, user_id: int) -> int:
         perks = self.get_level_perks(guild_id, user_id)
-        return max(0, min(50, int(perks.get("shop_discount_percent", 0) or 0)))
+        level_discount = int(perks.get("shop_discount_percent", 0) or 0)
+        career_discount = 0
+        career = self.bot.get_cog("CareerCity")
+        if career and hasattr(career, "get_shop_discount_percent"):
+            try:
+                career_discount = int(career.get_shop_discount_percent(guild_id, user_id) or 0)
+            except Exception:
+                career_discount = 0
+        return max(0, min(50, level_discount + career_discount))
 
     def get_shop_price(self, guild_id: int, user_id: int, base_price: int) -> int:
         base_price = max(0, int(base_price))
@@ -1716,13 +2025,16 @@ class Economy(commands.Cog):
         active_loans = [loan for loan in sys.get("loans", {}).values() if loan and int(loan.get("remaining", 0) or 0) > 0]
         loans_outstanding = sum(int(loan.get("remaining", 0) or 0) for loan in active_loans)
         overdue_loans = sum(1 for loan in active_loans if self._loan_is_overdue(loan))
-        live_supply = wallets + bank_total + sys["treasury"] + sys["jackpot"] + sys["events"]
+        city_escrow = self.city_escrow_total(guild.id)
+        city_business = self.city_business_totals(guild.id)
+        city_business_total = city_business["operating"] + city_business["payroll"] + city_business["profit"]
+        live_supply = wallets + bank_total + sys["treasury"] + sys["jackpot"] + sys["events"] + city_escrow + city_business_total
         if lang == "en":
             title, desc = "📊 GGMW9 Economy — Live", "Live USD economy: Wallet + Bank + Treasury + Casino + Shop + Assets."
-            names = ["💳 Wallets","🏦 Bank Deposits","🏛️ Treasury","🎰 Jackpot","🎉 Events","🔥 Burned","🏠 Asset القيمة المسجلة Value","💳 Loans Outstanding","⚠️ Overdue Loans","💵 Live Money Supply"]
+            names = ["💳 Wallets","🏦 Bank Deposits","🏛️ Treasury","🎰 Jackpot","🎉 Events","🔥 Burned","🏠 Asset Book Value","💳 Loans Outstanding","⚠️ Overdue Loans","💵 Live Money Supply"]
         elif lang == "fr":
-            title, desc = "📊 Économie GGMW9 — Live", "Économie USD en direct : Wallet + Banque + Trésor + Casino + Boutique + Actifs."
-            names = ["💳 Wallets","🏦 Dépôts bancaires","🏛️ Trésor","🎰 Jackpot","🎉 Événements","🔥 Détruit","🏠 Valeur des actifs","💳 Prêts en cours","⚠️ Prêts en retard","💵 Masse monétaire"]
+            title, desc = "📊 Économie GGMW9 — Live", "Économie USD en direct : Portefeuilles + Banque + Trésor + Casino + Boutique + Actifs."
+            names = ["💳 Portefeuilles","🏦 Dépôts bancaires","🏛️ Trésor","🎰 Jackpot","🎉 Événements","🔥 Détruit","🏠 Valeur des actifs","💳 Prêts en cours","⚠️ Prêts en retard","💵 Masse monétaire"]
         else:
             title, desc = "📊 اقتصاد GGMW9 — مباشر", "نظرة مباشرة على الدولار داخل السيرفر: المحافظ + البنك + الخزينة + الرهانات + المتجر + الممتلكات."
             names = ["💳 المحافظ","🏦 ودائع البنك","🏛️ الخزينة","🎰 الجائزة الكبرى","🎉 صندوق الفعاليات","🔥 الأموال المحروقة","🏠 قيمة الممتلكات","💳 القروض المتبقية","⚠️ القروض المتأخرة","💵 الأموال المتداولة"]
@@ -1739,6 +2051,14 @@ class Economy(commands.Cog):
             loss_name, win_name = "🎰 خسائر الرهانات المسجلة", "🎉 أرباح الرهانات الصافية المسجلة"
         embed.add_field(name=loss_name,value=f"**{cfg.fmt_money(int(sys.get('total_gambling_lost',0) or 0))}**",inline=True)
         embed.add_field(name=win_name,value=f"**{cfg.fmt_money(int(sys.get('total_gambling_won',0) or 0))}**",inline=True)
+        if lang == "en":
+            city_escrow_name, city_business_name = "🏙️ CITY Escrow", "🏢 CITY Business Funds"
+        elif lang == "fr":
+            city_escrow_name, city_business_name = "🏙️ Séquestre CITY", "🏢 Fonds des entreprises CITY"
+        else:
+            city_escrow_name, city_business_name = "🏙️ الأموال المحجوزة فالمدينة", "🏢 أموال شركات المدينة"
+        embed.add_field(name=city_escrow_name,value=f"**{cfg.fmt_money(city_escrow)}**",inline=True)
+        embed.add_field(name=city_business_name,value=f"**{cfg.fmt_money(city_business_total)}**",inline=True)
         embed.set_footer(text=("🌐 الدارجة • الإنجليزية • الفرنسية" if lang=="darija" else "🌐 Darija • English • Français"))
         return embed
 
@@ -2911,10 +3231,14 @@ def _build_assets_embed(cog:"Economy",guild:discord.Guild,user:discord.Member,la
     else:
         lines=[]
         for item_id,a in assets.items():
-            paid=int(a.get("paid_price",0) or 0); resale=paid*resale_pct//100; lines.append(f"{a.get('emoji','🏠')} **{a.get('name',item_id)}** • القيمة المسجلة {cfg.fmt_money(paid)} • Sell {cfg.fmt_money(resale)}")
+            paid=int(a.get("paid_price",0) or 0); resale=paid*resale_pct//100
+            if lang=="en": detail=f"Book {cfg.fmt_money(paid)} • Sell {cfg.fmt_money(resale)}"
+            elif lang=="fr": detail=f"Valeur {cfg.fmt_money(paid)} • Revente {cfg.fmt_money(resale)}"
+            else: detail=f"القيمة المسجلة {cfg.fmt_money(paid)} • البيع {cfg.fmt_money(resale)}"
+            lines.append(f"{a.get('emoji','🏠')} **{a.get('name',item_id)}** • {detail}")
         desc="\n".join(lines)
     title=(f"🏠 الممتلكات — {user.display_name}" if lang=="darija" else f"🏠 Assets — {user.display_name}" if lang=="en" else f"🏠 Actifs — {user.display_name}")
-    book_name="القيمة المسجلة" if lang=="darija" else "القيمة المسجلة Value" if lang=="en" else "Valeur comptable"
+    book_name="القيمة المسجلة" if lang=="darija" else "Book Value" if lang=="en" else "Valeur comptable"
     resale_name="نسبة إعادة البيع" if lang=="darija" else "Market resale" if lang=="en" else "Revente"
     e=discord.Embed(title=title,description=desc,color=discord.Color.gold()); e.add_field(name=book_name,value=f"**{cfg.fmt_money(book)}**",inline=True); e.add_field(name=resale_name,value=f"**{resale_pct}%**",inline=True); return e
 
