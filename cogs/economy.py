@@ -16,6 +16,7 @@
 
 import discord
 import re
+import math
 from discord.ext import commands, tasks
 from discord import app_commands
 from datetime import datetime, timedelta, timezone
@@ -30,6 +31,13 @@ from cogs.panel_registry import panel_lock, upsert_fixed_panel
 
 def _today_key() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+# Sources which are genuinely eligible for the Mini-Game Boost.  Casino
+# payouts, refunds, admin grants and economy reversals must never be boosted.
+_MINI_GAME_BOOST_SOURCES = frozenset({
+    "trivia", "wordle", "hangman", "reaction", "counting", "xo",
+})
 
 
 def currency_word(amount: int) -> str:
@@ -255,23 +263,40 @@ class Economy(commands.Cog):
 
                 still_active = []
                 for p in purchases:
-                    expires = p.get("expires")
-                    if not expires:
-                        still_active.append(p)
-                        continue
-                    try:
-                        expired = datetime.fromisoformat(expires) <= now
-                    except Exception:
+                    raw_expiry = p.get("expires")
+                    if not raw_expiry:
                         still_active.append(p)
                         continue
 
+                    # Parse legacy naive ISO values as UTC too.  A malformed
+                    # non-empty expiry is treated as expired, never silently
+                    # converted into a permanent benefit.
+                    expires = self._parse_shop_expiry(raw_expiry)
+                    expired = expires is None or expires <= now
                     if not expired:
                         still_active.append(p)
                         continue
 
-                    # الشراء خلصت مدتو — خاص التأثير يتحيد بصح.
-                    # إلا Discord رفض العملية، نخلي الـentry باش نعاود المحاولة
-                    # وما نخليوش perk مؤقت يتحول لدائم بالغلط.
+                    # A newer purchase can reuse the same personal role before
+                    # this 15-minute worker runs.  Drop only the stale record;
+                    # never remove the role belonging to the newer purchase.
+                    role_id = int(p.get("role_id") or 0)
+                    effect_key = p.get("effect_key")
+                    replacement = any(
+                        other is not p
+                        and self._shop_purchase_active(other)
+                        and (
+                            (role_id and int(other.get("role_id") or 0) == role_id)
+                            or (effect_key and other.get("effect_key") == effect_key)
+                        )
+                        for other in purchases
+                    )
+                    if replacement:
+                        changed = True
+                        continue
+
+                    # الشراء خلصت مدتو — خاص التأثير يتحيد بصح. إلا Discord
+                    # رفض العملية، نخلي الـentry باش نعاود المحاولة.
                     if guild is None:
                         still_active.append(p)
                         continue
@@ -284,7 +309,7 @@ class Economy(commands.Cog):
                         still_active.append(p)
                         continue
 
-                    role = guild.get_role(int(p.get("role_id") or 0)) if p.get("role_id") else None
+                    role = guild.get_role(role_id) if role_id else None
                     removed_ok = True
 
                     if member and role and role in member.roles:
@@ -299,20 +324,30 @@ class Economy(commands.Cog):
                         continue
 
                     # Personal color/custom-role purchases are unique roles.
-                    # Delete them too so the server role list does not fill up.
+                    # Do not delete a role that was assigned to another member;
+                    # and retain the record when Discord refuses deletion so a
+                    # later pass can retry instead of losing cleanup state.
                     if role and p.get("delete_role_on_expiry"):
-                        try:
-                            await role.delete(reason="انتهت مدة Role المشتراة من GGMW9 Shop")
-                        except discord.Forbidden:
-                            # The benefit is already removed from the member.
-                            print(f"[SHOP EXPIRE] ⚠️ تحيدات من العضو ولكن ماقدرتش نمسح Role {role.id}")
-                        except discord.HTTPException as e:
-                            print(f"[SHOP EXPIRE] ⚠️ Discord ماقبلش مسح Role {role.id}: {e}")
+                        other_members = [m for m in getattr(role, "members", []) if m.id != int(user_id_str)]
+                        if not other_members:
+                            try:
+                                await role.delete(reason="انتهت مدة Role المشتراة من GGMW9 Shop")
+                            except discord.NotFound:
+                                pass
+                            except (discord.Forbidden, discord.HTTPException) as e:
+                                still_active.append(p)
+                                print(f"[SHOP EXPIRE] ⚠️ ماقدرتش نمسح Role {role.id}: {e}")
+                                continue
+                        else:
+                            print(f"[SHOP EXPIRE] ℹ️ خليت Role {role.id}: مازال assigned لعضو آخر.")
 
                     changed = True
 
                 if len(still_active) != len(purchases):
                     acc["purchases"] = still_active
+
+            if guild is not None:
+                await self.sync_shop_role_countdowns(guild)
 
         if changed:
             self.db.save()
@@ -1203,7 +1238,8 @@ class Economy(commands.Cog):
         if not expires:
             return False
         try:
-            if datetime.now(timezone.utc) < datetime.fromisoformat(expires):
+            parsed = self._parse_shop_expiry(expires)
+            if parsed and datetime.now(timezone.utc) < parsed:
                 return True
         except Exception:
             pass
@@ -2487,9 +2523,95 @@ class Economy(commands.Cog):
             return None
 
     @staticmethod
+    def _shop_days_remaining(value, now=None):
+        """Return truthful whole days remaining for a temporary benefit.
+
+        ``ceil`` keeps a role at ``1 day`` until its actual expiry instant,
+        while Discord's relative timestamps continue to show the exact time.
+        """
+        expires = Economy._parse_shop_expiry(value)
+        if expires is None:
+            return None
+        now = now or datetime.now(timezone.utc)
+        seconds = (expires - now).total_seconds()
+        if seconds <= 0:
+            return 0
+        return max(1, int(math.ceil(seconds / 86400)))
+
+    @staticmethod
+    def _strip_shop_countdown(name: str) -> str:
+        """Remove a countdown suffix from names created by this feature."""
+        pattern = (
+            r"\s+•\s+\d+\s+(?:يوم باقي|أيام باقية|day(?:s)? left|"
+            r"jour(?:s)? restant(?:e|s)?)$"
+        )
+        return re.sub(pattern, "", str(name or "")).strip()
+
+    @staticmethod
     def _shop_purchase_active(entry: dict) -> bool:
-        expires = Economy._parse_shop_expiry(entry.get("expires"))
-        return expires is None or expires > datetime.now(timezone.utc)
+        raw = entry.get("expires")
+        if not raw:
+            return True
+        expires = Economy._parse_shop_expiry(raw)
+        # A non-empty malformed timestamp is not a permanent purchase.
+        return bool(expires and expires > datetime.now(timezone.utc))
+
+    def _shop_role_target_name(self, role: discord.Role, entry: dict, now=None):
+        """Build a countdown name for a unique temporary shop role.
+
+        Shared roles (LEGEND/HIGH ROLLER/BANKER/TYCOON) intentionally do not
+        call this method: one shared Discord role cannot display different
+        expiry dates for different members.
+        """
+        meta = entry.setdefault("meta", {})
+        base = str(meta.get("role_name_base") or "").strip()
+        if not base:
+            base = self._strip_shop_countdown(getattr(role, "name", ""))
+            meta["role_name_base"] = base
+
+        expires = entry.get("expires")
+        if not expires:
+            return base[:100]
+        days = self._shop_days_remaining(expires, now=now)
+        if days is None or days <= 0:
+            return base[:100]
+        suffix = f" • {days} {'يوم باقي' if days == 1 else 'أيام باقية'}"
+        return f"{base[: max(1, 100 - len(suffix))].rstrip()}{suffix}"
+
+    async def sync_shop_role_countdowns(self, guild: discord.Guild):
+        """Reconcile names of active unique temporary roles after restart.
+
+        Only roles owned by one member (personal colors/custom roles) are
+        renamed. Shared prestige roles keep stable names and their exact
+        per-member expiry remains visible in ``🧾 مشترياتي``.
+        """
+        changed = False
+        now = datetime.now(timezone.utc)
+        item_types = {str(i.get("id")): i.get("type") for i in getattr(cfg, "SHOP_ITEMS", [])}
+        for _, acc in (self.db.guild(guild.id) or {}).items():
+            for entry in acc.get("purchases", []) or []:
+                item_type = item_types.get(str(entry.get("item_id")))
+                if item_type not in {"role_color", "custom_role"} or not entry.get("delete_role_on_expiry"):
+                    continue
+                if not entry.get("expires") or self._shop_days_remaining(entry.get("expires"), now=now) in {None, 0}:
+                    continue
+                role = guild.get_role(int(entry.get("role_id") or 0)) if entry.get("role_id") else None
+                if not role:
+                    continue
+                meta = entry.setdefault("meta", {})
+                had_base = bool(str(meta.get("role_name_base") or "").strip())
+                target = self._shop_role_target_name(role, entry, now=now)
+                if not had_base:
+                    changed = True
+                if role.name == target:
+                    continue
+                try:
+                    await role.edit(name=target, reason="GGMW9 Shop — update remaining days")
+                    changed = True
+                except (discord.Forbidden, discord.HTTPException) as exc:
+                    print(f"[SHOP COUNTDOWN] ⚠️ ماقدرتش نحدّث {role.id}: {exc}")
+        if changed:
+            self.db.save()
 
     def _find_active_purchase(self, guild_id: int, user_id: int, *, effect_key: str = None, item_ids=None):
         item_ids = set(item_ids or [])
@@ -2891,8 +3013,14 @@ class Economy(commands.Cog):
             if role:
                 try:
                     unique_name = f"🎨 {member.display_name[:55]} • {member.id}"[:100]
-                    if role.name != unique_name:
-                        await role.edit(name=unique_name, reason="GGMW9 Shop color migration")
+                    meta = entry.setdefault("meta", {})
+                    meta_changed = meta.get("role_name_base") != unique_name
+                    meta["role_name_base"] = unique_name
+                    target_name = self._shop_role_target_name(role, entry)
+                    if role.name != target_name:
+                        await role.edit(name=target_name, reason="GGMW9 Shop color migration/countdown")
+                    if meta_changed:
+                        self.db.save()
                     ok, reason = await self._position_cosmetic_role(guild, role)
                     if not ok:
                         notes.append(f"⚠️ {reason}")
@@ -2910,8 +3038,26 @@ class Economy(commands.Cog):
                         notes.append(f"⚠️ الرول {role.mention} موجودة ولكن اللون ما بانش.")
                 except Exception as exc:
                     notes.append(f"⚠️ إصلاح اللون فشل: {type(exc).__name__}: {exc}")
-            else:
-                notes.append("⚠️ شراء اللون مسجل ولكن Role ديالو ما بقاتش موجودة.")
+        else:
+            notes.append("⚠️ شراء اللون مسجل ولكن Role ديالو ما بقاتش موجودة.")
+
+        # Restore any other active role benefit recorded for this member
+        # (custom/prestige/shared).  A manual role removal must not silently
+        # disable a still-paid benefit; expiry cleanup remains the authority
+        # for removing it when its timestamp is reached.
+        for entry in purchases:
+            if not self._shop_purchase_active(entry):
+                continue
+            role_id = int(entry.get("role_id") or 0)
+            if not role_id or entry.get("effect_key") == "personal_color":
+                continue
+            role = guild.get_role(role_id)
+            if not role or role in member.roles:
+                continue
+            try:
+                await member.add_roles(role, reason="GGMW9 Shop active-role repair")
+            except (discord.Forbidden, discord.HTTPException) as exc:
+                notes.append(f"⚠️ ماقدرتش نرجع {role.mention}: {exc}")
 
         return notes
 
@@ -2926,6 +3072,7 @@ class Economy(commands.Cog):
                 and (
                     p.get("effect_key") == "personal_color"
                     or p.get("item_id") in {"color_basic","color_month","permanent_color"}
+                    or p.get("role_id")
                 )
                 for p in purchases
             ):
@@ -2937,6 +3084,7 @@ class Economy(commands.Cog):
             await self.repair_member_shop_roles(guild, member)
 
         await self.sync_shop_role_hierarchy(guild)
+        await self.sync_shop_role_countdowns(guild)
 
     @commands.Cog.listener()
     async def on_member_update(self, before: discord.Member, after: discord.Member):
@@ -2992,6 +3140,12 @@ class Economy(commands.Cog):
     ) -> int:
         acc = self._acc(guild_id, user_id)
 
+        # The shop's Mini-Game Boost is intentionally applied at the shared
+        # reward boundary because the game cogs call add_coins directly.
+        # Casino/admin/refund sources are excluded by the allow-list.
+        if str(source) in _MINI_GAME_BOOST_SOURCES and amount > 0:
+            amount = self._apply_coins_boost(guild_id, user_id, amount)
+
         today = _today_key()
         if acc.get("earned_today_date") != today:
             acc["earned_today"] = 0
@@ -3031,7 +3185,6 @@ class Economy(commands.Cog):
         user = getattr(interaction_or_ctx, "user", None) or interaction_or_ctx.author
         if guild is None:
             return 0
-        amount = self._apply_coins_boost(guild.id, user.id, amount)
         return self.add_coins(guild.id, user.id, amount, source=source)
 
     def _apply_coins_boost(self, guild_id: int, user_id: int, amount: int) -> int:
@@ -3044,7 +3197,8 @@ class Economy(commands.Cog):
         if not expires:
             return amount
         try:
-            if datetime.now(timezone.utc) <= datetime.fromisoformat(expires):
+            parsed = self._parse_shop_expiry(expires)
+            if parsed and datetime.now(timezone.utc) <= parsed:
                 multiplier = acc.get("coins_boost_multiplier", 1.0)
                 return int(round(amount * multiplier))
             acc.pop("coins_boost_multiplier", None)
@@ -3624,12 +3778,18 @@ def _shop_expiry_line(entry: dict, lang: str = "darija") -> str:
     if expires is None:
         return "♾️ دائم" if lang=="darija" else "♾️ Permanent" if lang=="en" else "♾️ Permanent"
     unix = int(expires.timestamp())
+    days = Economy._shop_days_remaining(entry.get("expires"))
+    if days is not None and days > 0:
+        if lang == "darija":
+            prefix = f"⏳ {days} {'يوم باقي' if days == 1 else 'أيام باقية'} • حتى"
+        elif lang == "en":
+            prefix = f"⏳ {days} day{'s' if days != 1 else ''} left • Until"
+        else:
+            prefix = f"⏳ {days} jour{'s' if days != 1 else ''} restant{'s' if days != 1 else ''} • Jusqu’au"
+    else:
+        prefix = "⏳ حتى" if lang == "darija" else "⏳ Until" if lang == "en" else "⏳ Jusqu’au"
     return (
-        f"⏳ حتى <t:{unix}:F> (<t:{unix}:R>)"
-        if lang=="darija"
-        else f"⏳ Until <t:{unix}:F> (<t:{unix}:R>)"
-        if lang=="en"
-        else f"⏳ Jusqu’au <t:{unix}:F> (<t:{unix}:R>)"
+        f"{prefix} <t:{unix}:F> (<t:{unix}:R>)"
     )
 
 
@@ -4393,10 +4553,14 @@ async def apply_purchase(cog: "Economy", guild: discord.Guild, user: discord.Mem
             return False, "نظام XP ماشي مربوط (bot.gg ناقص)."
         try:
             data = bridge["get_user_level_data"](guild.id, user.id)
-            now = datetime.now()
+            # The leveling cog historically stores XP timestamps as naive UTC
+            # ISO values.  Keep that schema while accepting legacy aware data.
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
             hours = int(item.get("duration_hours", 1))
             try:
                 current = datetime.fromisoformat(data.get("xp_boost_expires")) if data.get("xp_boost_expires") else now
+                if current.tzinfo is not None:
+                    current = current.astimezone(timezone.utc).replace(tzinfo=None)
             except Exception:
                 current = now
             start_at = current if current > now else now
@@ -4491,9 +4655,15 @@ async def apply_purchase(cog: "Economy", guild: discord.Guild, user: discord.Mem
                 days,
                 effect_key="personal_color",
                 delete_role_on_expiry=True,
-                meta={"color": desired_color, "hex": f"#{desired_color:06X}"},
+                meta={
+                    "color": desired_color,
+                    "hex": f"#{desired_color:06X}",
+                    "role_name_base": unique_name,
+                },
                 extend=True,
             )
+
+            await cog.sync_shop_role_countdowns(guild)
 
             expires = entry.get("expires")
             if expires:
@@ -4561,8 +4731,9 @@ async def apply_purchase(cog: "Economy", guild: discord.Guild, user: discord.Mem
                 cog, guild.id, user.id, item, role.id, days=days,
                 effect_key=f"custom_role:{role.id}",
                 delete_role_on_expiry=True,
-                meta={"role_name": role.name},
+                meta={"role_name": role.name, "role_name_base": role.name},
             )
+            await cog.sync_shop_role_countdowns(guild)
             try:
                 unix = int(datetime.fromisoformat(entry["expires"]).timestamp())
                 expiry_txt = f"حتى <t:{unix}:F> (<t:{unix}:R>)"
@@ -4737,6 +4908,15 @@ def _record_purchase(
                 if p.get("expires") is None or exp is None or exp > now:
                     existing = p
                     break
+    # Migrate old personal-color records that predate ``effect_key``.  This
+    # keeps one role/expiry record when an existing member buys another color.
+    if existing is None and effect_key == "personal_color":
+        for p in reversed(purchases):
+            if p.get("item_id") in {"color_basic", "color_month", "permanent_color"}:
+                exp = parse(p.get("expires"))
+                if p.get("expires") is None or (exp and exp > now):
+                    existing = p
+                    break
 
     # Permanent purchase always wins over temporary duration.
     if days <= 0:
@@ -4751,13 +4931,27 @@ def _record_purchase(
                 base = old_exp
         expiry = (base + timedelta(days=days)).isoformat()
 
+    # A permanent color remains permanent if a temporary color is purchased
+    # later; never make the UI claim it will expire while the permanent role
+    # is still active.
+    payload_item_id = item["id"]
+    payload_delete = bool(delete_role_on_expiry)
+    payload_meta = dict(meta or {})
+    if existing and existing.get("expires") is None and days > 0:
+        payload_item_id = existing.get("item_id") or payload_item_id
+        payload_delete = bool(existing.get("delete_role_on_expiry", False))
+        old_meta = existing.get("meta") or {}
+        old_base = old_meta.get("role_name_base")
+        if old_base and not payload_meta.get("role_name_base"):
+            payload_meta["role_name_base"] = old_base
+
     payload = {
-        "item_id": item["id"],
+        "item_id": payload_item_id,
         "role_id": int(role_id) if role_id else None,
         "expires": expiry,
         "effect_key": effect_key,
-        "delete_role_on_expiry": bool(delete_role_on_expiry),
-        "meta": dict(meta or {}),
+        "delete_role_on_expiry": payload_delete,
+        "meta": payload_meta,
         "updated_at": now.isoformat(),
     }
 
