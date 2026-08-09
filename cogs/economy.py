@@ -362,6 +362,10 @@ class Economy(commands.Cog):
             "total_city_payroll": 0,
             "total_city_services": 0,
             "total_city_projects": 0,
+            # Underground stays inside the same USD money supply, but it is
+            # intentionally not exposed as a public Economy panel category.
+            "city_crew_accounts": {},
+            "total_city_underground": 0,
         }
         for key, value in defaults.items():
             if key not in root:
@@ -1026,6 +1030,140 @@ class Economy(commands.Cog):
             )
         self.system_db.save()
         return {"requested": amount, "paid": paid, "due": max(0, amount-paid), "business": from_business, "protection": from_protection}
+
+    def city_crew_account(self, guild_id: int, crew_id: str) -> dict:
+        sys = self._system(guild_id)
+        return sys.setdefault("city_crew_accounts", {}).setdefault(
+            str(crew_id), {"balance": 0, "deposited": 0, "heist_income": 0, "spent": 0}
+        )
+
+    def city_crew_total(self, guild_id: int) -> int:
+        total = 0
+        for acc in (self._system(guild_id).get("city_crew_accounts", {}) or {}).values():
+            total += max(0, int((acc or {}).get("balance", 0) or 0))
+        return total
+
+    def city_crew_deposit(self, guild_id: int, user_id: int, crew_id: str, amount: int) -> bool:
+        amount = max(0, int(amount))
+        if amount <= 0 or not self.spend(guild_id, user_id, amount):
+            return False
+        acc = self.city_crew_account(guild_id, crew_id)
+        acc["balance"] = int(acc.get("balance", 0) or 0) + amount
+        acc["deposited"] = int(acc.get("deposited", 0) or 0) + amount
+        self._record_transaction(
+            guild_id, user_id=user_id, kind="city_crew_deposit", amount=-amount,
+            source="underground_crew", description=f"Crew vault deposit {crew_id}",
+            splits={"crew_id": str(crew_id)},
+        )
+        self.system_db.save()
+        return True
+
+    def city_crew_spend(self, guild_id: int, crew_id: str, amount: int, description: str) -> bool:
+        amount = max(0, int(amount))
+        acc = self.city_crew_account(guild_id, crew_id)
+        balance = max(0, int(acc.get("balance", 0) or 0))
+        if amount <= 0 or balance < amount:
+            return False
+        acc["balance"] = balance - amount
+        acc["spent"] = int(acc.get("spent", 0) or 0) + amount
+        # Preparation spending becomes Treasury revenue rather than vanishing.
+        sys = self._system(guild_id)
+        sys["treasury"] = max(0, int(sys.get("treasury", 0) or 0)) + amount
+        sys["total_city_underground"] = int(sys.get("total_city_underground", 0) or 0) + amount
+        self._record_transaction(
+            guild_id, user_id=0, kind="city_crew_spend", amount=-amount,
+            source="underground_operation", description=description,
+            splits={"crew_id": str(crew_id), "treasury": amount},
+        )
+        self.system_db.save()
+        return True
+
+    def city_underground_supply_purchase(self, guild_id: int, buyer_id: int, amount: int, description: str) -> bool:
+        amount = max(0, int(amount))
+        if amount <= 0 or not self.spend(guild_id, buyer_id, amount):
+            return False
+        # The fictional supplier is the CITY Treasury; no money disappears.
+        sys = self._system(guild_id)
+        sys["treasury"] = max(0, int(sys.get("treasury", 0) or 0)) + amount
+        sys["total_city_underground"] = int(sys.get("total_city_underground", 0) or 0) + amount
+        self._record_transaction(
+            guild_id, user_id=buyer_id, kind="city_underground_supply", amount=-amount,
+            source="black_market", description=description, splits={"treasury": amount},
+        )
+        self.system_db.save()
+        return True
+
+    def city_release_underground_escrow(
+        self, guild_id: int, escrow_key: str, *, seller_id: int, tax_bps: int, description: str
+    ) -> dict:
+        sys = self._system(guild_id)
+        entry = sys.setdefault("city_escrow", {}).pop(str(escrow_key), None)
+        if not entry:
+            return {"gross": 0, "seller": 0, "tax": 0}
+        gross = max(0, int(entry.get("amount", 0) or 0))
+        tax = gross * max(0, min(3000, int(tax_bps))) // 10000
+        seller_pay = gross - tax
+        if seller_pay:
+            self._set_bank_balance(guild_id, seller_id, self.get_bank_balance(guild_id, seller_id) + seller_pay)
+        sys["treasury"] = max(0, int(sys.get("treasury", 0) or 0)) + tax
+        sys["total_city_underground"] = int(sys.get("total_city_underground", 0) or 0) + gross
+        self._record_transaction(
+            guild_id, user_id=seller_id, kind="city_underground_market_income", amount=seller_pay,
+            source="black_market", description=description,
+            splits={"gross": gross, "tax": tax, "escrow_key": str(escrow_key)},
+        )
+        self.system_db.save()
+        return {"gross": gross, "seller": seller_pay, "tax": tax}
+
+    def city_underground_reward_to_bank(self, guild_id: int, user_id: int, amount: int, description: str) -> int:
+        # Mission rewards are paid from Treasury, never minted.
+        sys = self._system(guild_id)
+        grant = min(max(0, int(amount)), max(0, int(sys.get("treasury", 0) or 0)))
+        if grant <= 0:
+            return 0
+        sys["treasury"] -= grant
+        self._set_bank_balance(guild_id, user_id, self.get_bank_balance(guild_id, user_id) + grant)
+        sys["total_city_underground"] = int(sys.get("total_city_underground", 0) or 0) + grant
+        self._record_transaction(
+            guild_id, user_id=user_id, kind="city_underground_mission", amount=grant,
+            source="underground_contract", description=description, splits={"treasury": -grant},
+        )
+        self.system_db.save()
+        return grant
+
+    def city_underground_heist_payout(
+        self, guild_id: int, crew_id: str, member_ids: list[int], amount: int,
+        *, crew_share_bps: int = 2500, description: str = "Virtual bank operation"
+    ) -> dict:
+        sys = self._system(guild_id)
+        available = max(0, int(sys.get("treasury", 0) or 0))
+        gross = min(max(0, int(amount)), available)
+        ids = [int(x) for x in dict.fromkeys(member_ids) if int(x) > 0]
+        if gross <= 0 or not ids:
+            return {"gross": 0, "crew": 0, "members": {}, "treasury_left": available}
+        crew_share_bps = max(0, min(8000, int(crew_share_bps)))
+        crew_take = gross * crew_share_bps // 10000
+        people_pool = gross - crew_take
+        each = people_pool // len(ids)
+        remainder = people_pool - each * len(ids)
+        paid = {}
+        for i, uid in enumerate(ids):
+            share = each + (remainder if i == 0 else 0)
+            if share:
+                self._set_bank_balance(guild_id, uid, self.get_bank_balance(guild_id, uid) + share)
+            paid[uid] = share
+            self._record_transaction(
+                guild_id, user_id=uid, kind="city_underground_heist_share", amount=share,
+                source="virtual_bank_operation", description=description,
+                splits={"crew_id": str(crew_id), "gross": gross},
+            )
+        crew = self.city_crew_account(guild_id, crew_id)
+        crew["balance"] = int(crew.get("balance", 0) or 0) + crew_take
+        crew["heist_income"] = int(crew.get("heist_income", 0) or 0) + crew_take
+        sys["treasury"] = available - gross
+        sys["total_city_underground"] = int(sys.get("total_city_underground", 0) or 0) + gross
+        self.system_db.save()
+        return {"gross": gross, "crew": crew_take, "members": paid, "treasury_left": sys["treasury"]}
 
     def city_seed_business_payroll(self, guild_id: int, business_ids: list) -> dict:
         sys = self._system(guild_id)
@@ -2027,7 +2165,8 @@ class Economy(commands.Cog):
         overdue_loans = sum(1 for loan in active_loans if self._loan_is_overdue(loan))
         city_escrow = self.city_escrow_total(guild.id)
         city_business = self.city_business_totals(guild.id)
-        city_business_total = city_business["operating"] + city_business["payroll"] + city_business["profit"]
+        city_crew_total = self.city_crew_total(guild.id)
+        city_business_total = city_business["operating"] + city_business["payroll"] + city_business["profit"] + city_crew_total
         live_supply = wallets + bank_total + sys["treasury"] + sys["jackpot"] + sys["events"] + city_escrow + city_business_total
         if lang == "en":
             title, desc = "📊 GGMW9 Economy — Live", "Live USD economy: Wallet + Bank + Treasury + Casino + Shop + Assets."

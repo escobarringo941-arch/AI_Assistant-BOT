@@ -10,6 +10,7 @@ from .i18n import t
 from .careers import CAREERS, SKILLS, SECTOR_NAMES, career_name, career_rank
 from .services import SERVICES, service_name
 from .shifts import checkin_ready, shift_due
+from .reliability import ReliableView, ReliableModal, defer_update, defer_private, safe_edit, safe_private, guarded
 
 
 def _lang_options(current=None):
@@ -42,12 +43,12 @@ def build_home_embed(cog,guild,member,lang):
     e.set_thumbnail(url=member.display_avatar.url); e.set_footer(text="Africa/Casablanca • DM + city-alerts fallback"); return e
 
 
-class OwnedView(discord.ui.View):
-    def __init__(self,cog,user,lang="darija",timeout=900):
+class OwnedView(ReliableView):
+    def __init__(self,cog,user,lang="darija",timeout=3600):
         super().__init__(timeout=timeout); self.cog=cog; self.user=user; self.lang=lang
     async def interaction_check(self,interaction):
         if interaction.user.id!=self.user.id:
-            await interaction.response.send_message(t(self.lang,"not_yours"),ephemeral=True); return False
+            await safe_private(interaction,t(self.lang,"not_yours")); return False
         return True
 
 
@@ -77,7 +78,7 @@ class PublicLanguageSelect(discord.ui.Select):
         await interaction.response.send_message(embed=embed,view=view,ephemeral=True)
 
 
-class CareerPublicView(discord.ui.View):
+class CareerPublicView(ReliableView):
     def __init__(self,cog):
         super().__init__(timeout=None); self.cog=cog; self.add_item(PublicLanguageSelect(cog,"career",row=1))
     @discord.ui.button(label="🏙️ دخل للمدينة",style=discord.ButtonStyle.success,custom_id="ggmw9:city:career:open",row=0)
@@ -85,7 +86,7 @@ class CareerPublicView(discord.ui.View):
         lang="darija"; await interaction.response.send_message(embed=build_home_embed(self.cog,interaction.guild,interaction.user,lang),view=CityHomeView(self.cog,interaction.user,lang),ephemeral=True)
 
 
-class ServicesPublicView(discord.ui.View):
+class ServicesPublicView(ReliableView):
     def __init__(self,cog):
         super().__init__(timeout=None); self.cog=cog; self.add_item(PublicLanguageSelect(cog,"services",row=1))
     @discord.ui.button(label="🛍️ فتح سوق الخدمات",style=discord.ButtonStyle.success,custom_id="ggmw9:city:services:open",row=0)
@@ -93,7 +94,7 @@ class ServicesPublicView(discord.ui.View):
         await interaction.response.send_message(embed=build_services_home_embed(self.cog,interaction.guild,interaction.user,"darija"),view=ServicesHomeView(self.cog,interaction.user,"darija"),ephemeral=True)
 
 
-class ProjectsPublicView(discord.ui.View):
+class ProjectsPublicView(ReliableView):
     def __init__(self,cog):
         super().__init__(timeout=None); self.cog=cog; self.add_item(PublicLanguageSelect(cog,"projects",row=1))
     @discord.ui.button(label="🏗️ فتح المشاريع",style=discord.ButtonStyle.success,custom_id="ggmw9:city:projects:open",row=0)
@@ -140,7 +141,7 @@ class CVSkillsView(OwnedView):
     def __init__(self,cog,user,lang): super().__init__(cog,user,lang); self.add_item(CVSkillsSelect(cog,user,lang)); b=discord.ui.Button(label="↩️ "+t(lang,"back"),style=discord.ButtonStyle.secondary,row=1); b.callback=self.back; self.add_item(b)
     async def back(self,interaction): await interaction.response.edit_message(content=None,embed=build_home_embed(self.cog,interaction.guild,interaction.user,self.lang),view=CityHomeView(self.cog,self.user,self.lang))
 
-class CVDetailsModal(discord.ui.Modal):
+class CVDetailsModal(ReliableModal):
     def __init__(self,cog,skills,lang):
         self.cog=cog; self.skills=skills; self.lang=lang; super().__init__(title="🧾 CV ديالك فـGGMW9 CITY" if lang=="darija" else "🧾 Your GGMW9 CITY CV")
         self.about=discord.ui.TextInput(label="شنو كتعرف تدير فالحقيقة؟" if lang=="darija" else "What can you really do?",placeholder="مثال: كنعرف نصمم، نتعامل مع الناس، Gaming...",style=discord.TextStyle.paragraph,min_length=10,max_length=800)
@@ -150,6 +151,7 @@ class CVDetailsModal(discord.ui.Modal):
         self.sector=discord.ui.TextInput(label="المجال المفضل (اختياري)",placeholder="media / fashion / technical / business...",required=False,max_length=20)
         for x in (self.about,self.experience,self.availability,self.work_style,self.sector): self.add_item(x)
     async def on_submit(self,interaction):
+        await defer_private(interaction,thinking=True)
         try: exp=int(str(self.experience.value).strip())
         except: exp=0
         avail=str(self.availability.value).strip().lower(); style=str(self.work_style.value).strip().lower(); sector=str(self.sector.value).strip().lower()
@@ -157,9 +159,10 @@ class CVDetailsModal(discord.ui.Modal):
         if avail not in valid_avail: avail="flexible"
         if style not in valid_style: style="flexible"
         if sector not in SECTOR_NAMES: sector=""
-        await self.cog.save_cv(interaction.guild,interaction.user,skills=self.skills,about=str(self.about.value),experience=exp,availability=avail,work_style=style,preferred_sector=sector)
+        await guarded(self.cog.save_cv(interaction.guild,interaction.user,skills=self.skills,about=str(self.about.value),experience=exp,availability=avail,work_style=style,preferred_sector=sector))
         matches=self.cog.career_matches(interaction.guild.id,interaction.user.id,self.lang)
-        e=build_matches_embed(self.cog,interaction.guild,interaction.user,self.lang,matches); await interaction.response.edit_message(content="✅ CV تحفضات وBank تربط بـDirect Deposit." if self.lang=="darija" else "✅ CV saved and Bank linked.",embed=e,view=CareerMatchesView(self.cog,interaction.user,self.lang,matches))
+        e=build_matches_embed(self.cog,interaction.guild,interaction.user,self.lang,matches)
+        await safe_edit(interaction,content="✅ CV تحفضات وBank تربط بـDirect Deposit." if self.lang=="darija" else "✅ CV saved and Bank linked.",embed=e,view=CareerMatchesView(self.cog,interaction.user,self.lang,matches))
 
 
 def build_matches_embed(cog,guild,user,lang,matches):
@@ -175,8 +178,10 @@ class CareerMatchesSelect(discord.ui.Select):
         opts=[discord.SelectOption(label=f"{m['name']} — {m['score']}%"[:100],value=m["career_id"],emoji=m["emoji"],description=(" • ".join(m["reasons"]))[:100]) for m in matches]
         super().__init__(placeholder="💼 اختار الخدمة اللي بغيتي تقبل..." if lang=="darija" else "💼 Choose a career...",options=opts,min_values=1,max_values=1); self.cog=cog; self.user=user; self.lang=lang
     async def callback(self,interaction):
-        if interaction.user.id!=self.user.id: await interaction.response.send_message(t(self.lang,"not_yours"),ephemeral=True); return
-        ok,msg=await self.cog.accept_job(interaction.guild,interaction.user,self.values[0]); await interaction.response.edit_message(content=msg,embed=self.cog.build_profile_embed(interaction.guild,interaction.user,self.lang),view=BackHomeView(self.cog,self.user,self.lang))
+        if interaction.user.id!=self.user.id: await safe_private(interaction,t(self.lang,"not_yours")); return
+        await defer_update(interaction)
+        ok,msg=await guarded(self.cog.accept_job(interaction.guild,interaction.user,self.values[0]))
+        await safe_edit(interaction,content=msg,embed=self.cog.build_profile_embed(interaction.guild,interaction.user,self.lang),view=BackHomeView(self.cog,self.user,self.lang))
 
 class CareerMatchesView(OwnedView):
     def __init__(self,cog,user,lang,matches): super().__init__(cog,user,lang); self.add_item(CareerMatchesSelect(cog,user,lang,matches)); b=discord.ui.Button(label="↩️ "+t(lang,"back"),style=discord.ButtonStyle.secondary,row=1); b.callback=self.back; self.add_item(b)
@@ -202,7 +207,9 @@ class ShiftDurationSelect(discord.ui.Select):
     def __init__(self,cog,user,lang):
         opts=[discord.SelectOption(label=f"{m} دقيقة",value=str(m),emoji="🕐") for m in (30,60,90)]; super().__init__(placeholder="🕐 اختار مدة الشيفت...",options=opts,min_values=1,max_values=1); self.cog=cog; self.user=user; self.lang=lang
     async def callback(self,interaction):
-        ok,msg=await self.cog.start_shift(interaction.guild,interaction.user,int(self.values[0])); await interaction.response.edit_message(content=msg,embed=build_shift_embed(self.cog,interaction.guild,interaction.user,self.lang),view=ShiftActiveView(self.cog,self.user,self.lang) if ok else ShiftStartView(self.cog,self.user,self.lang))
+        await defer_update(interaction)
+        ok,msg=await guarded(self.cog.start_shift(interaction.guild,interaction.user,int(self.values[0])))
+        await safe_edit(interaction,content=msg,embed=build_shift_embed(self.cog,interaction.guild,interaction.user,self.lang),view=ShiftActiveView(self.cog,self.user,self.lang) if ok else ShiftStartView(self.cog,self.user,self.lang))
 
 class ShiftStartView(OwnedView):
     def __init__(self,cog,user,lang): super().__init__(cog,user,lang); self.add_item(ShiftDurationSelect(cog,user,lang)); b=discord.ui.Button(label="↩️ "+t(lang,"back"),style=discord.ButtonStyle.secondary,row=1); b.callback=self.back; self.add_item(b)
@@ -218,7 +225,9 @@ class ShiftActiveView(OwnedView):
             dt=datetime.fromisoformat(shift["checkin_at"]); await interaction.response.send_message(f"⏳ المهمة كتفتح <t:{int(dt.timestamp())}:R>.",ephemeral=True); return
         await interaction.response.edit_message(content=shift["task"]["prompt"],embed=None,view=ShiftTaskView(self.cog,self.user,self.lang,shift["task"]["options"]))
     async def clock(self,interaction):
-        ok,msg=await self.cog.clock_out(interaction.guild,interaction.user); await interaction.response.edit_message(content=msg,embed=build_shift_embed(self.cog,interaction.guild,self.user,self.lang) if not ok else self.cog.build_profile_embed(interaction.guild,self.user,self.lang),view=ShiftActiveView(self.cog,self.user,self.lang) if not ok else BackHomeView(self.cog,self.user,self.lang))
+        await defer_update(interaction)
+        ok,msg=await guarded(self.cog.clock_out(interaction.guild,interaction.user))
+        await safe_edit(interaction,content=msg,embed=build_shift_embed(self.cog,interaction.guild,self.user,self.lang) if not ok else self.cog.build_profile_embed(interaction.guild,self.user,self.lang),view=ShiftActiveView(self.cog,self.user,self.lang) if not ok else BackHomeView(self.cog,self.user,self.lang))
     async def back(self,interaction): await interaction.response.edit_message(content=None,embed=build_home_embed(self.cog,interaction.guild,self.user,self.lang),view=CityHomeView(self.cog,self.user,self.lang))
 
 class ShiftTaskView(OwnedView):
@@ -228,7 +237,9 @@ class ShiftTaskView(OwnedView):
             b=discord.ui.Button(label=str(opt)[:80],style=discord.ButtonStyle.secondary,row=i//2); b.callback=self._cb(i); self.add_item(b)
     def _cb(self,i):
         async def cb(interaction):
-            ok,msg=await self.cog.answer_shift_task(interaction.guild,interaction.user,i); await interaction.response.edit_message(content=msg,embed=build_shift_embed(self.cog,interaction.guild,self.user,self.lang),view=ShiftActiveView(self.cog,self.user,self.lang))
+            await defer_update(interaction)
+            ok,msg=await guarded(self.cog.answer_shift_task(interaction.guild,interaction.user,i))
+            await safe_edit(interaction,content=msg,embed=build_shift_embed(self.cog,interaction.guild,self.user,self.lang),view=ShiftActiveView(self.cog,self.user,self.lang))
         return cb
 
 
@@ -266,7 +277,9 @@ class WorkerSelect(discord.ui.Select):
             opts.append(discord.SelectOption(label=m.display_name[:100],value=str(m.id),description=(f"⭐ {rating:.2f}/5 • Career XP {xp:,}" if rating else f"🆕 New Worker • XP {xp:,}")[:100]))
         super().__init__(placeholder="👷 اختار العامل...",options=opts[:25],min_values=1,max_values=1); self.cog=cog; self.user=user; self.lang=lang; self.sid=sid
     async def callback(self,interaction):
-        await interaction.response.defer(ephemeral=True); ok,msg=await self.cog.create_order(interaction.guild,interaction.user,self.sid,int(self.values[0])); await interaction.edit_original_response(content=msg,embed=build_services_home_embed(self.cog,interaction.guild,self.user,self.lang),view=ServicesHomeView(self.cog,self.user,self.lang))
+        await defer_update(interaction)
+        ok,msg=await guarded(self.cog.create_order(interaction.guild,interaction.user,self.sid,int(self.values[0])))
+        await safe_edit(interaction,content=msg,embed=build_services_home_embed(self.cog,interaction.guild,self.user,self.lang),view=ServicesHomeView(self.cog,self.user,self.lang))
 
 class WorkerSelectView(OwnedView):
     def __init__(self,cog,user,lang,sid,workers): super().__init__(cog,user,lang); self.add_item(WorkerSelect(cog,user,lang,sid,workers)); b=discord.ui.Button(label="↩️ "+t(lang,"back"),style=discord.ButtonStyle.secondary,row=1); b.callback=self.back; self.add_item(b)
@@ -315,20 +328,24 @@ class OrderDetailView(OwnedView):
         if customer and status=="completed" and order.get("rating") is None:
             self.add_item(RatingSelect(cog,user,lang,oid))
         b=discord.ui.Button(label="↩️ الطلبات",style=discord.ButtonStyle.secondary,row=2); b.callback=self.back; self.add_item(b)
-    async def accept(self,interaction): ok,msg=await self.cog.worker_order_action(interaction.guild,interaction.user,self.order["id"],"accept"); await interaction.response.edit_message(content=msg,embed=None,view=BackHomeView(self.cog,self.user,self.lang))
-    async def reject(self,interaction): ok,msg=await self.cog.worker_order_action(interaction.guild,interaction.user,self.order["id"],"reject"); await interaction.response.edit_message(content=msg,embed=None,view=BackHomeView(self.cog,self.user,self.lang))
+    async def accept(self,interaction):
+        await defer_update(interaction); ok,msg=await guarded(self.cog.worker_order_action(interaction.guild,interaction.user,self.order["id"],"accept")); await safe_edit(interaction,content=msg,embed=None,view=BackHomeView(self.cog,self.user,self.lang))
+    async def reject(self,interaction):
+        await defer_update(interaction); ok,msg=await guarded(self.cog.worker_order_action(interaction.guild,interaction.user,self.order["id"],"reject")); await safe_edit(interaction,content=msg,embed=None,view=BackHomeView(self.cog,self.user,self.lang))
     async def deliver(self,interaction): await interaction.response.send_modal(DeliveryModal(self.cog,self.order["id"],self.lang))
     async def confirm(self,interaction):
-        await interaction.response.defer(ephemeral=True); ok,msg=await self.cog.customer_confirm_order(interaction.guild,interaction.user,self.order["id"]); await interaction.edit_original_response(content=msg,embed=None,view=BackHomeView(self.cog,self.user,self.lang))
+        await defer_update(interaction); ok,msg=await guarded(self.cog.customer_confirm_order(interaction.guild,interaction.user,self.order["id"])); await safe_edit(interaction,content=msg,embed=None,view=BackHomeView(self.cog,self.user,self.lang))
     async def back(self,interaction): await show_orders(interaction,self.cog,self.user,self.lang)
 
-class DeliveryModal(discord.ui.Modal):
+class DeliveryModal(ReliableModal):
     def __init__(self,cog,oid,lang): self.cog=cog; self.oid=oid; self.lang=lang; super().__init__(title="📦 تسليم الخدمة"); self.note=discord.ui.TextInput(label="شنو سلمتي للزبون؟",style=discord.TextStyle.paragraph,min_length=5,max_length=900); self.add_item(self.note)
-    async def on_submit(self,interaction): ok,msg=await self.cog.worker_order_action(interaction.guild,interaction.user,self.oid,"deliver",str(self.note.value)); await interaction.response.edit_message(content=msg,embed=None,view=BackHomeView(self.cog,interaction.user,self.lang))
+    async def on_submit(self,interaction):
+        await defer_private(interaction,thinking=True); ok,msg=await guarded(self.cog.worker_order_action(interaction.guild,interaction.user,self.oid,"deliver",str(self.note.value))); await safe_edit(interaction,content=msg,embed=None,view=BackHomeView(self.cog,interaction.user,self.lang))
 
 class RatingSelect(discord.ui.Select):
     def __init__(self,cog,user,lang,oid): super().__init__(placeholder="⭐ قيّم الخدمة...",options=[discord.SelectOption(label=f"{i}/5",value=str(i),emoji="⭐") for i in range(1,6)],min_values=1,max_values=1,row=1); self.cog=cog; self.user=user; self.lang=lang; self.oid=oid
-    async def callback(self,interaction): ok,msg=await self.cog.rate_worker(interaction.guild,interaction.user,self.oid,int(self.values[0])); await interaction.response.edit_message(content=msg,embed=None,view=BackHomeView(self.cog,self.user,self.lang))
+    async def callback(self,interaction):
+        await defer_update(interaction); ok,msg=await guarded(self.cog.rate_worker(interaction.guild,interaction.user,self.oid,int(self.values[0]))); await safe_edit(interaction,content=msg,embed=None,view=BackHomeView(self.cog,self.user,self.lang))
 
 
 # ----------------------------------------------------------------------
@@ -354,7 +371,7 @@ class ProjectCareerView(OwnedView):
     def __init__(self,cog,user,lang): super().__init__(cog,user,lang); self.add_item(ProjectCareerSelect(cog,user,lang)); b=discord.ui.Button(label="↩️ "+t(lang,"back"),style=discord.ButtonStyle.secondary,row=1); b.callback=self.back; self.add_item(b)
     async def back(self,interaction): await interaction.response.edit_message(content=None,embed=build_projects_home_embed(self.cog,interaction.guild,self.user,self.lang),view=ProjectsHomeView(self.cog,self.user,self.lang))
 
-class ProjectCreateModal(discord.ui.Modal):
+class ProjectCreateModal(ReliableModal):
     def __init__(self,cog,career_id,lang):
         self.cog=cog; self.career_id=career_id; self.lang=lang; super().__init__(title="🏗️ مشروع جديد")
         self.title_i=discord.ui.TextInput(label="اسم المشروع",max_length=80); self.desc=discord.ui.TextInput(label="شنو خاص يتدار؟",style=discord.TextStyle.paragraph,min_length=10,max_length=1000); self.budget=discord.ui.TextInput(label="Budget بالدولار",placeholder="مثال: 50 أو 120.50",max_length=20); self.deadline=discord.ui.TextInput(label="Deadline بالأيام",placeholder="7",max_length=2); self.milestones=discord.ui.TextInput(label="Milestones (قسمهم بـ |)",placeholder="Logo | Banner | Final Pack",required=False,max_length=240)
@@ -363,8 +380,10 @@ class ProjectCreateModal(discord.ui.Modal):
         amount=root_cfg.parse_money_input(str(self.budget.value));
         try: days=int(str(self.deadline.value).strip())
         except: days=7
-        if amount is None: await interaction.response.send_message("❌ Budget ماصالحاش.",ephemeral=True); return
-        await interaction.response.defer(ephemeral=True); ok,msg=await self.cog.create_project(interaction.guild,interaction.user,career_id=self.career_id,title=str(self.title_i.value),description=str(self.desc.value),budget=amount,deadline_days=days,milestones_raw=str(self.milestones.value)); await interaction.edit_original_response(content=msg,embed=build_projects_home_embed(self.cog,interaction.guild,interaction.user,self.lang),view=ProjectsHomeView(self.cog,interaction.user,self.lang))
+        if amount is None: await safe_private(interaction,"❌ Budget ماصالحاش."); return
+        await defer_private(interaction,thinking=True)
+        ok,msg=await guarded(self.cog.create_project(interaction.guild,interaction.user,career_id=self.career_id,title=str(self.title_i.value),description=str(self.desc.value),budget=amount,deadline_days=days,milestones_raw=str(self.milestones.value)))
+        await safe_edit(interaction,content=msg,embed=build_projects_home_embed(self.cog,interaction.guild,interaction.user,self.lang),view=ProjectsHomeView(self.cog,interaction.user,self.lang))
 
 
 def open_projects(cog,guild):
@@ -412,11 +431,13 @@ class ProjectDetailView(OwnedView):
         if owner and status=="delivered":
             a=discord.ui.Button(label="✅ قبول Milestone + Pay",style=discord.ButtonStyle.success); a.callback=self.approve; self.add_item(a)
         b=discord.ui.Button(label="↩️ المشاريع",style=discord.ButtonStyle.secondary,row=2); b.callback=self.back; self.add_item(b)
-    async def apply(self,interaction): ok,msg=await self.cog.apply_project(interaction.guild,interaction.user,self.p["id"]); await interaction.response.edit_message(content=msg,embed=None,view=ProjectsHomeView(self.cog,self.user,self.lang))
-    async def cancel(self,interaction): ok,msg=await self.cog.cancel_open_project(interaction.guild,interaction.user,self.p["id"]); await interaction.response.edit_message(content=msg,embed=None,view=ProjectsHomeView(self.cog,self.user,self.lang))
+    async def apply(self,interaction):
+        await defer_update(interaction); ok,msg=await guarded(self.cog.apply_project(interaction.guild,interaction.user,self.p["id"])); await safe_edit(interaction,content=msg,embed=None,view=ProjectsHomeView(self.cog,self.user,self.lang))
+    async def cancel(self,interaction):
+        await defer_update(interaction); ok,msg=await guarded(self.cog.cancel_open_project(interaction.guild,interaction.user,self.p["id"])); await safe_edit(interaction,content=msg,embed=None,view=ProjectsHomeView(self.cog,self.user,self.lang))
     async def deliver(self,interaction): await interaction.response.send_modal(ProjectDeliveryModal(self.cog,self.p["id"],self.lang))
     async def approve(self,interaction):
-        await interaction.response.defer(ephemeral=True); ok,msg=await self.cog.approve_project_milestone(interaction.guild,interaction.user,self.p["id"]); await interaction.edit_original_response(content=msg,embed=None,view=ProjectsHomeView(self.cog,self.user,self.lang))
+        await defer_update(interaction); ok,msg=await guarded(self.cog.approve_project_milestone(interaction.guild,interaction.user,self.p["id"])); await safe_edit(interaction,content=msg,embed=None,view=ProjectsHomeView(self.cog,self.user,self.lang))
     async def back(self,interaction): await interaction.response.edit_message(content=None,embed=build_projects_home_embed(self.cog,interaction.guild,self.user,self.lang),view=ProjectsHomeView(self.cog,self.user,self.lang))
 
 class AssignApplicantSelect(discord.ui.Select):
@@ -426,11 +447,13 @@ class AssignApplicantSelect(discord.ui.Select):
             m=user.guild.get_member(int(uid)) if isinstance(user,discord.Member) else None
             if m: opts.append(discord.SelectOption(label=m.display_name[:100],value=str(uid),description=f"⭐ {cog.rating(user.guild.id,m.id):.2f}/5" if cog.rating(user.guild.id,m.id) else "New Worker"))
         super().__init__(placeholder="👷 اختار العامل...",options=opts,min_values=1,max_values=1,row=0); self.cog=cog; self.user=user; self.lang=lang; self.pid=p["id"]
-    async def callback(self,interaction): ok,msg=await self.cog.assign_project(interaction.guild,interaction.user,self.pid,int(self.values[0])); await interaction.response.edit_message(content=msg,embed=None,view=ProjectsHomeView(self.cog,self.user,self.lang))
+    async def callback(self,interaction):
+        await defer_update(interaction); ok,msg=await guarded(self.cog.assign_project(interaction.guild,interaction.user,self.pid,int(self.values[0]))); await safe_edit(interaction,content=msg,embed=None,view=ProjectsHomeView(self.cog,self.user,self.lang))
 
-class ProjectDeliveryModal(discord.ui.Modal):
+class ProjectDeliveryModal(ReliableModal):
     def __init__(self,cog,pid,lang): self.cog=cog; self.pid=pid; self.lang=lang; super().__init__(title="📦 تسليم Milestone"); self.note=discord.ui.TextInput(label="شنو تسلم؟",style=discord.TextStyle.paragraph,min_length=5,max_length=900); self.add_item(self.note)
-    async def on_submit(self,interaction): ok,msg=await self.cog.deliver_project_milestone(interaction.guild,interaction.user,self.pid,str(self.note.value)); await interaction.response.edit_message(content=msg,embed=None,view=ProjectsHomeView(self.cog,interaction.user,self.lang))
+    async def on_submit(self,interaction):
+        await defer_private(interaction,thinking=True); ok,msg=await guarded(self.cog.deliver_project_milestone(interaction.guild,interaction.user,self.pid,str(self.note.value))); await safe_edit(interaction,content=msg,embed=None,view=ProjectsHomeView(self.cog,interaction.user,self.lang))
 
 
 # ----------------------------------------------------------------------

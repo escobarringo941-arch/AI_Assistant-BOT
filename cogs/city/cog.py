@@ -19,6 +19,7 @@ from .shifts import local_now, can_work_today, build_shift, shift_due, checkin_r
 from .payroll import next_pay_at, pay_due
 from .projects import parse_milestones, current_milestone
 from .notifications import CityNotifier
+from .underground_engine import UndergroundEngineMixin
 
 
 def _iso_now() -> str:
@@ -54,7 +55,7 @@ PROFILE_DEFAULTS = {
 }
 
 
-class CareerCity(commands.Cog):
+class CareerCity(UndergroundEngineMixin, commands.Cog):
     """GGMW9 CITY — careers, services, payroll and projects."""
 
     def __init__(self, bot: commands.Bot):
@@ -618,6 +619,45 @@ class CareerCity(commands.Cog):
     def documents(self,guild_id,user_id):
         g=self.store.guild(guild_id); return {"payslips":list(reversed((g.get("payslips",{}).get(str(user_id),[]) or [])[-10:])),"invoices":list(reversed((g.get("invoices",{}).get(str(user_id),[]) or [])[-10:]))}
 
+    async def city_diagnostics(self, guild: discord.Guild) -> dict:
+        """Owner-facing health check. Read-only; never mutates balances."""
+        checks=[]
+        setup=self.store.guild(guild.id).get("setup",{})
+        checks.append(("CITY setup", bool(setup.get("complete"))))
+        me=guild.me
+        for key in config.CHANNEL_NAMES:
+            ch=self.channel(guild,key)
+            exists=isinstance(ch,discord.TextChannel)
+            checks.append((f"Channel {key}", exists))
+            if exists and me:
+                perms=ch.permissions_for(me)
+                checks.append((f"Bot permissions {key}", bool(perms.view_channel and perms.send_messages and perms.embed_links and perms.read_message_history)))
+        eco=self.economy
+        required=("city_hold_escrow","city_refund_escrow","city_release_service_escrow","city_release_project_escrow","city_pay_salary")
+        checks.append(("Economy bridge", bool(eco and all(hasattr(eco,x) for x in required))))
+        checks.append(("Timezone Africa/Casablanca", config.TIMEZONE=="Africa/Casablanca"))
+        checks.append(("CITY tick loop", bool(self.city_tick.is_running())))
+        checks.append(("Market refresh loop", bool(self.market_tick.is_running())))
+        persistent_names={type(v).__name__ for v in getattr(self.bot,"persistent_views",[]) or []}
+        checks.append(("Persistent Career panel", "CareerPublicView" in persistent_names))
+        checks.append(("Persistent Services panel", "ServicesPublicView" in persistent_names))
+        checks.append(("Persistent Projects panel", "ProjectsPublicView" in persistent_names))
+        panels=(setup.get("panels") or {})
+        checks.append(("Career panel message tracked", bool(panels.get("career"))))
+        checks.append(("Services panel message tracked", bool(panels.get("services"))))
+        checks.append(("Projects panel message tracked", bool(panels.get("projects"))))
+        try:
+            self.store.path.parent.mkdir(parents=True,exist_ok=True)
+            writable=self.store.path.parent.exists()
+        except Exception:
+            writable=False
+        checks.append(("CITY database path", writable))
+        ug=None
+        if (self.underground(guild.id).get("setup") or {}).get("complete"):
+            ug=await self.underground_diagnostics(guild)
+        overall=all(v for _,v in checks) and (ug is None or bool(ug.get("ok")))
+        return {"ok":overall,"checks":checks,"underground":ug}
+
     # ------------------------------------------------------------------
     # Scheduled processing
     # ------------------------------------------------------------------
@@ -694,6 +734,28 @@ class CareerCity(commands.Cog):
                     if order.get("status")=="delivered": await self._release_order(guild,order,auto=True)
         self.store.save()
 
+    async def process_underground(self, guild: discord.Guild):
+        ug=self.underground(guild.id); now=local_now(); dirty=False
+        for inv in (ug.get("invites") or {}).values():
+            if inv.get("status")!="pending":
+                continue
+            exp=_parse_dt(inv.get("expires_at"))
+            if exp and now>=exp:
+                inv["status"]="expired"; inv["expired_at"]=_iso_now(); dirty=True
+        for uid,row in (ug.get("members") or {}).items():
+            if not row.get("active"):
+                continue
+            before=int(row.get("heat",0) or 0)
+            try: self._decay_heat(row)
+            except Exception: pass
+            if int(row.get("heat",0) or 0)!=before: dirty=True
+        for uid,inv in list((ug.get("crew_invites") or {}).items()):
+            exp=_parse_dt((inv or {}).get("expires_at"))
+            if exp and now>=exp:
+                ug["crew_invites"].pop(uid,None); dirty=True
+        if dirty:
+            self.store.save()
+
     async def process_employee_week(self,guild):
         g=self.store.guild(guild.id); key=self._week_key(); current=g.get("employee_week",{})
         # Evaluate previous week only when a new ISO week starts and we have profiles with old week stats.
@@ -717,7 +779,7 @@ class CareerCity(commands.Cog):
             setup=self.store.guild(guild.id).get("setup",{})
             if not setup.get("complete"): continue
             try:
-                await self.process_payroll(guild); await self.process_shifts(guild); await self.process_orders(guild); await self.process_projects(guild); await self.process_employee_week(guild)
+                await self.process_payroll(guild); await self.process_shifts(guild); await self.process_orders(guild); await self.process_projects(guild); await self.process_underground(guild); await self.process_employee_week(guild)
             except Exception as exc:
                 print(f"[CITY TICK] {guild.id}: {type(exc).__name__}: {exc}")
 
@@ -738,7 +800,20 @@ class CareerCity(commands.Cog):
     # ------------------------------------------------------------------
     async def cog_load(self):
         from .ui import CareerPublicView, ServicesPublicView, ProjectsPublicView
-        self.bot.add_view(CareerPublicView(self)); self.bot.add_view(ServicesPublicView(self)); self.bot.add_view(ProjectsPublicView(self))
+        from .underground_ui import (
+            UndergroundGatePublicView, UndergroundMarketPublicView,
+            UndergroundCrewsPublicView, UndergroundOperationsPublicView,
+            UndergroundInviteView,
+        )
+        self.bot.add_view(CareerPublicView(self))
+        self.bot.add_view(ServicesPublicView(self))
+        self.bot.add_view(ProjectsPublicView(self))
+        # Persistent hidden-world panels + anonymous invitation buttons survive restarts.
+        self.bot.add_view(UndergroundGatePublicView(self))
+        self.bot.add_view(UndergroundMarketPublicView(self))
+        self.bot.add_view(UndergroundCrewsPublicView(self))
+        self.bot.add_view(UndergroundOperationsPublicView(self))
+        self.bot.add_view(UndergroundInviteView(self))
         self.city_tick.start(); self.market_tick.start()
 
     async def cog_unload(self):
@@ -752,3 +827,10 @@ class CareerCity(commands.Cog):
             if self.store.guild(guild.id).get("setup",{}).get("complete"):
                 try: await self.refresh_city_panels(guild)
                 except Exception as exc: print(f"[CITY READY] {guild.id}: {exc}")
+            ug = self.underground(guild.id)
+            if (ug.get("setup") or {}).get("complete"):
+                try:
+                    await self.repair_underground_permissions(guild)
+                    await self.refresh_underground_panels(guild)
+                except Exception as exc:
+                    print(f"[UNDERGROUND READY] {guild.id}: {type(exc).__name__}: {exc}")

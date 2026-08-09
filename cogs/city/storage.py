@@ -61,7 +61,28 @@ class CityStore:
         g.setdefault("payslips", {})
         g.setdefault("employee_week", {})
         g.setdefault("counters", {"order": 1, "project": 1, "invoice": 1, "payslip": 1})
+        ug = g.setdefault("underground", {})
+        ug.setdefault("setup", {})
+        ug.setdefault("locked", False)
+        ug.setdefault("members", {})
+        ug.setdefault("invites", {})
+        ug.setdefault("crews", {})
+        ug.setdefault("crew_invites", {})
+        ug.setdefault("listings", {})
+        ug.setdefault("operations", {})
+        ug.setdefault("counters", {"invite": 1, "crew": 1, "listing": 1, "operation": 1})
         return g
+
+    def underground(self, guild_id: int) -> dict:
+        return self.guild(guild_id).setdefault("underground", {})
+
+    def next_underground_id(self, guild_id: int, key: str, prefix: str) -> str:
+        ug = self.underground(guild_id)
+        counters = ug.setdefault("counters", {})
+        n = int(counters.get(key, 1) or 1)
+        counters[key] = n + 1
+        self.save()
+        return f"{prefix}-{n:06d}"
 
     def profile(self, guild_id: int, user_id: int, defaults: dict | None = None) -> dict:
         profiles = self.guild(guild_id).setdefault("profiles", {})

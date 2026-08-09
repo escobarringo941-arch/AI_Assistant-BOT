@@ -65,3 +65,27 @@ CHANNEL_TOPICS = {
     "job_market": "GGMW9 CITY • Read-only live labour market, demand, salaries and employee highlights.",
     "city_alerts": "GGMW9 CITY • Private-notification fallback. Alerts auto-delete and never expose salary/order details.",
 }
+
+# ---------------------------------------------------------------------
+# Fictional Underground expansion
+# ---------------------------------------------------------------------
+UNDERGROUND_CATEGORY_NAME = getattr(root_cfg, "CITY_UNDERGROUND_CATEGORY_NAME", "🌑・THE UNDERGROUND")
+UNDERGROUND_CHANNEL_NAMES = dict(getattr(root_cfg, "CITY_UNDERGROUND_CHANNEL_NAMES", {
+    "shadow_gate": "🕳️・shadow-gate",
+    "black_market": "🗡️・black-market",
+    "crews": "👥・crews",
+    "contracts": "📜・contracts",
+    "operations": "🏦・operations",
+}))
+UNDERGROUND_INVITE_HOURS = int(getattr(root_cfg, "CITY_UNDERGROUND_INVITE_HOURS", 24))
+UNDERGROUND_MISSION_COOLDOWN_MINUTES = int(getattr(root_cfg, "CITY_UNDERGROUND_MISSION_COOLDOWN_MINUTES", 45))
+UNDERGROUND_HEAT_DECAY_HOURS = int(getattr(root_cfg, "CITY_UNDERGROUND_HEAT_DECAY_HOURS", 6))
+UNDERGROUND_CREW_CREATE_COST = int(getattr(root_cfg, "CITY_UNDERGROUND_CREW_CREATE_COST", 4000))
+UNDERGROUND_HEIST_PREP_COST = int(getattr(root_cfg, "CITY_UNDERGROUND_HEIST_PREP_COST", 5000))
+UNDERGROUND_HEIST_COOLDOWN_HOURS = int(getattr(root_cfg, "CITY_UNDERGROUND_HEIST_COOLDOWN_HOURS", 120))
+UNDERGROUND_HEIST_MIN_CREW = int(getattr(root_cfg, "CITY_UNDERGROUND_HEIST_MIN_CREW", 3))
+UNDERGROUND_HEIST_MIN_REP = int(getattr(root_cfg, "CITY_UNDERGROUND_HEIST_MIN_REP", 200))
+UNDERGROUND_HEIST_MIN_TREASURY = int(getattr(root_cfg, "CITY_UNDERGROUND_HEIST_MIN_TREASURY", 25000))
+UNDERGROUND_MARKET_TAX_BPS = int(getattr(root_cfg, "CITY_UNDERGROUND_MARKET_TAX_BPS", 650))
+UNDERGROUND_CREW_HEIST_SHARE_BPS = int(getattr(root_cfg, "CITY_UNDERGROUND_CREW_HEIST_SHARE_BPS", 2500))
+UNDERGROUND_CREW_INVITE_HOURS = int(getattr(root_cfg, "CITY_UNDERGROUND_CREW_INVITE_HOURS", 24))
