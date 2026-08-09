@@ -13275,6 +13275,11 @@ async def refresh_all_server_panels(guild: discord.Guild) -> dict:
             await run("🏙️ GGMW9 CITY", lambda: city_cog.refresh_city_panels(guild))
         else:
             report["skip"].append("🏙️ GGMW9 CITY (مازال ما تدارش Setup)")
+        ug = city_cog.underground(guild.id)
+        if (ug.get("setup") or {}).get("complete"):
+            await run("🌑 Underground", lambda: city_cog.refresh_underground_panels(guild))
+        else:
+            report["skip"].append("🌑 Underground (مازال ما تدارش Setup)")
     else:
         report["skip"].append("🏙️ CareerCity Cog")
 
@@ -13432,6 +13437,55 @@ class OwnerControlCenterView(OwnerOnlyView):
             )
         embed.set_footer(text="Setup آمن ضد duplicates • IDs كيتخزنو فـggmw9_city.json")
         await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @discord.ui.button(
+        label="Underground", emoji="🌑", style=discord.ButtonStyle.secondary,
+        custom_id="ggmw9:owner:underground", row=1
+    )
+    async def underground(self, interaction: discord.Interaction, button: discord.ui.Button):
+        city = bot.get_cog("CareerCity")
+        if not city:
+            await interaction.response.send_message("❌ CareerCity Cog ماشي محمّلة.", ephemeral=True)
+            return
+        from cogs.city.underground_ui import OwnerUndergroundView
+        await interaction.response.send_message(
+            embed=city.underground_owner_embed(interaction.guild),
+            view=OwnerUndergroundView(city),
+            ephemeral=True,
+        )
+
+    @discord.ui.button(
+        label="CITY Health", emoji="🩺", style=discord.ButtonStyle.secondary,
+        custom_id="ggmw9:owner:city_health", row=1
+    )
+    async def city_health(self, interaction: discord.Interaction, button: discord.ui.Button):
+        city = bot.get_cog("CareerCity")
+        if not city:
+            await interaction.response.send_message("❌ CareerCity Cog ماشي محمّلة.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            result = await asyncio.wait_for(city.city_diagnostics(interaction.guild), timeout=25)
+            lines = [f"{'🟢' if ok else '🔴'} {name}" for name, ok in result.get("checks", [])]
+            ug = result.get("underground")
+            if ug:
+                lines.append("\n**🌑 Underground**")
+                lines.extend(f"{'🟢' if ok else '🔴'} {name}" for name, ok in ug.get("checks", []))
+                exposure = ug.get("admin_exposure") or []
+                if exposure:
+                    lines.append("⚠️ Human Administrator bypass: " + ", ".join(exposure))
+                else:
+                    lines.append("🟢 No human Administrator bypass outside Owner")
+            embed = discord.Embed(
+                title="🩺 GGMW9 CITY — Health Check",
+                description="\n".join(lines)[:4000],
+                color=discord.Color.green() if result.get("ok") and not (ug and ug.get("admin_exposure")) else discord.Color.orange(),
+                timestamp=datetime.now(),
+            )
+            embed.set_footer(text="Read-only diagnostics • ما كيبدل لا فلوس لا بيانات الأعضاء")
+            await interaction.edit_original_response(embed=embed)
+        except Exception as exc:
+            await interaction.edit_original_response(content=f"❌ Diagnostics error: {type(exc).__name__}: {exc}")
 
     @discord.ui.button(
         label="Test Channel Move", emoji="🧪", style=discord.ButtonStyle.danger,
