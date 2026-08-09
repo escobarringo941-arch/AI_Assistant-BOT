@@ -567,7 +567,7 @@ for _flag in AUTO_REACT_FLAGS:
 JOIN_TO_CREATE_ENABLED = True
 JOIN_TO_CREATE_CHANNEL_ID = 1533290892947882064   # ← ID ديال الـ voice channel "➕ دير روم" (العضو كيدخل ليه فيتخلق ليه روم خاص بيه)
 TEMP_VC_CATEGORY_ID = 1533257707543461939          # ← ID ديال الـ Category فين غادي تتخلق الروومات المؤقتة (0 = نفس category ديال JOIN_TO_CREATE_CHANNEL_ID)
-TEMP_VC_NAME_TEMPLATE = "🔊 روم ديال {name}"
+TEMP_VC_NAME_TEMPLATE = "{name}'s Room 🔊"
 TEMP_VC_DEFAULT_LIMIT = 0        # ← 0 = بلا حد أقصى للأعضاء
 # Block fallback خصوصاً للي عندهم Administrator: 1/2 خروج+إنذار، المحاولة 3 = Kick من السيرفر إذا hierarchy تسمح
 TEMP_VC_DENY_MAX_ATTEMPTS = 3
