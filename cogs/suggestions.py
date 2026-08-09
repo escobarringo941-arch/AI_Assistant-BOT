@@ -324,15 +324,17 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                 )
                 return
     
-            await interaction.response.send_message(
-                _suggestion_t(
-                    self.lang,
-                    "sent",
-                    id=sug_id,
-                    channel=channel.mention,
-                ),
-                ephemeral=True,
-            )
+            # The public suggestion is already visible in the channel.  We
+            # still acknowledge the modal interaction, then remove the
+            # success response immediately so it does not sit underneath the
+            # suggestion as an extra ephemeral message.
+            await interaction.response.send_message("✅", ephemeral=True)
+            try:
+                await interaction.delete_original_response()
+            except (discord.NotFound, discord.HTTPException):
+                # If Discord rejects the cleanup, the fallback is only the
+                # short check mark rather than a duplicate public message.
+                pass
     
     
     class SuggestionsPrivateLanguageSelect(discord.ui.Select):
