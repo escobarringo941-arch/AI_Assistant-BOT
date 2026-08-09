@@ -9,6 +9,33 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     # ║   Phase 7 — نظام Suggestions (اقتراحات الأعضاء)         ║
     # ═══════════════════════════════════════════════════════
     
+    class SuggestionRejectReasonModal(discord.ui.Modal):
+        """كيطلب سبب مختصر قبل ما يتسجل رفض الاقتراح."""
+
+        def __init__(self, review_view, message):
+            super().__init__(title="❌ سبب رفض الاقتراح")
+            self.review_view = review_view
+            self.message = message
+            self.reason = discord.ui.TextInput(
+                label="سبب الرفض",
+                placeholder="كتب سبب مختصر وواضح لصاحب الاقتراح...",
+                style=discord.TextStyle.paragraph,
+                min_length=3,
+                max_length=500,
+                required=True,
+            )
+            self.add_item(self.reason)
+
+        async def on_submit(self, interaction: discord.Interaction):
+            await interaction.response.defer(ephemeral=True)
+            await self.review_view._decide(
+                interaction,
+                accepted=False,
+                reason=str(self.reason.value or "").strip(),
+                message=self.message,
+            )
+
+
     class SuggestionReviewView(discord.ui.View):
         """أزرار قبول/رفض الاقتراح، بنفس المنطق ديال ApplicationReviewView. Persistent."""
     
@@ -22,36 +49,82 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         @discord.ui.button(label="❌ مرفوض", style=discord.ButtonStyle.danger, custom_id="suggestion_reject_button")
         async def reject_button(self, interaction: discord.Interaction, button: discord.ui.Button):
             await self._decide(interaction, accepted=False)
-    
-        async def _decide(self, interaction: discord.Interaction, accepted: bool):
+
+        async def _reply(self, interaction: discord.Interaction, text: str):
+            if interaction.response.is_done():
+                await interaction.followup.send(text, ephemeral=True)
+            else:
+                await interaction.response.send_message(text, ephemeral=True)
+
+        async def _decide(
+            self,
+            interaction: discord.Interaction,
+            accepted: bool,
+            *,
+            reason: str | None = None,
+            message=None,
+        ):
             member = interaction.user
             if not isinstance(member, discord.Member) or not _is_staff_reviewer(member):
-                await interaction.response.send_message("❌ هاد الزر خاص غير بالإدارة.", ephemeral=True)
+                await self._reply(interaction, "❌ هاد الزر خاص غير بالإدارة.")
                 return
-    
-            sug_id, record = find_suggestion_by_message_id(interaction.message.id)
+
+            message = message or interaction.message
+            if message is None:
+                await self._reply(interaction, "❌ ما قدرناش نلقاو رسالة الاقتراح.")
+                return
+
+            # الرفض كيتأكد بسبب مختصر قبل ما يتبدل السجل أو الرسالة.
+            if not accepted and reason is None:
+                await interaction.response.send_modal(SuggestionRejectReasonModal(self, message))
+                return
+
+            sug_id, record = find_suggestion_by_message_id(message.id)
             if not record:
-                await interaction.response.send_message("❌ ماكاينش هاد الاقتراح فالسجل ديالنا.", ephemeral=True)
+                await self._reply(interaction, "❌ ماكاينش هاد الاقتراح فالسجل ديالنا.")
                 return
             if record.get("status") != "pending":
-                await interaction.response.send_message("⚠️ هاد الاقتراح تدار فيه قرار من قبل.", ephemeral=True)
+                await self._reply(interaction, "⚠️ هاد الاقتراح تدار فيه قرار من قبل.")
                 return
-    
+
+            decided_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            reason = (reason or "").strip()[:500] if not accepted else ""
             record["status"] = "accepted" if accepted else "rejected"
             record["decided_by"] = member.id
-            record["decided_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            record["decided_at"] = decided_at
+            record["reason"] = reason if not accepted else None
             save_suggestions()
-    
-            embed = interaction.message.embeds[0]
+
+            embed = message.embeds[0]
             embed.color = discord.Color.green() if accepted else discord.Color.red()
+            decision_label = "✅ مقبول" if accepted else "❌ مرفوض"
+            decision_value = (
+                f"**الحالة:** {decision_label}\n"
+                f"**من طرف:** {member.mention}\n"
+                f"**التاريخ:** {decided_at}"
+            )
+            if not accepted:
+                decision_value += f"\n**السبب:** {reason or 'ما تعطاتش شي تفاصيل إضافية.'}"
+            decision_field_index = next(
+                (index for index, field in enumerate(embed.fields) if field.name == "📌 القرار"),
+                None,
+            )
+            if decision_field_index is None:
+                embed.add_field(name="📌 القرار", value=decision_value, inline=False)
+            else:
+                embed.set_field_at(decision_field_index, name="📌 القرار", value=decision_value, inline=False)
             embed.set_footer(
                 text=f"{SERVER_NAME} | Suggestion #{sug_id} | "
-                     f"{'✅ Accepted' if accepted else '❌ Rejected'} من طرف {member.display_name}"
+                     f"{'✅ Accepted' if accepted else '❌ Rejected'} من طرف {member.display_name} | {decided_at}"
             )
             for child in self.children:
                 child.disabled = True
-            await interaction.response.edit_message(embed=embed, view=self)
-    
+            if interaction.response.is_done():
+                await message.edit(embed=embed, view=self)
+                await interaction.followup.send("✅ تسجل القرار وبقات الرسالة فالقناة.", ephemeral=True)
+            else:
+                await interaction.response.edit_message(embed=embed, view=self)
+
             guild = interaction.guild
             author = guild.get_member(record["author_id"]) if guild else None
             if author:
@@ -59,7 +132,10 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                     if accepted:
                         await author.send(f"🎉 الاقتراح ديالك (#{sug_id}) تقبل من طرف الإدارة فـ **{SERVER_NAME}**!")
                     else:
-                        await author.send(f"❌ الاقتراح ديالك (#{sug_id}) تُرفض هاد المرة فـ **{SERVER_NAME}**.")
+                        await author.send(
+                            f"❌ الاقتراح ديالك (#{sug_id}) تُرفض هاد المرة فـ **{SERVER_NAME}**.\n"
+                            f"السبب: {reason or 'ما تعطاتش شي تفاصيل إضافية.'}"
+                        )
                 except Exception:
                     pass
     
