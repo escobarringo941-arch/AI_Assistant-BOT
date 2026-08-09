@@ -1,36 +1,49 @@
 # -*- coding: utf-8 -*-
 """GGMW9 bot entrypoint.
 
-All bounded systems and commands live in cogs/.  This file only owns the bot
-bootstrap, compatibility service bridge, ordered extension loading, and run.
+Feature code lives in ordered extensions under ``cogs/``.  The shared runtime keeps
+the exact global state and execution order of the former monolithic file.
 """
 
-import importlib
 import traceback
 
-import discord
-
-import bot_core as core
-
-
-bot = core.bot
-DISCORD_TOKEN = core.DISCORD_TOKEN
-OPENROUTER_API_KEY = core.OPENROUTER_API_KEY
+from cogs.bootstrap import bot
+from cogs._component_runtime import runtime_namespace, runtime_value
 
 
-SYSTEM_COGS = [
-    "cogs.system_verification",
-    "cogs.system_support",
-    "cogs.system_community",
-    "cogs.system_voice",
-    "cogs.system_leveling",
-    "cogs.system_moderation",
-    "cogs.system_general",
-    "cogs.system_owner",
-    "cogs.system_lifecycle",
+# Dependency-safe order of the split source sections plus focused new systems.
+CORE_COGS = [
+    "cogs.persistent_state",
+    "cogs.xp_runtime",
+    "cogs.settings_storage",
+    "cogs.ai_conversation",
+    "cogs.content_apis",
+    "cogs.moderation_core",
+    "cogs.access_panels",
+    "cogs.support_system",
+    "cogs.applications",
+    "cogs.suggestions",
+    "cogs.birthdays",
+    "cogs.relationships",
+    "cogs.temp_voice",
+    "cogs.temp_music",
+    "cogs.voice_runtime",
+    "cogs.server_setup",
+    "cogs.member_events",
+    "cogs.moderation_commands",
+    "cogs.xp_admin",
+    "cogs.bot_admin_panel",
+    "cogs.leveling_commands",
+    "cogs.levels_center",
+    "cogs.verification_commands",
+    "cogs.general_commands",
+    "cogs.automation_tasks",
+    "cogs.owner_control",
+    "cogs.ready_events",
 ]
 
-# Existing game/economy Cogs keep their original, dependency-sensitive order.
+
+# Standalone Cogs keep their dependency-safe order.
 GAMES_COGS = [
     "cogs.economy",
     "cogs.city",
@@ -48,84 +61,88 @@ GAMES_COGS = [
     "cogs.game_lottery",
     "cogs.gambling_panel",
     "cogs.moderation",
+    "cogs.unverified_visibility",
     "cogs.temp_room_full_control",
 ]
 
+# هاد الـCog أمني: إلا فشل ما خاصش البوت يكمل وكأن الحماية خدامة.
+REQUIRED_STANDALONE_COGS = {"cogs.unverified_visibility"}
 
-def _base_bridge():
-    return {
-        "DATA_DIR": core.DATA_DIR,
-        "OWNER_ID": core.OWNER_ID,
-        "get_panel_language": core.get_panel_language,
-        "set_panel_language": core.set_panel_language,
-        "upsert_ephemeral_panel": core.upsert_ephemeral_panel,
-        "get_user_level_data": core.get_user_level_data,
-        "get_level_perks": core.get_level_perks,
-        "save_levels": core.save_levels,
-        "log_action": core.log_action,
-        "is_exempt": core.is_exempt,
-        "call_openrouter_chat": core.call_openrouter_chat,
+
+def _configure_cog_bridge(shared):
+    bot.gg = {
+        "DATA_DIR": shared["DATA_DIR"],
+        "OWNER_ID": shared["OWNER_ID"],
+        "UNVERIFIED_ROLE_ID": shared["UNVERIFIED_ROLE_ID"],
+        "RULES_CHANNEL_ID": shared["RULES_CHANNEL_ID"],
+        "VERIFY_CHANNEL_ID": shared["VERIFY_CHANNEL_ID"],
+        "get_panel_language": shared["get_panel_language"],
+        "set_panel_language": shared["set_panel_language"],
+        "upsert_ephemeral_panel": shared["upsert_ephemeral_panel"],
+        "get_user_level_data": shared["get_user_level_data"],
+        "get_level_perks": shared["get_level_perks"],
+        "save_levels": shared["save_levels"],
+        "log_action": shared["log_action"],
+        "is_exempt": shared["is_exempt"],
+        "call_openrouter_chat": shared["call_openrouter_chat"],
+        "temp_voice_channels": shared["temp_voice_channels"],
+        "temp_voice_acl": shared["temp_voice_acl"],
+        "is_temp_voice_channel": shared["is_temp_voice_channel"],
+        "is_temp_voice_owner": shared["is_temp_voice_owner"],
+        "get_temp_voice_acl": shared["get_temp_voice_acl"],
+        "temp_voice_allow_member": shared["temp_voice_allow_member"],
+        "temp_voice_deny_member": shared["temp_voice_deny_member"],
+        "temp_voice_block_member": shared["temp_voice_block_member"],
+        "temp_voice_unblock_member": shared["temp_voice_unblock_member"],
+        "temp_voice_kick_member": shared["temp_voice_kick_member"],
+        "temp_voice_set_manual_mute": shared["temp_voice_set_manual_mute"],
+        "temp_voice_set_voice_mute": shared["temp_voice_set_voice_mute"],
+        "temp_voice_set_chat_mute": shared["temp_voice_set_chat_mute"],
+        "is_temp_voice_protected_target": shared["is_temp_voice_protected_target"],
+        "set_temp_voice_private": shared["set_temp_voice_private"],
+        "refresh_temp_voice_control_panel": shared["refresh_temp_voice_control_panel"],
     }
-
-
-bot.gg = _base_bridge()
-
-
-async def _load_extensions(extension_names):
-    for extension in extension_names:
-        try:
-            await bot.load_extension(extension)
-            print(f"✅ Cog محمّل: {extension}")
-        except Exception as error:
-            print(f"❌ فشل تحميل {extension}: {type(error).__name__}: {error}")
-            traceback.print_exc()
-
-
-def _attach_temp_voice_bridge():
-    voice = importlib.import_module("cogs.system_voice")
-    bot.gg.update({
-        "temp_voice_channels": voice.temp_voice_channels,
-        "temp_voice_acl": voice.temp_voice_acl,
-        "is_temp_voice_channel": voice.is_temp_voice_channel,
-        "is_temp_voice_owner": voice.is_temp_voice_owner,
-        "get_temp_voice_acl": voice.get_temp_voice_acl,
-        "temp_voice_allow_member": voice.temp_voice_allow_member,
-        "temp_voice_deny_member": voice.temp_voice_deny_member,
-        "temp_voice_block_member": voice.temp_voice_block_member,
-        "temp_voice_unblock_member": voice.temp_voice_unblock_member,
-        "temp_voice_kick_member": voice.temp_voice_kick_member,
-        "temp_voice_set_manual_mute": voice.temp_voice_set_manual_mute,
-        "temp_voice_set_voice_mute": voice.temp_voice_set_voice_mute,
-        "temp_voice_set_chat_mute": voice.temp_voice_set_chat_mute,
-        "is_temp_voice_protected_target": voice.is_temp_voice_protected_target,
-        "set_temp_voice_private": voice.set_temp_voice_private,
-        "refresh_temp_voice_control_panel": voice.refresh_temp_voice_control_panel,
-    })
-
-
-# Preserve the old design: prefix commands stay disabled because the ordered
-# message pipeline intentionally does not call bot.process_commands().
-@bot.event
-async def on_message(message: discord.Message):
-    return None
 
 
 @bot.event
 async def setup_hook():
-    await _load_extensions(SYSTEM_COGS)
-    _attach_temp_voice_bridge()
+    """Load all split systems before slash-command synchronization."""
+    for extension in CORE_COGS:
+        try:
+            await bot.load_extension(extension)
+            print(f"✅ Core Cog محمّل: {extension}")
+        except Exception as exc:
+            print(f"❌ فشل تحميل Core Cog {extension}: {type(exc).__name__}: {exc}")
+            traceback.print_exc()
+            raise
 
-    # These three views were registered by the original setup_hook (before
-    # on_ready adds the remaining persistent views).
-    bot.add_view(core.LevelsInfoView())
-    bot.add_view(core.OwnerControlCenterView())
-    bot.add_view(core.SupportCenterView())
+    shared = runtime_namespace()
+    _configure_cog_bridge(shared)
 
-    await _load_extensions(GAMES_COGS)
+    # Persistent public/private control centers (same three as before).
+    bot.add_view(shared["LevelsInfoView"]())
+    bot.add_view(shared["OwnerControlCenterView"]())
+    bot.add_view(shared["SupportCenterView"]())
+
+    for extension in GAMES_COGS:
+        try:
+            await bot.load_extension(extension)
+            print(f"✅ Cog محمّل: {extension}")
+        except Exception as exc:
+            print(f"❌ فشل تحميل {extension}: {type(exc).__name__}: {exc}")
+            traceback.print_exc()
+            if extension in REQUIRED_STANDALONE_COGS:
+                raise
+
+
+def __getattr__(name):
+    """Compatibility for optional legacy imports that still target ai_bot."""
+    return runtime_value(name)
 
 
 if __name__ == "__main__":
-    if not DISCORD_TOKEN or not OPENROUTER_API_KEY:
+    shared = runtime_namespace()
+    if not shared["DISCORD_TOKEN"] or not shared["OPENROUTER_API_KEY"]:
         print("❌ Missing tokens! Check Railway Variables.")
     else:
-        bot.run(DISCORD_TOKEN)
+        bot.run(shared["DISCORD_TOKEN"])

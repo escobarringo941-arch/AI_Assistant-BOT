@@ -1,0 +1,224 @@
+{
+  "description": "Hashes lock the reviewed component bytes and execution order; intentional feature revisions update this baseline.",
+  "joined_sha256": "5aa1634061b635d9deb3d8c4fa2ca8f2bcc6c1224b4edccad9bd16ed1e71034e",
+  "events_before_setup_hook": [
+    "on_voice_state_update",
+    "on_member_join",
+    "on_member_remove",
+    "on_raw_reaction_add",
+    "on_message_delete",
+    "on_message_edit",
+    "on_message",
+    "on_command_error",
+    "on_ready"
+  ],
+  "task_loops": [
+    "afk_auto_move_loop",
+    "birthday_loop",
+    "temp_voice_housekeeping_loop",
+    "voice_xp_loop",
+    "update_leaderboard",
+    "auto_info",
+    "update_stats",
+    "update_admin_list",
+    "check_reminders"
+  ],
+  "components": [
+    {
+      "name": "bootstrap",
+      "path": "cogs/bootstrap.py",
+      "original_start_line": 1,
+      "original_end_line": 696,
+      "sha256": "25e0a2f6dbdb8f1c7406c729b1a095bfa626e491d4fc99c92d8bce1d24af27b3"
+    },
+    {
+      "name": "persistent_state",
+      "path": "cogs/persistent_state.py",
+      "original_start_line": 697,
+      "original_end_line": 1449,
+      "sha256": "cde7058e319006ff51ac3961713938616308ff9ec43cdea5ea9661705b3655ee"
+    },
+    {
+      "name": "xp_runtime",
+      "path": "cogs/xp_runtime.py",
+      "original_start_line": 1450,
+      "original_end_line": 2056,
+      "sha256": "96333f6682bc3bcdada9b46ca42d48e92efb6054389a281a038543377e63e3ce"
+    },
+    {
+      "name": "settings_storage",
+      "path": "cogs/settings_storage.py",
+      "original_start_line": 2057,
+      "original_end_line": 2432,
+      "sha256": "2ece05459fac0818b18a7327d5dfa4466072c937df1d45933f58ea0d91e495a4"
+    },
+    {
+      "name": "ai_conversation",
+      "path": "cogs/ai_conversation.py",
+      "original_start_line": 2433,
+      "original_end_line": 2679,
+      "sha256": "c80717f7ad633088f8c1db6d458f7b017c2db9f5e7d193387d5285f01050e515"
+    },
+    {
+      "name": "content_apis",
+      "path": "cogs/content_apis.py",
+      "original_start_line": 2680,
+      "original_end_line": 3230,
+      "sha256": "a8e8e9a154a64325200e631dc1805f623fd8dacb700ee8c76db7c70bd390a657"
+    },
+    {
+      "name": "moderation_core",
+      "path": "cogs/moderation_core.py",
+      "original_start_line": 3231,
+      "original_end_line": 3521,
+      "sha256": "da57c8a1f690f61e1ee62d172bc96d01d8eb87650f7b1e33ecd1a4b9a8d6600d"
+    },
+    {
+      "name": "access_panels",
+      "path": "cogs/access_panels.py",
+      "original_start_line": 3522,
+      "original_end_line": 4289,
+      "sha256": "2ba3dc6d96004b5414999864c9eb7627dccdac092aec25ad7ae46bd325cd507e"
+    },
+    {
+      "name": "support_system",
+      "path": "cogs/support_system.py",
+      "original_start_line": 4290,
+      "original_end_line": 5092,
+      "sha256": "ef3378a5a82490bbddb838aa1b0f9bf62ec3c0cf950cc381d747adf214230285"
+    },
+    {
+      "name": "applications",
+      "path": "cogs/applications.py",
+      "original_start_line": 5093,
+      "original_end_line": 5375,
+      "sha256": "e762a264457edb42fdfdd4bd6e3cb0ddc2a6d1ff3954d0ae7e2203ae79538c90"
+    },
+    {
+      "name": "suggestions",
+      "path": "cogs/suggestions.py",
+      "original_start_line": 5376,
+      "original_end_line": 5943,
+      "sha256": "8fd0c2640eab10460a04925646cefe2c12fdfbadd936b58ed5f3c722de4d8800"
+    },
+    {
+      "name": "birthdays",
+      "path": "cogs/birthdays.py",
+      "original_start_line": 5944,
+      "original_end_line": 6049,
+      "sha256": "324fdd63dd45b6063a5aad70ab9553843a8aee9684a9ea05458c432123ca3db7"
+    },
+    {
+      "name": "relationships",
+      "path": "cogs/relationships.py",
+      "original_start_line": 6050,
+      "original_end_line": 6735,
+      "sha256": "23551da2906119d504981bcd6b5c11a8f519d1dea30fac7034fbd239fbd11e9c"
+    },
+    {
+      "name": "temp_voice",
+      "path": "cogs/temp_voice.py",
+      "original_start_line": 6736,
+      "original_end_line": 7844,
+      "sha256": "6c816a4ecae6436ddde30aa4266195eb796e9b444e1ef5e3f270cac247940d1e"
+    },
+    {
+      "name": "temp_music",
+      "path": "cogs/temp_music.py",
+      "original_start_line": null,
+      "original_end_line": null,
+      "sha256": "e3871b86a6884fa71f5a10e46a95f2a0681b5f633d81cd1292a91a590c858bdb"
+    },
+    {
+      "name": "voice_runtime",
+      "path": "cogs/voice_runtime.py",
+      "original_start_line": 7845,
+      "original_end_line": 8413,
+      "sha256": "1af290cc6878be0d6fb60d07d6ef23a250ddec7c640cad3eea09e2e888494861"
+    },
+    {
+      "name": "server_setup",
+      "path": "cogs/server_setup.py",
+      "original_start_line": 8414,
+      "original_end_line": 8842,
+      "sha256": "783e16903b09e44c55c6c728efd2de3c54be7e04ba61fe0f518c03e4a896fd99"
+    },
+    {
+      "name": "member_events",
+      "path": "cogs/member_events.py",
+      "original_start_line": 8843,
+      "original_end_line": 9431,
+      "sha256": "bb715af634381ad52df4caa13c6523a933f91e9677bfc80ff26b3a0d8e3ecfeb"
+    },
+    {
+      "name": "moderation_commands",
+      "path": "cogs/moderation_commands.py",
+      "original_start_line": 9432,
+      "original_end_line": 9839,
+      "sha256": "4f7d759679d1c9c4432b3c515b0ccbec63ef59c8f120dc90158ea1684ade3297"
+    },
+    {
+      "name": "xp_admin",
+      "path": "cogs/xp_admin.py",
+      "original_start_line": 9840,
+      "original_end_line": 10334,
+      "sha256": "a632bf3d5cfa8ca2e75b4abe3a5ff34bc00db9fc1975259889843fd9282f06ab"
+    },
+    {
+      "name": "bot_admin_panel",
+      "path": "cogs/bot_admin_panel.py",
+      "original_start_line": 10335,
+      "original_end_line": 10686,
+      "sha256": "19359411ba1017742ec0e0c2f55ec799eb7f6aa026cd28330fbbb8ebc9ae35bc"
+    },
+    {
+      "name": "leveling_commands",
+      "path": "cogs/leveling_commands.py",
+      "original_start_line": 10687,
+      "original_end_line": 10872,
+      "sha256": "1face0e5bcd8591e32c6be329ac6a7a73259a2cfd4042c57a12c633f8a522d67"
+    },
+    {
+      "name": "levels_center",
+      "path": "cogs/levels_center.py",
+      "original_start_line": 10873,
+      "original_end_line": 11444,
+      "sha256": "fb906d3d5af8be06c6116ed77d044998f75929c7998423ed1f6a0106b5ad96c2"
+    },
+    {
+      "name": "verification_commands",
+      "path": "cogs/verification_commands.py",
+      "original_start_line": 11445,
+      "original_end_line": 11673,
+      "sha256": "de1b9143ae2ea5c82a822e1991a3253c6b321e3fbeda8a814d224eead26b111e"
+    },
+    {
+      "name": "general_commands",
+      "path": "cogs/general_commands.py",
+      "original_start_line": 11674,
+      "original_end_line": 12020,
+      "sha256": "473329d9f5465f710ee745d74138d187c64a42f77f94fdfb067892b1367ee3f3"
+    },
+    {
+      "name": "automation_tasks",
+      "path": "cogs/automation_tasks.py",
+      "original_start_line": 12021,
+      "original_end_line": 12455,
+      "sha256": "9368bbe79c1372755a7406098dd61745fd19e191092e5252886dacc07ab5b118"
+    },
+    {
+      "name": "owner_control",
+      "path": "cogs/owner_control.py",
+      "original_start_line": 12456,
+      "original_end_line": 13608,
+      "sha256": "7decc5204ae8e8aba977b503d332716e0e59ca48a433cb937c66178c98fe880c"
+    },
+    {
+      "name": "ready_events",
+      "path": "cogs/ready_events.py",
+      "original_start_line": 13609,
+      "original_end_line": 13761,
+      "sha256": "3596910adea0656fa12fa914834404427c85b5ebc3eac5d62d1bd5cd428a84e0"
+    }
+  ]
+}
