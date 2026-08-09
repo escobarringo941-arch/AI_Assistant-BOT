@@ -146,8 +146,18 @@ class CVDetailsModal(ReliableModal):
         self.cog=cog; self.skills=skills; self.lang=lang; super().__init__(title="🧾 CV ديالك فـGGMW9 CITY" if lang=="darija" else "🧾 Your GGMW9 CITY CV")
         self.about=discord.ui.TextInput(label="شنو كتعرف تدير فالحقيقة؟" if lang=="darija" else "What can you really do?",placeholder="مثال: كنعرف نصمم، نتعامل مع الناس، Gaming...",style=discord.TextStyle.paragraph,min_length=10,max_length=800)
         self.experience=discord.ui.TextInput(label="التجربة من 0 حتى 5" if lang=="darija" else "Experience 0 to 5",placeholder="0",min_length=1,max_length=1)
-        self.availability=discord.ui.TextInput(label="الوقت: weekdays/weekends/evenings/flexible",placeholder="flexible",max_length=20)
-        self.work_style=discord.ui.TextInput(label="الستايل: people/solo/creative/technical/flexible",placeholder="flexible",max_length=20)
+        # Discord TextInput labels are limited to 45 characters.
+        # Keep the label human-friendly and move the accepted values to the placeholder.
+        self.availability=discord.ui.TextInput(
+            label="الوقت اللي كيناسبك",
+            placeholder="weekdays / weekends / evenings / flexible",
+            max_length=20,
+        )
+        self.work_style=discord.ui.TextInput(
+            label="الستايل ديال الخدمة",
+            placeholder="people / solo / creative / technical / flexible",
+            max_length=20,
+        )
         self.sector=discord.ui.TextInput(label="المجال المفضل (اختياري)",placeholder="media / fashion / technical / business...",required=False,max_length=20)
         for x in (self.about,self.experience,self.availability,self.work_style,self.sector): self.add_item(x)
     async def on_submit(self,interaction):
