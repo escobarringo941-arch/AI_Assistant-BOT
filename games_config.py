@@ -474,3 +474,36 @@ TRIVIA_CATEGORY_LABELS = {
     "anime": "📺 أنمي ومانغا",
 }
 TRIVIA_CATEGORIES = list(TRIVIA_CATEGORY_LABELS)
+
+# ═══════════════════════════════════════════════════════
+# ║ GGMW9 CITY — Careers / Services / Projects ║
+# ═══════════════════════════════════════════════════════
+CITY_TIMEZONE = "Africa/Casablanca"
+CITY_CATEGORY_NAME = "🏙️・GGMW9 CITY"
+CITY_CHANNEL_NAMES = {
+    "career_center": "💼・career-center",
+    "services_market": "🛍️・services-market",
+    "projects_board": "🏗️・projects-board",
+    "job_market": "📊・job-market",
+    "city_alerts": "🔔・city-alerts",
+}
+CITY_PENDING_ORDER_HOURS = 3
+CITY_DELIVERED_AUTO_RELEASE_HOURS = 12
+CITY_ACCEPTED_OVERDUE_HOURS = 48
+CITY_JOB_CHANGE_COOLDOWN_HOURS = 24
+CITY_SERVICE_TAX_BPS = 500          # 5%
+CITY_PROJECT_TAX_BPS = 300          # 3%
+CITY_BUSINESS_PAYROLL_SHARE_BPS = 5500
+CITY_BUSINESS_OPERATING_SHARE_BPS = 3000
+CITY_BUSINESS_PROFIT_SHARE_BPS = 1500
+CITY_WAGE_PROTECTION_TREASURY_BPS = 300   # max 3% Treasury/day
+CITY_WAGE_PROTECTION_DAILY_CAP = 25000    # max $250/day
+CITY_INITIAL_PAYROLL_SEED_BPS = 800       # max 8% Treasury once
+CITY_INITIAL_PAYROLL_SEED_CAP = 50000     # max $500 total once
+CITY_EMPLOYEE_WEEK_BONUS = 2500           # $25 Treasury-funded
+CITY_ALERT_DELETE_SECONDS = 1800
+CITY_JOB_MARKET_REFRESH_MINUTES = 10
+CITY_TICK_SECONDS = 60
+CITY_PROJECT_MIN_BUDGET = 500              # $5
+CITY_PROJECT_MAX_DEADLINE_DAYS = 30
+CITY_PROJECT_MAX_MILESTONES = 3

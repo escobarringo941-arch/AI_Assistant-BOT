@@ -12431,6 +12431,7 @@ def _owner_control_embed(guild: discord.Guild) -> discord.Embed:
             "💵 **Economy** — Give/Remove USD / Member Account / Economy Stats / Bank Refresh\n"
             "⚙️ **Bot Settings** — Anti-Raid / Warns / Auto-Info / Features / XP Settings\n"
             "🔄 **Refresh All Panels** — يجدّد كاع الواجهات الرسمية بلا حذف Messages وبلا Redeploy\n"
+            "🏙️ **GGMW9 CITY** — Setup / Repair ديال المدينة المهنية والقنوات ديالها\n"
             "🔊 **Voice Tools** — صاوب Room Mute Panel باختيار Voice Channel\n\n"
             "🔒 كل Interaction كتتأكد من **OWNER_ID** حتى إلا شاف شي حد الرسالة بالغلط."
         ),
@@ -13266,6 +13267,17 @@ async def refresh_all_server_panels(guild: discord.Guild) -> dict:
     else:
         report["skip"].append("🧠 Trivia Cog")
 
+    # GGMW9 CITY — career/services/projects/job-market panels
+    city_cog = bot.get_cog("CareerCity")
+    if city_cog:
+        setup = city_cog.store.guild(guild.id).get("setup", {})
+        if setup.get("complete"):
+            await run("🏙️ GGMW9 CITY", lambda: city_cog.refresh_city_panels(guild))
+        else:
+            report["skip"].append("🏙️ GGMW9 CITY (مازال ما تدارش Setup)")
+    else:
+        report["skip"].append("🏙️ CareerCity Cog")
+
     # Active temporary voice room control panels
     refreshed_temp = 0
     for cid in list(temp_voice_channels.keys()):
@@ -13372,6 +13384,54 @@ class OwnerControlCenterView(OwnerOnlyView):
             view=OwnerVoiceSelectView(),
             ephemeral=True,
         )
+
+    @discord.ui.button(
+        label="Setup GGMW9 CITY", emoji="🏙️", style=discord.ButtonStyle.success,
+        custom_id="ggmw9:owner:city_setup", row=1
+    )
+    async def city_setup(self, interaction: discord.Interaction, button: discord.ui.Button):
+        city = bot.get_cog("CareerCity")
+        if not city:
+            await interaction.response.send_message(
+                "❌ CareerCity Cog ماشي محمّلة. شوف Railway logs.",
+                ephemeral=True,
+            )
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        result = await city.setup_city(interaction.guild, force=True)
+        if not result.get("ok"):
+            await interaction.followup.send(
+                f"❌ Setup CITY فشلت: {result.get('error','Unknown error')}",
+                ephemeral=True,
+            )
+            return
+        seed = result.get("seed") or {}
+        embed = discord.Embed(
+            title="🏙️ GGMW9 CITY — Setup Complete",
+            description=(
+                f"**Category:** {result.get('category')}\n"
+                f"✅ القنوات تخلقات/تصلحات وولات Read-only Panel channels.\n"
+                f"🕐 التوقيت: **Africa/Casablanca**\n"
+                f"📩 التنبيهات: **DM → city-alerts fallback**\n"
+                f"🏦 Direct Deposit: **GGMW9 Bank Savings**"
+            ),
+            color=discord.Color.green(),
+            timestamp=datetime.now(),
+        )
+        created = result.get("created") or []
+        reused = result.get("reused") or []
+        if created:
+            embed.add_field(name="🆕 تخلقو", value="\n".join(created)[:1024], inline=False)
+        if reused:
+            embed.add_field(name="♻️ تلقاو وتصلحو", value="\n".join(reused)[:1024], inline=False)
+        if int(seed.get("seeded",0) or 0):
+            embed.add_field(
+                name="💼 Payroll Seed",
+                value=f"الخزينة موّلت البداية بـ **{cfg.fmt_money(int(seed['seeded']))}** موزعة على شركات المدينة.",
+                inline=False,
+            )
+        embed.set_footer(text="Setup آمن ضد duplicates • IDs كيتخزنو فـggmw9_city.json")
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
     @discord.ui.button(
         label="Test Channel Move", emoji="🧪", style=discord.ButtonStyle.danger,
@@ -13640,6 +13700,7 @@ bot.gg = {
 # باش تطفي الألعاب كاملة وترجع للبوت القديم: عمّرها خاوية →  GAMES_COGS = []
 GAMES_COGS = [
     "cogs.economy",
+    "cogs.city",
     "cogs.games_panel",
     "cogs.game_counting",
     "cogs.game_tictactoe",
