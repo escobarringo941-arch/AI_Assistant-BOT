@@ -18,7 +18,7 @@ import games_config as root_cfg
 from cogs.panel_registry import upsert_fixed_panel
 
 
-LAND_PRICE = 15_000
+LAND_PRICE = 150_000
 CONSTRUCTION_JOBS = (
     ("foundation", "الأساس والبنية", 6_000),
     ("interior", "التجهيز الداخلي", 5_000),
