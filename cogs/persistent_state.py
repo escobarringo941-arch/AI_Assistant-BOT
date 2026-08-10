@@ -711,7 +711,10 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             data["level"] += 1
             leveled_up = True
     
-        save_levels()
+        # كتابة الملف (I/O) فـ thread بوحدها باش ما توقفش event loop ديال البوت
+        # كاملة (هادشي كان كيصاوب "تعطل" فالأوامر مادام voice_xp_loop كيعيط
+        # ليها بزاف فمرة وحدة، على كل عضو فالفويس).
+        await asyncio.to_thread(save_levels)
     
         # Self-healing صغير فكل XP event: إلا الرول تحيدات بالغلط، كترد مباشرة.
         new_level = data["level"]
@@ -722,8 +725,10 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             print(f"[LEVEL ROLE SYNC] خطأ فـ grant_xp مع {member}: {e}")
     
         channel_id = getattr(fallback_channel, "id", None) if fallback_channel else None
-        log_xp_event(guild.id, member.id, source, amount, channel_id=channel_id,
-                     new_total_level=data["level"])
+        await asyncio.to_thread(
+            log_xp_event, guild.id, member.id, source, amount,
+            channel_id=channel_id, new_total_level=data["level"],
+        )
         try:
             await check_xp_anomaly(member, guild, source)
         except Exception as e:

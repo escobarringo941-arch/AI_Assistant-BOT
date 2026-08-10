@@ -1114,43 +1114,46 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     }
     
     
-    if TEMP_VOICE_HAS_USER_SELECT:
-        class TempVoiceActionUserSelect(discord.ui.UserSelect):
-            def __init__(self, channel_id: int, action: str):
-                self.channel_id = channel_id
-                self.action = action
-                super().__init__(
-                    placeholder=f"{_TEMP_ACTION_LABELS[action]} — اختار العضو...",
-                    min_values=1,
-                    max_values=1,
-                    custom_id=f"temp_voice_action_pick_{action}",
-                )
-    
-            async def callback(self, interaction: discord.Interaction):
-                guild = interaction.guild
-                channel = guild.get_channel(self.channel_id) if guild else None
-                if not guild or not channel or not isinstance(channel, discord.VoiceChannel) or not is_temp_voice_channel(channel):
-                    await interaction.response.send_message("❌ الروم ماعادش موجودة.", ephemeral=True)
-                    return
-                if not isinstance(interaction.user, discord.Member) or not is_temp_voice_owner(interaction.user, channel):
-                    await interaction.response.send_message("❌ غير مول الروم يقدر يستعمل هاد العملية.", ephemeral=True)
-                    return
-                target = await _temp_voice_target_member(guild, self.values[0])
-                if not target:
-                    await interaction.response.send_message("❌ ما لقيتش هاد العضو فالسيرفر.", ephemeral=True)
-                    return
-                await interaction.response.defer(ephemeral=True)
-                ok, msg = await _run_temp_voice_action(channel, target, self.action, interaction.user)
-                await interaction.followup.send(msg, ephemeral=True)
-    
-    
-        class TempVoiceActionTargetView(discord.ui.View):
-            def __init__(self, channel_id: int, action: str):
-                super().__init__(timeout=60)
-                self.add_item(TempVoiceActionUserSelect(channel_id, action))
-    else:
-        TempVoiceActionUserSelect = None
-        TempVoiceActionTargetView = None
+    class TempVoiceActionMemberSelect(discord.ui.Select):
+        """القائمة كتبان بيها غير الأعضاء (Humans) اللي كاينين دابا فهاد الروم —
+        ماشي كاع أعضاء السيرفر (بخلاف discord.ui.UserSelect الأصلية)."""
+        def __init__(self, channel: discord.VoiceChannel, action: str):
+            self.channel_id = channel.id
+            self.action = action
+            options = [
+                discord.SelectOption(label=m.display_name[:100], value=str(m.id))
+                for m in channel.members if not m.bot
+            ][:25]
+            super().__init__(
+                placeholder=f"{_TEMP_ACTION_LABELS[action]} — اختار العضو من الروم...",
+                min_values=1,
+                max_values=1,
+                options=options,
+                custom_id=f"temp_voice_action_pick_{action}",
+            )
+
+        async def callback(self, interaction: discord.Interaction):
+            guild = interaction.guild
+            channel = guild.get_channel(self.channel_id) if guild else None
+            if not guild or not channel or not isinstance(channel, discord.VoiceChannel) or not is_temp_voice_channel(channel):
+                await interaction.response.send_message("❌ الروم ماعادش موجودة.", ephemeral=True)
+                return
+            if not isinstance(interaction.user, discord.Member) or not is_temp_voice_owner(interaction.user, channel):
+                await interaction.response.send_message("❌ غير مول الروم يقدر يستعمل هاد العملية.", ephemeral=True)
+                return
+            target = guild.get_member(int(self.values[0]))
+            if not target or target not in channel.members:
+                await interaction.response.send_message("❌ هاد العضو خرج من الروم.", ephemeral=True)
+                return
+            await interaction.response.defer(ephemeral=True)
+            ok, msg = await _run_temp_voice_action(channel, target, self.action, interaction.user)
+            await interaction.followup.send(msg, ephemeral=True)
+
+
+    class TempVoiceActionTargetView(discord.ui.View):
+        def __init__(self, channel: discord.VoiceChannel, action: str):
+            super().__init__(timeout=60)
+            self.add_item(TempVoiceActionMemberSelect(channel, action))
     
     
     class TempVoiceMemberIdModal(discord.ui.Modal):
@@ -1198,14 +1201,15 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         ch = await _temp_voice_require_owner(interaction)
         if not ch:
             return
-        if TEMP_VOICE_HAS_USER_SELECT:
-            await interaction.response.send_message(
-                f"{_TEMP_ACTION_LABELS[action]} — اختار العضو من اللائحة:",
-                view=TempVoiceActionTargetView(ch.id, action),
-                ephemeral=True,
-            )
-        else:
-            await interaction.response.send_modal(TempVoiceMemberIdModal(ch.id, action))
+        members = [m for m in ch.members if not m.bot]
+        if not members:
+            await interaction.response.send_message("❌ ماكاين حتى عضو فالروم دابا.", ephemeral=True)
+            return
+        await interaction.response.send_message(
+            f"{_TEMP_ACTION_LABELS[action]} — اختار العضو من الروم:",
+            view=TempVoiceActionTargetView(ch, action),
+            ephemeral=True,
+        )
     
     
     
