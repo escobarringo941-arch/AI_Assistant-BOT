@@ -258,7 +258,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     
     
     def _rules_member_is_exempt(member: discord.Member) -> bool:
-        if member.id == OWNER_ID:
+        if member.id == member.guild.owner_id:
             return True
         return any(role.id in EXEMPT_ROLE_IDS for role in member.roles)
     

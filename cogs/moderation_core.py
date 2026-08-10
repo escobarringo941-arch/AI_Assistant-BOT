@@ -204,7 +204,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     
     def is_exempt(member: discord.Member) -> bool:
         """واش هاد العضو معفي من Auto-Mod (Owner ولا شي رول معفي)"""
-        if OWNER_ID and member.id == OWNER_ID:
+        if member.id == member.guild.owner_id:
             return True
         if EXEMPT_ROLE_IDS:
             member_role_ids = {role.id for role in member.roles}

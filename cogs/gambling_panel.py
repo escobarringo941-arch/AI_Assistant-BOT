@@ -930,7 +930,7 @@ class GamblingPanel(commands.Cog):
         )
 
     @commands.command(name="gamblingpanel", hidden=True)
-    @commands.has_permissions(administrator=True)
+    @commands.has_permissions(manage_guild=True)
     async def gamblingpanel_cmd(self, ctx):
         await self._send_panel(ctx.channel)
 

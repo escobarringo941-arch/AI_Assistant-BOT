@@ -5,6 +5,16 @@ from cogs._component_runtime import install_component, uninstall_component
 
 # ORIGINAL SOURCE BEGIN
 if globals().get("_GGMW9_COMPONENT_EXEC", False):
+    def _verification_admin(member: discord.Member) -> bool:
+        return bool(
+            member
+            and (
+                member.id == member.guild.owner_id
+                or any(role.id == ADMIN_ROLE_ID for role in member.roles)
+            )
+        )
+
+
     @bot.command(name="setlevel", hidden=True)
     @owner_only()
     async def setlevel_cmd(ctx, member: discord.Member, level: int):
@@ -31,10 +41,13 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     
     
     @bot.hybrid_command()
-    @app_commands.default_permissions(administrator=True)
-    @commands.has_permissions(administrator=True)
+    @app_commands.default_permissions(manage_messages=True)
+    @commands.has_permissions(manage_messages=True)
     async def clearoldverify(ctx):
         """كيمسح رسالة/رسائل 'تفعيل العضوية' القديمة (بالريأكشن ✅) من verify channel"""
+        if not _verification_admin(ctx.author):
+            await ctx.send("❌ هاد الأمر خاص غير بـ Owner والـ Admin.", delete_after=6)
+            return
         verify_channel = bot.get_channel(VERIFY_CHANNEL_ID)
         rules_channel = bot.get_channel(RULES_CHANNEL_ID)
         deleted = 0
@@ -118,10 +131,13 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     
     
     @bot.hybrid_command()
-    @app_commands.default_permissions(administrator=True)
-    @commands.has_permissions(administrator=True)
+    @app_commands.default_permissions(manage_roles=True)
+    @commands.has_permissions(manage_roles=True)
     async def listroles(ctx):
         """يبين لائحة الأدوار المعمرة دابا فـ PICK_ROLES"""
+        if not _verification_admin(ctx.author):
+            await ctx.send("❌ هاد الأمر خاص غير بـ Owner والـ Admin.", delete_after=6)
+            return
         lines = []
         for category_name, roles_list in PICK_ROLES.items():
             valid = [r for r in roles_list if r["role_id"]]
@@ -144,9 +160,25 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     
     
     @bot.hybrid_command(description="فعّل عضو يدوياً (Admin)")
-    @app_commands.default_permissions(administrator=True)
-    @commands.has_permissions(administrator=True)
+    @app_commands.default_permissions(manage_roles=True)
+    @commands.has_permissions(manage_roles=True)
     async def verify(ctx, member: discord.Member):
+        if not _verification_admin(ctx.author):
+            await ctx.send("❌ هاد الأمر خاص غير بـ Owner والـ Admin.", delete_after=6)
+            return
+        if member.id == ctx.guild.owner_id and ctx.author.id != ctx.guild.owner_id:
+            security = bot.get_cog("OwnerSecurity")
+            if security:
+                await security.log_denied_attempt(
+                    ctx.guild,
+                    ctx.author,
+                    member,
+                    "Verify / change Owner roles",
+                    channel=ctx.channel,
+                    details="Only the real Discord server owner may change their own verification roles.",
+                )
+            await ctx.send("❌ مايمكنش للـAdmin يبدّل رولات Server Owner.", delete_after=6)
+            return
         unverified_role = ctx.guild.get_role(UNVERIFIED_ROLE_ID)
         if unverified_role and unverified_role in member.roles:
             await member.remove_roles(unverified_role)
@@ -185,10 +217,13 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     
     
     @bot.hybrid_command()
-    @app_commands.default_permissions(administrator=True)
-    @commands.has_permissions(administrator=True)
+    @app_commands.default_permissions(manage_roles=True)
+    @commands.has_permissions(manage_roles=True)
     async def checkroles(ctx):
         """كيتأكد أن role ديال البوت قادر يعطي Member/Unverified/Muted"""
+        if not _verification_admin(ctx.author):
+            await ctx.send("❌ هاد الأمر خاص غير بـ Owner والـ Admin.", delete_after=6)
+            return
         problems = check_role_hierarchy(ctx.guild)
         if not problems:
             embed = discord.Embed(
@@ -207,9 +242,25 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     
     
     @bot.hybrid_command(description="رجع عضو Unverified (Admin)")
-    @app_commands.default_permissions(administrator=True)
-    @commands.has_permissions(administrator=True)
+    @app_commands.default_permissions(manage_roles=True)
+    @commands.has_permissions(manage_roles=True)
     async def unverify(ctx, member: discord.Member):
+        if not _verification_admin(ctx.author):
+            await ctx.send("❌ هاد الأمر خاص غير بـ Owner والـ Admin.", delete_after=6)
+            return
+        if member.id == ctx.guild.owner_id and ctx.author.id != ctx.guild.owner_id:
+            security = bot.get_cog("OwnerSecurity")
+            if security:
+                await security.log_denied_attempt(
+                    ctx.guild,
+                    ctx.author,
+                    member,
+                    "Unverify / change Owner roles",
+                    channel=ctx.channel,
+                    details="Only the real Discord server owner may change their own verification roles.",
+                )
+            await ctx.send("❌ مايمكنش للـAdmin يبدّل رولات Server Owner.", delete_after=6)
+            return
         member_role = ctx.guild.get_role(MEMBER_ROLE_ID)
         if member_role and member_role in member.roles:
             await member.remove_roles(member_role)

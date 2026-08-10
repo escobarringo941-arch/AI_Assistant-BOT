@@ -244,6 +244,17 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         - Undeafen / خروج من voice / الدخول لروم AFK كيمسح العداد
         """
         key = _afk_deafen_key(member.guild.id, member.id)
+
+        # The server Owner is never an Auto-AFK target. This is part of the
+        # global owner immovability rule, including while inside a TEMP room.
+        if is_temp_voice_protected_target(member):
+            tracking_changed = afk_deafen_tracking.pop(key, None) is not None
+            return_changed = afk_auto_return.pop(key, None) is not None
+            if tracking_changed:
+                save_afk_deafen_tracking()
+            if return_changed:
+                save_afk_auto_return()
+            return
     
         if not AFK_AUTO_MOVE_ENABLED:
             if afk_deafen_tracking.pop(key, None) is not None:
@@ -277,7 +288,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             if _channel_is_afk_target(channel, guild):
                 continue
             for member in channel.members:
-                if member.bot:
+                if member.bot or is_temp_voice_protected_target(member):
                     continue
                 if not member.voice or not member.voice.self_deaf:
                     continue
@@ -314,7 +325,8 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             member = guild.get_member(user_id)
             origin = guild.get_channel(int(rec.get("channel_id", 0) or 0))
             current = member.voice.channel if member and member.voice else None
-            if (not member or member.bot or not isinstance(origin, discord.VoiceChannel)
+            if (not member or member.bot or is_temp_voice_protected_target(member)
+                    or not isinstance(origin, discord.VoiceChannel)
                     or not _channel_is_afk_target(current, guild)):
                 afk_auto_return.pop(key, None)
                 changed = True
@@ -324,6 +336,11 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     
     async def handle_afk_auto_return(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
         """ملي عضو نقله البوت للـ AFK يفك Self-Deafen، يرجعو للروم اللي كان فيها قبل."""
+        if is_temp_voice_protected_target(member):
+            key = _afk_deafen_key(member.guild.id, member.id)
+            if afk_auto_return.pop(key, None) is not None:
+                save_afk_auto_return()
+            return False
         if not AFK_AUTO_RETURN_ENABLED:
             return False
         key = _afk_deafen_key(member.guild.id, member.id)
@@ -416,6 +433,12 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                 member = guild.get_member(user_id)
                 if not member or member.bot:
                     afk_deafen_tracking.pop(key, None)
+                    tracking_changed = True
+                    continue
+                if is_temp_voice_protected_target(member):
+                    afk_deafen_tracking.pop(key, None)
+                    if afk_auto_return.pop(key, None) is not None:
+                        return_changed = True
                     tracking_changed = True
                     continue
     

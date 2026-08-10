@@ -979,11 +979,19 @@ class Trivia(commands.Cog):
     # ═══════════════════════════════════════════════════
 
     @commands.hybrid_command(name="setuptrivia", description="كيصاوب panel لعبة Trivia فالـ channel الحالي (Admin)")
-    @app_commands.default_permissions(administrator=True)
-    @commands.has_permissions(administrator=True)
+    @app_commands.default_permissions(manage_channels=True)
+    @commands.has_permissions(manage_channels=True)
     async def setuptrivia_cmd(self, ctx: commands.Context):
         """كيصاوب panel لعبة Trivia. إلا TRIVIA_CHANNEL_ID = 0، كيصاوبو فالـ channel
         اللي درتي فيها الأمر — يعني ماعندكش علاش تبدل الـ CONFIG (Admin)"""
+        gg = getattr(self.bot, "gg", {}) or {}
+        admin_role_id = int(gg.get("ADMIN_ROLE_ID") or 0)
+        if not (
+            ctx.author.id == ctx.guild.owner_id
+            or any(role.id == admin_role_id for role in ctx.author.roles)
+        ):
+            await ctx.send("❌ هاد الأمر خاص غير بـ Owner والـ Admin.", delete_after=6)
+            return
         target = self.bot.get_channel(TRIVIA_CHANNEL_ID) if TRIVIA_CHANNEL_ID else ctx.channel
         if not target:
             await ctx.send("❌ ما لقيتش الـ channel ديال Trivia — تأكد من `TRIVIA_CHANNEL_ID`.", delete_after=10)

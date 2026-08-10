@@ -8,6 +8,9 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     def is_owner(ctx) -> bool:
         """كتأكد بلي الشخص اللي بعث الأمر هو بالضبط الـ Owner (بواسطة ID)،
         بلا ما يهم شنو هي الأدوار/الصلاحيات ديالو فالسيرفر."""
+        guild = getattr(ctx, "guild", None)
+        if guild is not None:
+            return ctx.author.id == guild.owner_id
         return bool(OWNER_ID) and ctx.author.id == OWNER_ID
     
     

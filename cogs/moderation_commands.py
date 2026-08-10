@@ -202,7 +202,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     async def ownerkick_cmd(ctx, member: discord.Member, *, reason="ما ذكرش سبب"):
         if not is_owner(ctx):
             return
-        if member.id == OWNER_ID:
+        if member.id == member.guild.owner_id:
             await ctx.send("❌ ما نقدرش نمس فـ Owner ديال السيرفر!", delete_after=5)
             return
         try:
@@ -223,7 +223,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     async def ownerban_cmd(ctx, member: discord.Member, *, reason="ما ذكرش سبب"):
         if not is_owner(ctx):
             return
-        if member.id == OWNER_ID:
+        if member.id == member.guild.owner_id:
             await ctx.send("❌ ما نقدرش نمس فـ Owner ديال السيرفر!", delete_after=5)
             return
         try:
@@ -244,7 +244,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     async def ownermute_cmd(ctx, member: discord.Member, duration: int = 5, *, reason="ما ذكرش سبب"):
         if not is_owner(ctx):
             return
-        if member.id == OWNER_ID:
+        if member.id == member.guild.owner_id:
             await ctx.send("❌ ما نقدرش نمس فـ Owner ديال السيرفر!", delete_after=5)
             return
         muted_role = ctx.guild.get_role(MUTED_ROLE_ID)
@@ -281,7 +281,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         status_msg = await ctx.send("⏳ كنكتم كاع الأعضاء، صبر شوية...")
         muted_count = 0
         for member in ctx.guild.members:
-            if member.bot or member.id == OWNER_ID or is_exempt(member):
+            if member.bot or member.id == member.guild.owner_id or is_exempt(member):
                 continue
             if muted_role in member.roles:
                 continue
@@ -334,10 +334,13 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     # ═══════════════════════════════════════════════════════
     
     @bot.hybrid_command(name="lockdown")
-    @app_commands.default_permissions(administrator=True)
-    @commands.has_permissions(administrator=True)
+    @app_commands.default_permissions(manage_guild=True)
+    @commands.has_permissions(manage_guild=True)
     async def lockdown_cmd(ctx, duration_minutes: int = None):
         """كيفعّل Anti-Raid Lockdown يدوياً (بلا ماتوصل عتبة الانضمامات) — Admin/Owner"""
+        if not (is_owner(ctx) or any(role.id == ADMIN_ROLE_ID for role in ctx.author.roles)):
+            await ctx.send("❌ هاد الأمر خاص غير بـ Owner والـ Admin.", delete_after=6)
+            return
         started = await trigger_raid_lockdown(
             ctx.guild,
             reason=f"🔒 Lockdown يدوي من طرف {ctx.author.mention}.",
@@ -353,10 +356,13 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     
     
     @bot.hybrid_command(name="unlockdown")
-    @app_commands.default_permissions(administrator=True)
-    @commands.has_permissions(administrator=True)
+    @app_commands.default_permissions(manage_guild=True)
+    @commands.has_permissions(manage_guild=True)
     async def unlockdown_cmd(ctx):
         """كيسد Anti-Raid Lockdown يدوياً ويرجع verification level للحالة العادية — Admin/Owner"""
+        if not (is_owner(ctx) or any(role.id == ADMIN_ROLE_ID for role in ctx.author.roles)):
+            await ctx.send("❌ هاد الأمر خاص غير بـ Owner والـ Admin.", delete_after=6)
+            return
         ended = await end_raid_lockdown(ctx.guild, reason=f"يدوي من طرف {ctx.author.mention}")
         if ended:
             await ctx.send("✅ Lockdown تسد، الوضعية رجعت عادية.")

@@ -268,7 +268,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             super().__init__(timeout=300)
     
         async def interaction_check(self, interaction: discord.Interaction) -> bool:
-            if not (OWNER_ID and interaction.user.id == OWNER_ID):
+            if not interaction.guild or interaction.user.id != interaction.guild.owner_id:
                 await interaction.response.send_message("❌ هاد اللوحة خاصة غير بالـ Owner.", ephemeral=True)
                 return False
             return True
@@ -364,13 +364,11 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     @bot.command(name="xpadjust", hidden=True)
     async def xpadjust_cmd(ctx, member: discord.Member, amount: int, *, reason: str = "بلا سبب محدد"):
         """زيد ولا نقص XP لعضو معين مباشرة، والمستوى كيتبدل أوتوماتيكياً حسب المجموع الجديد — Owner بوحدو"""
-        if not (OWNER_ID and ctx.author.id == OWNER_ID):
+        if not ctx.guild or ctx.author.id != ctx.guild.owner_id:
             await ctx.send("❌ هاد الأمر خاص غير بـ Owner.", delete_after=8)
             return
         if amount == 0:
             await ctx.send("❌ عطيني رقم غير صفر (موجب باش تزيد، سالب باش تنقص).", delete_after=8)
-            return
-        if not ctx.guild:
             return
         if member.bot:
             await ctx.send("❌ ما تقدرش تبدل XP ديال بوت.", delete_after=8)

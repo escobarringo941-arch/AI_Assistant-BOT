@@ -3383,8 +3383,7 @@ class Economy(commands.Cog):
         self, ctx: commands.Context, member: discord.Member, amount: str
     ):
         """Hidden prefix fallback. Amount is USD input (e.g. 25 or -10.50)."""
-        owner_id = getattr(self.bot, "gg", {}).get("OWNER_ID")
-        if not owner_id or ctx.author.id != owner_id:
+        if not ctx.guild or ctx.author.id != ctx.guild.owner_id:
             return
         parsed = cfg.parse_money_input(amount, allow_negative=True)
         if parsed is None or parsed == 0:

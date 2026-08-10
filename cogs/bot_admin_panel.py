@@ -79,7 +79,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         """View بيز فيها فحص الصلاحية (Owner بوحدو) مشترك بين كل صفحات اللوحة."""
     
         async def interaction_check(self, interaction: discord.Interaction) -> bool:
-            if not (OWNER_ID and interaction.user.id == OWNER_ID):
+            if not interaction.guild or interaction.user.id != interaction.guild.owner_id:
                 await interaction.response.send_message("❌ هاد اللوحة خاصة غير بالـ Owner.", ephemeral=True)
                 return False
             return True

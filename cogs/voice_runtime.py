@@ -46,12 +46,43 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         """شكون يقدر "يستعمل" البانل (يدوس على الأزرار/الـ Select ولا يصاوب بانل جديد)
         — Owner + ROOM_MUTE_PANEL_ALLOWED_USER_IDS بوحدهم، حتى Admin/Moderator
         العاديين ماشي معنيين."""
-        if OWNER_ID and member.id == OWNER_ID:
+        # Generic Room Mute must never become a staff bypass inside TEMP rooms.
+        # TEMP's own guarded panel stays available to the actual room owner.
+        if is_temp_voice_channel(channel):
+            return is_temp_voice_protected_target(member)
+        if is_temp_voice_protected_target(member):
             return True
         return member.id in ROOM_MUTE_PANEL_ALLOWED_USER_IDS
+
+
+    async def apply_guarded_bot_voice_mute(
+        member: discord.Member,
+        muted: bool,
+        *,
+        reason: str,
+        source: str,
+    ):
+        security = bot.get_cog("OwnerSecurity")
+        if security:
+            return await security.edit_member_voice_with_owner_lock(
+                member.guild,
+                bot.user,
+                member,
+                mute=muted,
+                reason=reason,
+                source=source,
+            )
+        return await member.edit(mute=muted, reason=reason)
     
     
-    async def apply_room_mute_state(channel: discord.VoiceChannel, muted: bool, protected_ids=None):
+    async def apply_room_mute_state(
+        channel: discord.VoiceChannel,
+        muted: bool,
+        protected_ids=None,
+        *,
+        actor=None,
+        lock_source: str = "Generic Room Mute all button",
+    ):
         """كيطبق Room Mute على الجميع بما فيهم Admin/Mod، باستثناء Server Owner بوحدو."""
         protected_ids = protected_ids or set()
         targets = [
@@ -60,15 +91,28 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             and bool(m.voice and m.voice.mute) != muted and m.id not in protected_ids
         ]
     
+        security = bot.get_cog("OwnerSecurity")
+
         async def _apply_one(m: discord.Member):
             try:
-                await m.edit(mute=muted, reason="Room Mute Panel — كتم/فك الكل")
+                if security:
+                    await security.edit_member_voice_with_owner_lock(
+                        channel.guild,
+                        actor,
+                        m,
+                        mute=muted,
+                        reason="Room Mute Panel — كتم/فك الكل",
+                        source=lock_source,
+                    )
+                else:
+                    await m.edit(mute=muted, reason="Room Mute Panel — كتم/فك الكل")
+                return True
             except (discord.Forbidden, discord.HTTPException):
-                pass
+                return False
     
-        if targets:
-            await asyncio.gather(*(_apply_one(m) for m in targets))
-        return len(targets)
+        results = await asyncio.gather(*(_apply_one(m) for m in targets)) if targets else []
+        successful_targets = [m for m, success in zip(targets, results) if success]
+        return len(successful_targets), successful_targets
     
     
     def build_room_mute_embed(channel: discord.VoiceChannel, muted: bool) -> discord.Embed:
@@ -147,11 +191,31 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     
             await interaction.response.defer()
             new_mute = not bool(target.voice.mute)
+            security = bot.get_cog("OwnerSecurity")
             try:
-                await target.edit(mute=new_mute, reason=f"Room Mute Panel — تبديل يدوي من طرف {actor.display_name}")
+                reason = f"Room Mute Panel — تبديل يدوي من طرف {actor.display_name}"
+                if security:
+                    await security.edit_member_voice_with_owner_lock(
+                        guild,
+                        actor,
+                        target,
+                        mute=new_mute,
+                        reason=reason,
+                        source="Generic Room Mute member selector",
+                    )
+                else:
+                    await target.edit(mute=new_mute, reason=reason)
             except (discord.Forbidden, discord.HTTPException):
                 await interaction.followup.send("❌ ما قدرتش نبدل الحالة ديالو (مشكل صلاحيات).", ephemeral=True)
                 return
+            if security:
+                await security.log_actor_action(
+                    guild,
+                    actor,
+                    "Room Mute member" if new_mute else "Room Unmute member",
+                    target=target,
+                    channel=channel,
+                )
     
             # كنسجلو/كنحيدو من manual_mutes باش زر "فك الكل" مايمسوش هاد العضو إلا كتمتيه بيدك
             manual_list = room_mute_db.setdefault("manual_mutes", {}).setdefault(str(channel.id), [])
@@ -228,7 +292,22 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                 protected_ids = set(room_mute_db.get("manual_mutes", {}).get(str(channel.id), []))
             save_room_mute()
     
-            count = await apply_room_mute_state(channel, new_state, protected_ids=protected_ids)
+            count, _changed_targets = await apply_room_mute_state(
+                channel,
+                new_state,
+                protected_ids=protected_ids,
+                actor=member,
+                lock_source="Generic Room Mute all button",
+            )
+            security = bot.get_cog("OwnerSecurity")
+            if security:
+                await security.log_actor_action(
+                    guild,
+                    member,
+                    "Room Mute all" if new_state else "Room Unmute all",
+                    channel=channel,
+                    details=f"Successful targets: {count}",
+                )
             protected_still_muted = len(protected_ids) if not new_state else 0
     
             embed = build_room_mute_embed(channel, new_state)
@@ -311,7 +390,12 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                     if rec and member.id in rec.get("voice_muted", []):
                         try:
                             if not after.mute:
-                                await member.edit(mute=True, reason="Temp room Voice Mute persisted")
+                                await apply_guarded_bot_voice_mute(
+                                    member,
+                                    True,
+                                    reason="Temp room Voice Mute persisted",
+                                    source="TEMP persisted mute restore",
+                                )
                         except (discord.Forbidden, discord.HTTPException):
                             pass
     
@@ -320,8 +404,18 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             before_rec = get_temp_voice_acl(before.channel, create=False)
             if before_rec and member.id in before_rec.get("voice_muted", []) and not is_temp_voice_protected_target(member):
                 try:
-                    if after.mute:
-                        await member.edit(mute=False, reason="خرج من temp room اللي كان Voice Muted فيها")
+                    security = bot.get_cog("OwnerSecurity")
+                    owner_locked = bool(
+                        security
+                        and security.is_owner_voice_locked(member.guild.id, member.id, "mute")
+                    )
+                    if after.mute and not owner_locked:
+                        await apply_guarded_bot_voice_mute(
+                            member,
+                            False,
+                            reason="خرج من temp room اللي كان Voice Muted فيها",
+                            source="TEMP local mute cleanup",
+                        )
                 except (discord.Forbidden, discord.HTTPException):
                     pass
     
@@ -334,13 +428,28 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             if after_channel_id in muted_channels and after_channel_id != before_channel_id:
                 try:
                     if not (after.mute):
-                        await member.edit(mute=True, reason="دخل لروم مقفولة (Room Mute Lock)")
+                        await apply_guarded_bot_voice_mute(
+                            member,
+                            True,
+                            reason="دخل لروم مقفولة (Room Mute Lock)",
+                            source="Room Mute entry enforcement",
+                        )
                 except (discord.Forbidden, discord.HTTPException):
                     pass
             elif before_channel_id in muted_channels and after_channel_id != before_channel_id:
                 try:
-                    if after.mute:
-                        await member.edit(mute=False, reason="خرج من روم مقفولة (Room Mute Lock)")
+                    security = bot.get_cog("OwnerSecurity")
+                    owner_locked = bool(
+                        security
+                        and security.is_owner_voice_locked(member.guild.id, member.id, "mute")
+                    )
+                    if after.mute and not owner_locked:
+                        await apply_guarded_bot_voice_mute(
+                            member,
+                            False,
+                            reason="خرج من روم مقفولة (Room Mute Lock)",
+                            source="Room Mute exit cleanup",
+                        )
                 except (discord.Forbidden, discord.HTTPException):
                     pass
     
@@ -357,19 +466,31 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     
             overwrites = {
                 # الروم كتبان للجميع من البداية. Privacy من بعد غادي تسد غير Connect وما غاديش تخبيها.
-                guild.default_role: discord.PermissionOverwrite(view_channel=True, connect=True),
+                guild.default_role: discord.PermissionOverwrite(
+                    view_channel=True, connect=True,
+                    manage_channels=False, manage_roles=False,
+                    move_members=False, mute_members=False, deafen_members=False,
+                ),
                 member: discord.PermissionOverwrite(
                     view_channel=True, connect=True, speak=True, send_messages=True, read_message_history=True,
-                    manage_channels=True, move_members=True, mute_members=True, deafen_members=True
+                    manage_channels=False, manage_roles=False,
+                    move_members=False, mute_members=False, deafen_members=False,
                 ),
             }
+            for staff_role_id in (ADMIN_ROLE_ID, MODERATOR_ROLE_ID):
+                staff_role = guild.get_role(staff_role_id) if staff_role_id else None
+                if staff_role:
+                    overwrites[staff_role] = discord.PermissionOverwrite(
+                        manage_channels=False, manage_roles=False,
+                        move_members=False, mute_members=False, deafen_members=False,
+                    )
             # البوت خاصو يبقى قادر يبعث/يحدّث البانل ويطبق Block/Kick/Mutes.
             if guild.me:
                 overwrites[guild.me] = discord.PermissionOverwrite(
                     view_channel=True, connect=True, send_messages=True, read_message_history=True,
                     manage_messages=(True if guild.me.guild_permissions.manage_messages else None),
-                    manage_channels=True, move_members=True,
-                    mute_members=(True if guild.me.guild_permissions.mute_members else None)
+                    manage_channels=True, manage_roles=True, move_members=True,
+                    mute_members=True, deafen_members=True,
                 )
             # Unverified حتى هو يشوف اسم الروم، ولكن ما يدخلش حتى يتفعل.
             unverified_role = guild.get_role(UNVERIFIED_ROLE_ID) if UNVERIFIED_ROLE_ID else None
@@ -393,6 +514,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                 rec["music_bot_id"] = None
                 rec["music_wait_since"] = rec["created_at"]
                 save_temp_voice_acl()
+                await enforce_temp_voice_security_overwrites(new_channel)
                 await member.move_to(new_channel, reason="Join to Create")
             except discord.Forbidden:
                 print("[VOICE] ⚠️ ماعندش صلاحية Manage Channels باش نخلق الروومات المؤقتة.")

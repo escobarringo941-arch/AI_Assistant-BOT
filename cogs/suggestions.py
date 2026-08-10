@@ -560,11 +560,14 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     
     
     @bot.hybrid_command(name="aicheck", description="تشيك واش الموديل ديال الـ AI والرصيد خدامين مزيان")
-    @app_commands.default_permissions(administrator=True)
-    @commands.has_permissions(administrator=True)
+    @app_commands.default_permissions(manage_guild=True)
+    @commands.has_permissions(manage_guild=True)
     async def aicheck_cmd(ctx):
         """كيدير تشيك حقيقي (ماشي نظري): كيبعث طلب فعلي للموديل المدفوع، كيقيس الوقت،
         كيجيب الرصيد اللي باقي، وكيجرب الترجمة للدارجة."""
+        if not (is_owner(ctx) or any(role.id == ADMIN_ROLE_ID for role in ctx.author.roles)):
+            await ctx.send("❌ هاد الأمر خاص غير بـ Owner والـ Admin.", delete_after=6)
+            return
         msg = await ctx.send("🔎 كنشيكي على OpenRouter... صبر شوية (تقريبا 30 ثانية).")
     
         lines = []

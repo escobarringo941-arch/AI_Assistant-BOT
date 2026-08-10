@@ -43,12 +43,10 @@ class UndergroundEngineMixin:
     Access is stored by Discord user ID, never by a visible criminal role.
     """
 
-    @property
-    def owner_id(self) -> int:
-        try:
-            return int((getattr(self.bot, "gg", {}) or {}).get("OWNER_ID") or 0)
-        except Exception:
-            return 0
+    def guild_owner_id(self, guild_id: int) -> int:
+        """Resolve authority from Discord's live guild state, not configuration."""
+        guild = self.bot.get_guild(int(guild_id))
+        return int(guild.owner_id) if guild else 0
 
     def underground(self, guild_id: int) -> dict:
         return self.store.underground(guild_id)
@@ -91,7 +89,8 @@ class UndergroundEngineMixin:
             row["heat_updated_at"] = (last + timedelta(hours=steps * hours)).isoformat()
 
     def is_underground_member(self, guild_id: int, user_id: int) -> bool:
-        if int(user_id) == self.owner_id and self.owner_id:
+        owner_id = self.guild_owner_id(guild_id)
+        if owner_id and int(user_id) == owner_id:
             return True
         return bool(self.underground_member(guild_id, user_id).get("active"))
 
@@ -104,9 +103,9 @@ class UndergroundEngineMixin:
         me = guild.me
         if not me or not me.guild_permissions.manage_channels:
             return {"ok": False, "error": "البوت خاصو Manage Channels."}
-        owner = guild.get_member(self.owner_id) if self.owner_id else None
+        owner = guild.owner
         if not owner:
-            return {"ok": False, "error": "OWNER_ID ما تلقاش فالسيرفر."}
+            return {"ok": False, "error": "Discord Server Owner ما تلقاش فالسيرفر."}
 
         ug = self.underground(guild.id)
         setup = ug.setdefault("setup", {})
@@ -222,7 +221,7 @@ class UndergroundEngineMixin:
             await self._set_underground_access(guild, member, allow)
             if allow:
                 active += 1
-        owner = guild.get_member(self.owner_id) if self.owner_id else None
+        owner = guild.owner
         if owner:
             await self._set_underground_access(guild, owner, True)
         self.store.save()
@@ -628,7 +627,7 @@ class UndergroundEngineMixin:
         rows.append(("Hidden category",isinstance(cat,discord.CategoryChannel)))
         if isinstance(cat,discord.CategoryChannel):
             rows.append(("@everyone hidden",cat.overwrites_for(guild.default_role).view_channel is False))
-            owner=guild.get_member(self.owner_id) if self.owner_id else None
+            owner=guild.owner
             rows.append(("Owner explicit access",bool(owner and cat.overwrites_for(owner).view_channel is True)))
         for key in config.UNDERGROUND_CHANNEL_NAMES:
             ch=self.underground_channel(guild,key); exists=isinstance(ch,discord.TextChannel); rows.append((f"Channel {key}",exists))
@@ -654,7 +653,7 @@ class UndergroundEngineMixin:
             rows.append((f"Persistent {name}",name in persistent_names))
         admin_exposure=[]
         for m in guild.members:
-            if m.bot or m.id==self.owner_id: continue
+            if m.bot or m.id==guild.owner_id: continue
             if m.guild_permissions.administrator:
                 admin_exposure.append(m.display_name)
         return {"checks":rows,"admin_exposure":admin_exposure,"ok":all(v for _,v in rows)}

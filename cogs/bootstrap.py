@@ -683,6 +683,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
     
     intents = discord.Intents.default()
+    intents.moderation = True  # audit-log gateway events + ban/unban security tracking
     intents.message_content = True
     intents.members = True
     intents.reactions = True

@@ -11,7 +11,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     
     def _is_staff_reviewer(member: discord.Member) -> bool:
         """كيتأكد بلي العضو عندو صلاحية يقبل/يرفض اقتراحات (Owner + الأدوار المعفية، شامل Moderators)"""
-        if OWNER_ID and member.id == OWNER_ID:
+        if member.id == member.guild.owner_id:
             return True
         return any(role.id in EXEMPT_ROLE_IDS for role in member.roles)
     
@@ -19,7 +19,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     def _is_application_reviewer(member: discord.Member) -> bool:
         """كيتأكد بلي العضو عندو صلاحية يقبل/يرفض طلبات Applications — Owner
         و APPLICATIONS_REVIEWER_ROLE_IDS (Admins) بوحدهم، Moderators ماشي معنيين."""
-        if OWNER_ID and member.id == OWNER_ID:
+        if member.id == member.guild.owner_id:
             return True
         return any(role.id in APPLICATIONS_REVIEWER_ROLE_IDS for role in member.roles)
     
@@ -267,8 +267,8 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     
     
     @bot.hybrid_command(name="applications")
-    @app_commands.default_permissions(administrator=True)
-    @commands.has_permissions(administrator=True)
+    @app_commands.default_permissions(manage_guild=True)
+    @commands.has_permissions(manage_guild=True)
     async def applications_cmd(ctx):
         """كيبين لائحة الطلبات اللي مازال Pending (Owner + Admins فقط)"""
         if not _is_application_reviewer(ctx.author):

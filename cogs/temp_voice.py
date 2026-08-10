@@ -148,9 +148,14 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         """Server Owner بوحدو محمي من Block/Kick/Mute/Private enforcement ديال Temp Rooms."""
         if not member or not getattr(member, "guild", None):
             return False
-        if member.id == member.guild.owner_id:
-            return True
-        return bool(OWNER_ID and member.id == OWNER_ID)
+        return member.id == member.guild.owner_id
+
+
+    def is_temp_voice_staff(member: discord.Member) -> bool:
+        if not isinstance(member, discord.Member):
+            return False
+        role_ids = {role.id for role in member.roles}
+        return bool(role_ids.intersection({ADMIN_ROLE_ID, MODERATOR_ROLE_ID}))
     
     
     def get_temp_voice_acl(channel: discord.VoiceChannel, create: bool = True) -> Optional[dict]:
@@ -238,37 +243,93 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         """كيجمع Block/Private/Allow/VoiceMute/ChatMute فـ overwrite وحدة باش إجراء مايمسحش إجراء آخر."""
         rec = get_temp_voice_acl(channel)
         owner_id = get_temp_voice_owner_id(channel)
+        overwrite = channel.overwrites_for(member)
     
-        if member.id == owner_id:
-            overwrite = discord.PermissionOverwrite(
-                view_channel=True, connect=True, speak=True,
-                send_messages=True, read_message_history=True,
-                manage_channels=True, move_members=True, mute_members=True, deafen_members=True,
-            )
+        if member.id == owner_id or is_temp_voice_protected_target(member):
+            overwrite.view_channel = True
+            overwrite.connect = True
+            overwrite.speak = True
+            overwrite.send_messages = True
+            overwrite.read_message_history = True
         elif member.id in rec.get("blocked", []):
-            overwrite = discord.PermissionOverwrite(
-                view_channel=False, connect=False, speak=False,
-                send_messages=False, read_message_history=False,
-            )
+            overwrite.view_channel = False
+            overwrite.connect = False
+            overwrite.speak = False
+            overwrite.send_messages = False
+            overwrite.read_message_history = False
         else:
             allowed = member.id in rec.get("allowed", [])
             denied = member.id in rec.get("denied", [])
             voice_muted = member.id in rec.get("voice_muted", [])
             chat_muted = member.id in rec.get("chat_muted", [])
             can_connect = False if denied else (allowed or not bool(rec.get("private")))
-            overwrite = discord.PermissionOverwrite(
-                view_channel=True,
-                connect=can_connect,
-                speak=(False if voice_muted else (True if allowed else None)),
-                send_messages=(False if chat_muted else (True if allowed else None)),
-                read_message_history=True,
-            )
+            overwrite.view_channel = True
+            overwrite.connect = can_connect
+            overwrite.speak = False if voice_muted else (True if allowed else None)
+            overwrite.send_messages = False if chat_muted else (True if allowed else None)
+            overwrite.read_message_history = True
+
+        # Never erase the security boundary while rebuilding Allow/Deny/Block
+        # ACLs. Human native moderation stays disabled; only the bot may perform
+        # guarded panel actions.
+        bot_member = channel.guild.me
+        sensitive_value = bool(bot_member and member.id == bot_member.id)
+        overwrite.manage_channels = sensitive_value
+        overwrite.manage_roles = sensitive_value
+        overwrite.move_members = sensitive_value
+        overwrite.mute_members = sensitive_value
+        overwrite.deafen_members = sensitive_value
     
         try:
             await channel.set_permissions(member, overwrite=overwrite, reason=reason)
             return True, None
         except (discord.Forbidden, discord.HTTPException) as e:
             return False, str(e)
+
+
+    async def enforce_temp_voice_security_overwrites(channel: discord.VoiceChannel):
+        """Idempotently deny native human moderation and preserve bot control."""
+        if not is_temp_voice_channel(channel):
+            return
+
+        async def set_sensitive(target, value: bool, reason: str):
+            if target is None:
+                return
+            overwrite = channel.overwrites_for(target)
+            changed = False
+            for name in ("manage_channels", "manage_roles", "move_members", "mute_members", "deafen_members"):
+                if getattr(overwrite, name, None) is not value:
+                    setattr(overwrite, name, value)
+                    changed = True
+            if changed:
+                try:
+                    await channel.set_permissions(target, overwrite=overwrite, reason=reason)
+                except (discord.Forbidden, discord.HTTPException) as e:
+                    print(f"[TEMP-VOICE SECURITY] overwrite failed {channel.id}/{getattr(target, 'id', 0)}: {e}")
+
+        admin_role = channel.guild.get_role(ADMIN_ROLE_ID) if ADMIN_ROLE_ID else None
+        moderator_role = channel.guild.get_role(MODERATOR_ROLE_ID) if MODERATOR_ROLE_ID else None
+        for target in (channel.guild.default_role, admin_role, moderator_role):
+            await set_sensitive(target, False, "TEMP room: native human moderation is disabled")
+
+        # Member denies are the final overwrite layer and beat any secondary role allow.
+        staff = {}
+        for role in (admin_role, moderator_role):
+            if role:
+                staff.update({member.id: member for member in role.members})
+        for staff_member in staff.values():
+            if not is_temp_voice_protected_target(staff_member):
+                await set_sensitive(staff_member, False, "TEMP room: staff-specific security deny")
+
+        owner_id = get_temp_voice_owner_id(channel)
+        room_owner = channel.guild.get_member(owner_id) if owner_id else None
+        if room_owner:
+            await apply_temp_voice_member_permissions(
+                channel, room_owner, reason="TEMP room owner panel-only permission repair"
+            )
+
+        if channel.guild.me:
+            await set_sensitive(channel.guild.me, True, "TEMP room: bot performs guarded panel actions")
     
     
     def build_temp_voice_control_embed(channel: discord.VoiceChannel) -> discord.Embed:
@@ -330,11 +391,62 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         if not allow_room_owner and member.id == get_temp_voice_owner_id(channel):
             return "❌ مول الروم مايمكنش يطبق هاد العملية على راسو."
         return None
+
+
+    async def _log_temp_voice_guard_denial(channel, member, actor, action: str, message: str):
+        security = bot.get_cog("OwnerSecurity")
+        if security and actor:
+            try:
+                await security.log_denied_attempt(
+                    channel.guild,
+                    actor,
+                    member,
+                    f"TEMP panel: {action}",
+                    channel=channel,
+                    details=message,
+                )
+            except Exception as e:
+                print(f"[TEMP-VOICE SECURITY] denied-attempt log failed: {e}")
+
+
+    async def _log_temp_voice_success(channel, member, actor, action: str, details: str = ""):
+        security = bot.get_cog("OwnerSecurity")
+        if security and actor:
+            try:
+                await security.log_actor_action(
+                    channel.guild,
+                    actor,
+                    f"TEMP {action}",
+                    target=member,
+                    channel=channel,
+                    details=details,
+                )
+            except Exception as e:
+                print(f"[TEMP-VOICE SECURITY] successful-action log failed: {e}")
+
+
+    async def _temp_voice_staff_actor_guard(
+        channel: discord.VoiceChannel,
+        member,
+        actor,
+        action: str,
+        message: str,
+    ) -> Optional[str]:
+        """Block staff room owners from using the bot to bypass TEMP native denies."""
+        if (
+            isinstance(actor, discord.Member)
+            and actor.id != channel.guild.owner_id
+            and is_temp_voice_staff(actor)
+        ):
+            await _log_temp_voice_guard_denial(channel, member, actor, action, message)
+            return message
+        return None
     
     
     async def temp_voice_allow_member(channel: discord.VoiceChannel, member: discord.Member, *, actor=None):
         guard = _temp_voice_target_guard(channel, member, allow_room_owner=True)
         if guard:
+            await _log_temp_voice_guard_denial(channel, member, actor, "Allow", guard)
             return False, guard
         if member.id == get_temp_voice_owner_id(channel):
             return False, "ℹ️ مول الروم عندو الدخول ديجا."
@@ -355,13 +467,24 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         if not ok:
             return False, f"❌ تسجل Allow ولكن Discord رفض تحديث permissions: {err}"
         await refresh_temp_voice_control_panel(channel, create_if_missing=True)
+        await _log_temp_voice_success(channel, member, actor, "Allow")
         return True, f"✅ {member.mention} ولى Allowed ويقدر يدخل حتى إلا كانت الروم Private."
     
     
     async def temp_voice_deny_member(channel: discord.VoiceChannel, member: discord.Member, *, actor=None):
         """Deny = الروم تبقى باينة، ولكن Connect=False. Admin bypass كيتعالج بالـ event."""
+        staff_guard = await _temp_voice_staff_actor_guard(
+            channel,
+            member,
+            actor,
+            "Deny / eject",
+            "❌ Admin/Moderator ما يقدرش يمنع أو يخرج شي عضو من رومات TEMP.",
+        )
+        if staff_guard:
+            return False, staff_guard
         guard = _temp_voice_target_guard(channel, member)
         if guard:
+            await _log_temp_voice_guard_denial(channel, member, actor, "Deny", guard)
             return False, guard
     
         rec = get_temp_voice_acl(channel)
@@ -391,12 +514,23 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             pass
     
         await refresh_temp_voice_control_panel(channel, create_if_missing=True)
+        await _log_temp_voice_success(channel, member, actor, "Deny")
         return True, f"⛔ {member.mention} تدار ليه Deny: الروم باينة ليه ولكن مايدخلش."
     
     
     async def temp_voice_block_member(channel: discord.VoiceChannel, member: discord.Member, *, actor=None):
+        staff_guard = await _temp_voice_staff_actor_guard(
+            channel,
+            member,
+            actor,
+            "Block / eject",
+            "❌ Admin/Moderator ما يقدرش يدير Block أو يخرج شي عضو من رومات TEMP.",
+        )
+        if staff_guard:
+            return False, staff_guard
         guard = _temp_voice_target_guard(channel, member)
         if guard:
+            await _log_temp_voice_guard_denial(channel, member, actor, "Block", guard)
             return False, guard
     
         rec = get_temp_voice_acl(channel)
@@ -433,12 +567,14 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             pass
     
         await refresh_temp_voice_control_panel(channel, create_if_missing=True)
+        await _log_temp_voice_success(channel, member, actor, "Block")
         return True, f"🔐 {member.mention} تدار ليه Block حتى Unblock.{admin_note}"
     
     
     async def temp_voice_unblock_member(channel: discord.VoiceChannel, member: discord.Member, *, actor=None):
         guard = _temp_voice_target_guard(channel, member, allow_room_owner=True)
         if guard:
+            await _log_temp_voice_guard_denial(channel, member, actor, "Unblock", guard)
             return False, guard
         rec = get_temp_voice_acl(channel)
         if member.id not in rec.setdefault("blocked", []):
@@ -454,12 +590,23 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             return False, f"❌ تحيد Block من السجل ولكن Discord رفض permissions: {err}"
         await refresh_temp_voice_control_panel(channel, create_if_missing=True)
         state = "يقدر يدخل" if (member.id in rec.get("allowed", []) or not rec.get("private")) else "الروم باينة ليه ولكن خاصو Allow باش يدخل حيث Private"
+        await _log_temp_voice_success(channel, member, actor, "Unblock", state)
         return True, f"🔓 تفك Block على {member.mention} — {state}."
     
     
     async def temp_voice_kick_member(channel: discord.VoiceChannel, member: discord.Member, *, actor=None):
+        staff_guard = await _temp_voice_staff_actor_guard(
+            channel,
+            member,
+            actor,
+            "Kick / disconnect",
+            "❌ Admin/Moderator ما يقدرش يخرج شي عضو من رومات TEMP.",
+        )
+        if staff_guard:
+            return False, staff_guard
         guard = _temp_voice_target_guard(channel, member)
         if guard:
+            await _log_temp_voice_guard_denial(channel, member, actor, "Kick", guard)
             return False, guard
         if not member.voice or not member.voice.channel or member.voice.channel.id != channel.id:
             return False, "❌ هاد العضو ماشي داخل الروم دابا."
@@ -467,12 +614,25 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             await member.move_to(None, reason=f"Temp room kick by {getattr(actor, 'display_name', actor) or 'owner'}")
         except (discord.Forbidden, discord.HTTPException) as e:
             return False, f"❌ ما قدرتش نخرجو من الروم: {e}"
+        await _log_temp_voice_success(channel, member, actor, "Kick from room")
         return True, f"🚪 {member.mention} خرج من الروم فقط. ما تدارش ليه Block والروم كتبقى باينة ليه."
     
     
     async def temp_voice_set_voice_mute(channel: discord.VoiceChannel, member: discord.Member, muted: bool, *, actor=None):
+        staff_guard = await _temp_voice_staff_actor_guard(
+            channel,
+            member,
+            actor,
+            "Voice Mute" if muted else "Voice Unmute",
+            "❌ Admin/Moderator ما يقدرش يدير أو يحيد Server Mute داخل رومات TEMP.",
+        )
+        if staff_guard:
+            return False, staff_guard
         guard = _temp_voice_target_guard(channel, member)
         if guard:
+            await _log_temp_voice_guard_denial(
+                channel, member, actor, "Voice Mute" if muted else "Voice Unmute", guard
+            )
             return False, guard
         rec = get_temp_voice_acl(channel)
         voice_list = rec.setdefault("voice_muted", [])
@@ -485,13 +645,39 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         ok, err = await apply_temp_voice_member_permissions(channel, member, reason="Temp room voice mute ACL")
         if not ok:
             return False, f"❌ تسجل Voice Mute ولكن Discord رفض overwrite: {err}"
-    
+
+        security = bot.get_cog("OwnerSecurity")
         if member.voice and member.voice.channel and member.voice.channel.id == channel.id:
             try:
-                await member.edit(mute=muted, reason=f"Temp room voice {'mute' if muted else 'unmute'} by {getattr(actor, 'display_name', actor) or 'owner'}")
+                reason = f"Temp room voice {'mute' if muted else 'unmute'} by {getattr(actor, 'display_name', actor) or 'owner'}"
+                if security:
+                    await security.edit_member_voice_with_owner_lock(
+                        channel.guild,
+                        actor,
+                        member,
+                        mute=muted,
+                        reason=reason,
+                        source="TEMP room panel / command",
+                    )
+                else:
+                    await member.edit(mute=muted, reason=reason)
             except (discord.Forbidden, discord.HTTPException) as e:
                 return False, f"❌ ما قدرتش نبدل Server Voice Mute: {e}"
+        elif security and actor:
+            await security.record_owner_voice_lock(
+                channel.guild,
+                actor,
+                member,
+                mute=muted,
+                source="TEMP room panel / command",
+            )
         await refresh_temp_voice_control_panel(channel, create_if_missing=True)
+        await _log_temp_voice_success(
+            channel,
+            member,
+            actor,
+            "Server Mute" if muted else "Server Unmute",
+        )
         return True, (f"🔇 تكتم صوت {member.mention} فهاد الروم." if muted else f"🔊 تفك Voice Mute على {member.mention}.")
     
     
@@ -501,8 +687,20 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     
     
     async def temp_voice_set_chat_mute(channel: discord.VoiceChannel, member: discord.Member, muted: bool, *, actor=None):
+        staff_guard = await _temp_voice_staff_actor_guard(
+            channel,
+            member,
+            actor,
+            "Chat Mute" if muted else "Chat Unmute",
+            "❌ Admin/Moderator ما يقدرش يدير أو يحيد Chat Mute داخل رومات TEMP.",
+        )
+        if staff_guard:
+            return False, staff_guard
         guard = _temp_voice_target_guard(channel, member)
         if guard:
+            await _log_temp_voice_guard_denial(
+                channel, member, actor, "Chat Mute" if muted else "Chat Unmute", guard
+            )
             return False, guard
         rec = get_temp_voice_acl(channel)
         chat_list = rec.setdefault("chat_muted", [])
@@ -518,18 +716,41 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         if not ok:
             return False, f"❌ تسجل Chat Mute ولكن Discord رفض permission: {err}"
         await refresh_temp_voice_control_panel(channel, create_if_missing=True)
+        await _log_temp_voice_success(
+            channel,
+            member,
+            actor,
+            "Chat Mute" if muted else "Chat Unmute",
+        )
         return True, (f"💬🔇 {member.mention} ماعادش يقدر يكتب فـ Chat ديال هاد الروم." if muted
                       else f"💬🔊 تفك Chat Mute على {member.mention}.")
     
     
     async def set_temp_voice_private(channel: discord.VoiceChannel, private: bool, *, actor=None):
         """Private = الروم باينة، @everyone connect=False، وOwner + Allowed فقط مسموح لهم."""
+        if private:
+            staff_guard = await _temp_voice_staff_actor_guard(
+                channel,
+                None,
+                actor,
+                "Private / bulk eject",
+                "❌ Admin/Moderator ما يقدرش يدير Private اللي كتخرج الناس من رومات TEMP.",
+            )
+            if staff_guard:
+                return False, staff_guard
         rec = get_temp_voice_acl(channel)
         try:
+            everyone_ow = channel.overwrites_for(channel.guild.default_role)
+            everyone_ow.view_channel = True
+            everyone_ow.connect = not private
+            everyone_ow.manage_channels = False
+            everyone_ow.manage_roles = False
+            everyone_ow.move_members = False
+            everyone_ow.mute_members = False
+            everyone_ow.deafen_members = False
             await channel.set_permissions(
                 channel.guild.default_role,
-                view_channel=True,
-                connect=(not private),
+                overwrite=everyone_ow,
                 reason=f"Temp room {'private' if private else 'public'} by {getattr(actor, 'display_name', actor) or 'owner'}"
             )
         except (discord.Forbidden, discord.HTTPException) as e:
@@ -537,6 +758,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     
         rec["private"] = bool(private)
         save_temp_voice_acl()
+        await enforce_temp_voice_security_overwrites(channel)
     
         # رجع طبّق member overwrites بتركيبة واحدة: Owner/Allowed/Blocked/Mutes.
         relevant_ids = set(rec.get("allowed", [])) | set(rec.get("denied", [])) | set(rec.get("blocked", [])) | set(rec.get("voice_muted", [])) | set(rec.get("chat_muted", []))
@@ -565,6 +787,13 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                     pass
     
         await refresh_temp_voice_control_panel(channel, create_if_missing=True)
+        await _log_temp_voice_success(
+            channel,
+            None,
+            actor,
+            "Private" if private else "Public",
+            f"Members ejected: {ejected}",
+        )
         if private:
             return True, (f"🔒 الروم ولات Private: باينة للجميع، الدخول غير لـ Owner + Allowed. خرجنا {ejected} عضو." if ejected
                           else "🔒 الروم ولات Private: باينة للجميع، الدخول غير لـ Owner + Allowed.")
@@ -1102,6 +1331,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             if str(channel.id) not in temp_voice_channels:
                 continue
             rec = get_temp_voice_acl(channel)
+            await enforce_temp_voice_security_overwrites(channel)
             await refresh_temp_voice_control_panel(channel, create_if_missing=True)
     
             relevant_ids = set(rec.get("allowed", [])) | set(rec.get("denied", [])) | set(rec.get("blocked", [])) | set(rec.get("voice_muted", [])) | set(rec.get("chat_muted", []))
@@ -1127,7 +1357,18 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                 if m.id in rec.get("voice_muted", []):
                     try:
                         if not (m.voice and m.voice.mute):
-                            await m.edit(mute=True, reason="Temp room Voice Mute restore after restart")
+                            security = bot.get_cog("OwnerSecurity")
+                            if security:
+                                await security.edit_member_voice_with_owner_lock(
+                                    guild,
+                                    bot.user,
+                                    m,
+                                    mute=True,
+                                    reason="Temp room Voice Mute restore after restart",
+                                    source="TEMP startup mute restore",
+                                )
+                            else:
+                                await m.edit(mute=True, reason="Temp room Voice Mute restore after restart")
                     except (discord.Forbidden, discord.HTTPException):
                         pass
     

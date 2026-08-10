@@ -10,14 +10,14 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     # ═══════════════════════════════════════════════════════
     
     def _is_ticket_staff(member: discord.Member) -> bool:
-        if OWNER_ID and member.id == OWNER_ID:
+        if member.id == member.guild.owner_id:
             return True
         return any(role.id in EXEMPT_ROLE_IDS for role in member.roles)
     
     
     def _can_claim_ticket(member: discord.Member) -> bool:
         """واش هاد العضو يقدر يستلم (Claim) Ticket — Owner + Admin بوحدو (ماشي Moderator)."""
-        if OWNER_ID and member.id == OWNER_ID:
+        if member.id == member.guild.owner_id:
             return True
         return any(role.id == ADMIN_ROLE_ID for role in member.roles)
     
@@ -208,14 +208,13 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         except (discord.Forbidden, discord.HTTPException) as e:
             return False, f"❌ ما قدرتش نوصل البلاغ للإدارة: {e}"
     
-        # Owner DM — نفس السلوك القديم
-        if OWNER_ID:
-            try:
-                owner = guild.get_member(OWNER_ID) or await bot.fetch_user(OWNER_ID)
-                if owner:
-                    await owner.send(embed=embed)
-            except Exception:
-                pass
+        # Owner DM — Discord's actual guild owner, never a stale configured ID.
+        try:
+            owner = guild.owner or await bot.fetch_user(guild.owner_id)
+            if owner:
+                await owner.send(embed=embed)
+        except Exception:
+            pass
     
         return True, "✅ توصل البلاغ للإدارة **بشكل خاص**. شكراً على التبليغ."
     

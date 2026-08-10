@@ -1,6 +1,6 @@
 {
   "description": "Hashes lock the reviewed component bytes and execution order; intentional feature revisions update this baseline.",
-  "joined_sha256": "2d2e4fd0b053b33cc01437d075b3ae385a68dcfb63a480fcc095aa4fa1044fd2",
+  "joined_sha256": "64bcbd096a81b39932eee21a7474b99fd0faba1188cb6d9648acc0bf6bb67f9b",
   "events_before_setup_hook": [
     "on_voice_state_update",
     "on_member_join",
@@ -29,7 +29,7 @@
       "path": "cogs/bootstrap.py",
       "original_start_line": 1,
       "original_end_line": 696,
-      "sha256": "25e0a2f6dbdb8f1c7406c729b1a095bfa626e491d4fc99c92d8bce1d24af27b3"
+      "sha256": "6661176998ac7ae1875d0da6eedc72422588c2b4b469affed240dca20535583c"
     },
     {
       "name": "persistent_state",
@@ -43,7 +43,7 @@
       "path": "cogs/xp_runtime.py",
       "original_start_line": 1450,
       "original_end_line": 2056,
-      "sha256": "96333f6682bc3bcdada9b46ca42d48e92efb6054389a281a038543377e63e3ce"
+      "sha256": "27d327e3e4166f2dc055344a2a2d1400338c43be8b6ec08c47778d30633d47b5"
     },
     {
       "name": "settings_storage",
@@ -57,7 +57,7 @@
       "path": "cogs/ai_conversation.py",
       "original_start_line": 2433,
       "original_end_line": 2679,
-      "sha256": "c80717f7ad633088f8c1db6d458f7b017c2db9f5e7d193387d5285f01050e515"
+      "sha256": "ca6508998e671ef5051b8181d7d8681539e4155776002ac4485e22c1369cf60d"
     },
     {
       "name": "content_apis",
@@ -71,35 +71,35 @@
       "path": "cogs/moderation_core.py",
       "original_start_line": 3231,
       "original_end_line": 3521,
-      "sha256": "aeab46d7c0bb967466a5297574e2dc87d9f4598daa1288389f15e92170e7cd2c"
+      "sha256": "4401a75829e4f5c0e59403b6cfce22507b4220a5f23ad00e6c424384052f40d3"
     },
     {
       "name": "access_panels",
       "path": "cogs/access_panels.py",
       "original_start_line": 3522,
       "original_end_line": 4289,
-      "sha256": "f43a8102d84080421962a667b8563d325c2c42f07b4bddfeafbd2c0e9a35116b"
+      "sha256": "5caa943541f6f2fad2573dba406396c4c05bcd131b575b9f08a8c11059f2367f"
     },
     {
       "name": "support_system",
       "path": "cogs/support_system.py",
       "original_start_line": 4290,
       "original_end_line": 5092,
-      "sha256": "e61dbc0146cd137cb29147d023ff911f65062480e866b13ac5dfe95a3134ef38"
+      "sha256": "efd0163ef7202ba4c9c402812f8895991868c6068a4002a21e40507b8c4dd5df"
     },
     {
       "name": "applications",
       "path": "cogs/applications.py",
       "original_start_line": 5093,
       "original_end_line": 5375,
-      "sha256": "5b3e833665c78ec50f47a8c5103f88503bcc6d9bb1a9be5c71a627b0b7ca5955"
+      "sha256": "7353bd6007ded49ebde428538d46c3eeb7a89b3d5d69d27aba855f94ba591444"
     },
     {
       "name": "suggestions",
       "path": "cogs/suggestions.py",
       "original_start_line": 5376,
       "original_end_line": 5943,
-      "sha256": "adba3fd2992c4f688dafa15ddc7a089c1bdbee071eb1c2daf904f1732edc0692"
+      "sha256": "76e714e063213abf5a07651b3a757a29b89f07a8be69b06a0370f6113227b792"
     },
     {
       "name": "birthdays",
@@ -120,7 +120,7 @@
       "path": "cogs/temp_voice.py",
       "original_start_line": 6736,
       "original_end_line": 7844,
-      "sha256": "aea95fc583fc81cf50d55c533ca376a3eae5f2584afa0d9a16bc159b719ea2ea"
+      "sha256": "2b8e9d18183a02bcf5b32b227521739da0d767c066f9060b21647b6bd69e074e"
     },
     {
       "name": "temp_music",
@@ -134,7 +134,7 @@
       "path": "cogs/voice_runtime.py",
       "original_start_line": 7845,
       "original_end_line": 8413,
-      "sha256": "1af290cc6878be0d6fb60d07d6ef23a250ddec7c640cad3eea09e2e888494861"
+      "sha256": "429f65576b85f2bb4414fcaf347ded05d336b95cd43d851fc004c9242432ee54"
     },
     {
       "name": "server_setup",
@@ -155,21 +155,21 @@
       "path": "cogs/moderation_commands.py",
       "original_start_line": 9432,
       "original_end_line": 9839,
-      "sha256": "4f7d759679d1c9c4432b3c515b0ccbec63ef59c8f120dc90158ea1684ade3297"
+      "sha256": "fa12486384c7177bd45071f4fa23d93cc989a0aa19218f176af388de2b277b1b"
     },
     {
       "name": "xp_admin",
       "path": "cogs/xp_admin.py",
       "original_start_line": 9840,
       "original_end_line": 10334,
-      "sha256": "a632bf3d5cfa8ca2e75b4abe3a5ff34bc00db9fc1975259889843fd9282f06ab"
+      "sha256": "e7dea1c5b02ff492fad98e8117b4b2929b0b203e433faa4500adb117ecd66d1a"
     },
     {
       "name": "bot_admin_panel",
       "path": "cogs/bot_admin_panel.py",
       "original_start_line": 10335,
       "original_end_line": 10686,
-      "sha256": "19359411ba1017742ec0e0c2f55ec799eb7f6aa026cd28330fbbb8ebc9ae35bc"
+      "sha256": "af384253ad4ec8e703254267ca751244b760afd4a63c046effe9cc32f9866c3e"
     },
     {
       "name": "leveling_commands",
@@ -190,7 +190,7 @@
       "path": "cogs/verification_commands.py",
       "original_start_line": 11445,
       "original_end_line": 11673,
-      "sha256": "de1b9143ae2ea5c82a822e1991a3253c6b321e3fbeda8a814d224eead26b111e"
+      "sha256": "6db538099f2a47e1102f5c3fab2fb501e885b349357f1c973bdf03a6b428cd96"
     },
     {
       "name": "general_commands",
@@ -211,7 +211,7 @@
       "path": "cogs/owner_control.py",
       "original_start_line": 12456,
       "original_end_line": 13608,
-      "sha256": "f658c141a34c58522895c5f79f807eff5471e9bd873ff469a46f213b82b3c3c2"
+      "sha256": "ae0ded7834b1f655f9624f6f8a0d633cabea9fc6409110a4548f59e8764eee19"
     },
     {
       "name": "ready_events",

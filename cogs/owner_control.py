@@ -9,6 +9,11 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     # ║   🔐 GGMW9 OWNER CONTROL CENTER                    ║
     # ═══════════════════════════════════════════════════════
     
+    def _owner_control_is_owner(user, guild: discord.Guild) -> bool:
+        """Trust Discord's live guild owner, never a stale configured ID."""
+        return bool(user and guild and user.id == guild.owner_id)
+
+
     def _owner_control_embed(guild: discord.Guild) -> discord.Embed:
         eco_cog = bot.get_cog("Economy")
         treasury = jackpot = events = 0
@@ -31,7 +36,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                 "🔄 **Refresh All Panels** — يجدّد كاع الواجهات الرسمية بلا حذف Messages وبلا Redeploy\n"
                 "🏙️ **GGMW9 CITY** — Setup / Repair ديال المدينة المهنية والقنوات ديالها\n"
                 "🔊 **Voice Tools** — صاوب Room Mute Panel باختيار Voice Channel\n\n"
-                "🔒 كل Interaction كتتأكد من **OWNER_ID** حتى إلا شاف شي حد الرسالة بالغلط."
+                "🔒 كل Interaction كتتأكد من **Server Owner الحقيقي** حتى إلا شاف شي حد الرسالة بالغلط."
             ),
             color=discord.Color.dark_gold(),
             timestamp=datetime.now(),
@@ -45,7 +50,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     
     class OwnerOnlyView(discord.ui.View):
         async def interaction_check(self, interaction: discord.Interaction) -> bool:
-            if not (OWNER_ID and interaction.user.id == OWNER_ID):
+            if not _owner_control_is_owner(interaction.user, interaction.guild):
                 if not interaction.response.is_done():
                     await interaction.response.send_message(
                         "❌ هاد الـControl Center خاص غير بالـOwner.",
@@ -95,7 +100,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             self.add_item(self.reason)
     
         async def on_submit(self, interaction: discord.Interaction):
-            if not (OWNER_ID and interaction.user.id == OWNER_ID):
+            if not _owner_control_is_owner(interaction.user, interaction.guild):
                 await interaction.response.send_message("❌ Owner فقط.", ephemeral=True)
                 return
     
@@ -169,7 +174,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             self.add_item(self.level_input)
     
         async def on_submit(self, interaction: discord.Interaction):
-            if not (OWNER_ID and interaction.user.id == OWNER_ID):
+            if not _owner_control_is_owner(interaction.user, interaction.guild):
                 await interaction.response.send_message("❌ Owner فقط.", ephemeral=True)
                 return
     
@@ -229,7 +234,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             self.add_item(self.amount)
     
         async def on_submit(self, interaction: discord.Interaction):
-            if not (OWNER_ID and interaction.user.id == OWNER_ID):
+            if not _owner_control_is_owner(interaction.user, interaction.guild):
                 await interaction.response.send_message("❌ Owner فقط.", ephemeral=True)
                 return
     
@@ -289,7 +294,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             )
     
         async def callback(self, interaction: discord.Interaction):
-            if not (OWNER_ID and interaction.user.id == OWNER_ID):
+            if not _owner_control_is_owner(interaction.user, interaction.guild):
                 await interaction.response.send_message("❌ Owner فقط.", ephemeral=True)
                 return
     
@@ -468,7 +473,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             )
     
         async def callback(self, interaction: discord.Interaction):
-            if not (OWNER_ID and interaction.user.id == OWNER_ID):
+            if not _owner_control_is_owner(interaction.user, interaction.guild):
                 await interaction.response.send_message("❌ Owner فقط.", ephemeral=True)
                 return
     
@@ -519,7 +524,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             )
     
         async def callback(self, interaction: discord.Interaction):
-            if not (OWNER_ID and interaction.user.id == OWNER_ID):
+            if not _owner_control_is_owner(interaction.user, interaction.guild):
                 await interaction.response.send_message("❌ Owner فقط.", ephemeral=True)
                 return
     
@@ -603,7 +608,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             return siblings
     
         async def _run_test(self, interaction: discord.Interaction, delta: int):
-            if not (OWNER_ID and interaction.user.id == OWNER_ID):
+            if not _owner_control_is_owner(interaction.user, interaction.guild):
                 await interaction.response.send_message("❌ Owner فقط.", ephemeral=True)
                 return
     
@@ -1118,7 +1123,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                     f"🎫 Ticket Logs: <#{TICKET_LOGS_CHANNEL_ID or MOD_LOGS_CHANNEL_ID}>\n"
                     f"🆘 Support Center: <#{SUPPORT_CENTER_CHANNEL_ID}>\n"
                     + (f"💰 Economy Logs: <#{eco_log_id}>\n" if eco_log_id else "")
-                    + f"👑 Owner ID: `{OWNER_ID}`\n"
+                    + f"👑 Owner ID: `{interaction.guild.owner_id}`\n"
                     f"🔐 Owner Center: <#{OWNER_CONTROL_CHANNEL_ID}>"
                 ),
                 color=discord.Color.blurple(),

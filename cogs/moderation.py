@@ -77,7 +77,7 @@ DISPLAY_NAMES = {
 
 def is_exempt(member: discord.Member) -> bool:
     """واش هاد العضو معفي من Auto-Mod/Moderation (Owner أو أدوار معفية)"""
-    if OWNER_ID and member.id == OWNER_ID:
+    if member.id == member.guild.owner_id:
         return True
     if EXEMPT_ROLE_IDS:
         member_role_ids = {role.id for role in member.roles}
@@ -88,7 +88,7 @@ def is_exempt(member: discord.Member) -> bool:
 
 def has_custom_command_access(member: discord.Member, command_name: str) -> bool:
     """واش هاد العضو مسموح ليه يستعمل هاد الأمر حسب COMMAND_ROLES"""
-    if OWNER_ID and member.id == OWNER_ID:
+    if member.id == member.guild.owner_id:
         return True
 
     cfg = COMMAND_ROLES.get(command_name)
@@ -177,6 +177,38 @@ class Moderation(commands.Cog):
         يقدرو يحيدو آخر تحذير عبر bot.get_cog("Moderation")."""
         return remove_last_warning(user_id)
 
+    def _is_temp_voice_target(self, member: discord.Member) -> bool:
+        is_temp = getattr(self.bot, "gg", {}).get("is_temp_voice_channel")
+        channel = member.voice.channel if member.voice else None
+        return bool(callable(is_temp) and channel and is_temp(channel))
+
+    async def _log_denied_target(self, ctx, member, action: str, details: str):
+        security = self.bot.get_cog("OwnerSecurity")
+        if security:
+            await security.log_denied_attempt(
+                ctx.guild,
+                ctx.author,
+                member,
+                action,
+                channel=member.voice.channel if member.voice else getattr(ctx, "channel", None),
+                details=details,
+            )
+
+    async def _log_successful_target(self, ctx, target, action: str, details: str = ""):
+        security = self.bot.get_cog("OwnerSecurity")
+        if security:
+            try:
+                await security.log_actor_action(
+                    ctx.guild,
+                    ctx.author,
+                    action,
+                    target=target,
+                    channel=getattr(ctx, "channel", None),
+                    details=details,
+                )
+            except Exception as exc:
+                print(f"[MODERATION SECURITY LOG] {action} failed: {exc}")
+
     # ───── بانل الصلاحيات (معطل مؤقتًا) ─────
 
     @commands.hybrid_command(
@@ -184,7 +216,7 @@ class Moderation(commands.Cog):
         description="لوحة تحكم فصلاحيات أوامر الموديريشن (Owner فقط)",
     )
     async def permspanel(self, ctx: commands.Context):
-        if ctx.author.id != OWNER_ID:
+        if not ctx.guild or ctx.author.id != ctx.guild.owner_id:
             await ctx.send("❌ هاد البانل خاص فقط بالـ Owner.", delete_after=6)
             return
 
@@ -203,12 +235,27 @@ class Moderation(commands.Cog):
 
     # ───── Helpers ─────
 
-    async def auto_unmute(self, member: discord.Member, duration_minutes: int):
+    async def auto_unmute(
+        self,
+        member: discord.Member,
+        duration_minutes: int,
+        actor: Optional[discord.Member] = None,
+    ):
         await asyncio.sleep(duration_minutes * 60)
         muted_role = member.guild.get_role(MUTED_ROLE_ID)
         if muted_role and muted_role in member.roles:
             try:
-                await member.remove_roles(muted_role)
+                security = self.bot.get_cog("OwnerSecurity")
+                if security and actor:
+                    await security.edit_member_muted_role(
+                        member.guild,
+                        actor,
+                        member,
+                        muted=False,
+                        reason=f"Timed unmute initiated by {actor} ({actor.id})",
+                    )
+                else:
+                    await member.remove_roles(muted_role, reason="Timed moderation unmute")
             except Exception:
                 pass
 
@@ -228,7 +275,8 @@ class Moderation(commands.Cog):
             await ctx.send("❌ هاد الأمر مقيد من طرف Owner.", delete_after=6)
             return
 
-        if OWNER_ID and member.id == OWNER_ID:
+        if member.id == member.guild.owner_id:
+            await self._log_denied_target(ctx, member, "Kick Owner", "Owner is globally protected.")
             await ctx.send("❌ ما نقدرش نمس فـ Owner ديال السيرفر!")
             return
         if is_exempt(member):
@@ -247,6 +295,7 @@ class Moderation(commands.Cog):
             embed.add_field(name="الطارد", value=ctx.author.mention, inline=False)
             embed.set_footer(text=f"{SERVER_NAME} | Moderation")
             await ctx.send(embed=embed)
+            await self._log_successful_target(ctx, member, "Kick", reason)
         except discord.Forbidden:
             await ctx.send("❌ ما عنديش الصلاحية!", delete_after=5)
         except Exception as e:
@@ -268,7 +317,8 @@ class Moderation(commands.Cog):
             await ctx.send("❌ هاد الأمر مقيد من طرف Owner.", delete_after=6)
             return
 
-        if OWNER_ID and member.id == OWNER_ID:
+        if member.id == member.guild.owner_id:
+            await self._log_denied_target(ctx, member, "Ban Owner", "Owner is globally protected.")
             await ctx.send("❌ ما نقدرش نمس فـ Owner ديال السيرفر!")
             return
         if is_exempt(member):
@@ -287,6 +337,7 @@ class Moderation(commands.Cog):
             embed.add_field(name="الحاظر", value=ctx.author.mention, inline=False)
             embed.set_footer(text=f"{SERVER_NAME} | Moderation")
             await ctx.send(embed=embed)
+            await self._log_successful_target(ctx, member, "Ban", reason)
         except discord.Forbidden:
             await ctx.send("❌ ما عنديش الصلاحية!", delete_after=5)
         except Exception as e:
@@ -311,6 +362,7 @@ class Moderation(commands.Cog):
             )
             embed.set_footer(text=f"{SERVER_NAME} | Moderation")
             await ctx.send(embed=embed)
+            await self._log_successful_target(ctx, user, "Unban")
         except discord.NotFound:
             await ctx.send("❌ ما لقيتش هاد العضو!", delete_after=5)
         except discord.Forbidden:
@@ -334,6 +386,12 @@ class Moderation(commands.Cog):
 
         try:
             deleted = await ctx.channel.purge(limit=amount + 1)
+            await self._log_successful_target(
+                ctx,
+                None,
+                "Clear messages",
+                f"Deleted messages: {max(0, len(deleted) - 1)}",
+            )
             msg = await ctx.send(f"🗑️ تم حذف {len(deleted) - 1} رسالة")
             await asyncio.sleep(3)
             await msg.delete()
@@ -357,8 +415,18 @@ class Moderation(commands.Cog):
             await ctx.send("❌ هاد الأمر مقيد من طرف Owner.", delete_after=6)
             return
 
-        if OWNER_ID and member.id == OWNER_ID:
+        if member.id == member.guild.owner_id:
+            await self._log_denied_target(ctx, member, "Mute Owner", "Owner is globally protected.")
             await ctx.send("❌ ما نقدرش نمس فـ Owner ديال السيرفر!")
+            return
+        if ctx.author.id != ctx.guild.owner_id and self._is_temp_voice_target(member):
+            await self._log_denied_target(
+                ctx,
+                member,
+                "Mute member inside TEMP room",
+                "Admin/Moderator moderation is disabled inside TEMP rooms; use the room-owner panel.",
+            )
+            await ctx.send("❌ Admin/Moderator ما يقدروش يديرو Mute داخل رومات TEMP.", delete_after=6)
             return
         if is_exempt(member):
             await ctx.send("❌ هاد العضو معفي من Auto-Mod/Moderation (Admin/Mod)!")
@@ -370,11 +438,24 @@ class Moderation(commands.Cog):
             return
 
         try:
-            await member.add_roles(muted_role)
+            security = self.bot.get_cog("OwnerSecurity")
+            if security:
+                applied = await security.edit_member_muted_role(
+                    ctx.guild,
+                    ctx.author,
+                    member,
+                    muted=True,
+                    reason=f"Mute command by {ctx.author} ({ctx.author.id}): {reason}",
+                )
+                if not applied:
+                    await ctx.send("❌ Owner Security رفض تغيير Muted role.", delete_after=6)
+                    return
+            else:
+                await member.add_roles(muted_role, reason=reason)
             user_id = str(member.id)
             if user_id in self.mute_tasks and not self.mute_tasks[user_id].done():
                 self.mute_tasks[user_id].cancel()
-            task = asyncio.create_task(self.auto_unmute(member, duration))
+            task = asyncio.create_task(self.auto_unmute(member, duration, ctx.author))
             self.mute_tasks[user_id] = task
 
             embed = discord.Embed(
@@ -388,6 +469,12 @@ class Moderation(commands.Cog):
             embed.add_field(name="المنفذ", value=ctx.author.mention, inline=False)
             embed.set_footer(text=f"{SERVER_NAME} | Moderation")
             await ctx.send(embed=embed)
+            await self._log_successful_target(
+                ctx,
+                member,
+                "Mute role",
+                f"Duration: {duration} minutes • Reason: {reason}",
+            )
         except discord.Forbidden:
             await ctx.send("❌ ما عنديش الصلاحية!", delete_after=5)
 
@@ -399,13 +486,40 @@ class Moderation(commands.Cog):
             await ctx.send("❌ هاد الأمر مقيد من طرف Owner.", delete_after=6)
             return
 
+        if member.id == member.guild.owner_id:
+            await self._log_denied_target(ctx, member, "Unmute Owner", "Owner is globally protected.")
+            await ctx.send("❌ ما نقدرش نطبق حتى إجراء على Owner ديال السيرفر!")
+            return
+        if ctx.author.id != ctx.guild.owner_id and self._is_temp_voice_target(member):
+            await self._log_denied_target(
+                ctx,
+                member,
+                "Unmute member inside TEMP room",
+                "Admin/Moderator moderation is disabled inside TEMP rooms; use the room-owner panel.",
+            )
+            await ctx.send("❌ Admin/Moderator ما يقدروش يحيدو Mute داخل رومات TEMP.", delete_after=6)
+            return
+
         muted_role = ctx.guild.get_role(MUTED_ROLE_ID)
         if not muted_role:
             await ctx.send("❌ ما لقيتش دور Mute!", delete_after=5)
             return
 
         try:
-            await member.remove_roles(muted_role)
+            security = self.bot.get_cog("OwnerSecurity")
+            if security:
+                applied = await security.edit_member_muted_role(
+                    ctx.guild,
+                    ctx.author,
+                    member,
+                    muted=False,
+                    reason=f"Unmute command by {ctx.author} ({ctx.author.id})",
+                )
+                if not applied:
+                    await ctx.send("❌ Owner Security رفض تغيير Muted role.", delete_after=6)
+                    return
+            else:
+                await member.remove_roles(muted_role, reason=f"Unmute command by {ctx.author}")
             user_id = str(member.id)
             if user_id in self.mute_tasks and not self.mute_tasks[user_id].done():
                 self.mute_tasks[user_id].cancel()
@@ -418,6 +532,7 @@ class Moderation(commands.Cog):
             )
             embed.set_footer(text=f"{SERVER_NAME} | Moderation")
             await ctx.send(embed=embed)
+            await self._log_successful_target(ctx, member, "Unmute role")
         except discord.Forbidden:
             await ctx.send("❌ ما عنديش الصلاحية!", delete_after=5)
 
@@ -431,7 +546,8 @@ class Moderation(commands.Cog):
             await ctx.send("❌ هاد الأمر مقيد من طرف Owner.", delete_after=6)
             return
 
-        if OWNER_ID and member.id == OWNER_ID:
+        if member.id == member.guild.owner_id:
+            await self._log_denied_target(ctx, member, "Warn Owner", "Owner is globally protected.")
             await ctx.send("❌ ما نقدرش نمس فـ Owner ديال السيرفر!")
             return
         if is_exempt(member):
@@ -451,6 +567,12 @@ class Moderation(commands.Cog):
         embed.add_field(name="المنفذ", value=ctx.author.mention, inline=False)
         embed.set_footer(text=f"{SERVER_NAME} | Moderation")
         await ctx.send(embed=embed)
+        await self._log_successful_target(
+            ctx,
+            member,
+            "Warn",
+            f"Count: {count} • Reason: {reason}",
+        )
 
     @commands.hybrid_command(description="بين التحذيرات ديال عضو")
     @app_commands.default_permissions(kick_members=True)

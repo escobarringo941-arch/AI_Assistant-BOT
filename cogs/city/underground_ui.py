@@ -357,7 +357,7 @@ class OwnerUndergroundView(ReliableView):
     def __init__(self,cog):
         super().__init__(timeout=3600); self.cog=cog
     async def interaction_check(self,interaction):
-        if interaction.user.id!=self.cog.owner_id: await safe_private(interaction,"❌ Owner فقط."); return False
+        if not interaction.guild or interaction.user.id != interaction.guild.owner_id: await safe_private(interaction,"❌ Owner فقط."); return False
         return True
     @discord.ui.button(label="Setup / Repair",emoji="🌑",style=discord.ButtonStyle.success,row=0)
     async def setup(self,interaction,button):
@@ -398,7 +398,7 @@ class OwnerInviteUserSelect(discord.ui.UserSelect):
         ok,msg=await guarded(self.cog.create_underground_invite(interaction.guild,target)); await safe_edit(interaction,content=msg,embed=self.cog.underground_owner_embed(interaction.guild),view=OwnerUndergroundView(self.cog))
 class OwnerInviteMemberView(ReliableView):
     def __init__(self,cog): super().__init__(timeout=300); self.cog=cog; self.add_item(OwnerInviteUserSelect(cog))
-    async def interaction_check(self,interaction): return interaction.user.id==self.cog.owner_id
+    async def interaction_check(self,interaction): return bool(interaction.guild and interaction.user.id == interaction.guild.owner_id)
 
 class OwnerRevokeUserSelect(discord.ui.UserSelect):
     def __init__(self,cog): super().__init__(placeholder="🚫 Member...",min_values=1,max_values=1); self.cog=cog
@@ -410,7 +410,7 @@ class OwnerRevokeUserSelect(discord.ui.UserSelect):
         ok,msg=await guarded(self.cog.revoke_underground_access(interaction.guild,target)); await safe_edit(interaction,content=msg,embed=self.cog.underground_owner_embed(interaction.guild),view=OwnerUndergroundView(self.cog))
 class OwnerRevokeMemberView(ReliableView):
     def __init__(self,cog): super().__init__(timeout=300); self.cog=cog; self.add_item(OwnerRevokeUserSelect(cog))
-    async def interaction_check(self,interaction): return interaction.user.id==self.cog.owner_id
+    async def interaction_check(self,interaction): return bool(interaction.guild and interaction.user.id == interaction.guild.owner_id)
 
 class OwnerCancelInviteUserSelect(discord.ui.UserSelect):
     def __init__(self,cog): super().__init__(placeholder="🗑️ Member...",min_values=1,max_values=1); self.cog=cog
@@ -425,6 +425,6 @@ class OwnerCancelInviteUserSelect(discord.ui.UserSelect):
 class OwnerCancelInviteMemberView(ReliableView):
     def __init__(self,cog): super().__init__(timeout=300); self.cog=cog; self.add_item(OwnerCancelInviteUserSelect(cog))
     async def interaction_check(self,interaction):
-        if interaction.user.id!=self.cog.owner_id:
+        if not interaction.guild or interaction.user.id != interaction.guild.owner_id:
             await safe_private(interaction,"❌ Owner فقط."); return False
         return True
