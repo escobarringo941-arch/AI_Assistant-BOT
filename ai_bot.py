@@ -48,6 +48,7 @@ CORE_COGS = [
 GAMES_COGS = [
     "cogs.economy",
     "cogs.city",
+    "cogs.city.businesses",
     "cogs.games_panel",
     "cogs.game_counting",
     "cogs.game_tictactoe",
@@ -67,7 +68,12 @@ GAMES_COGS = [
 ]
 
 # هاد الـCog أمني: إلا فشل ما خاصش البوت يكمل وكأن الحماية خدامة.
-REQUIRED_STANDALONE_COGS = {"cogs.unverified_visibility"}
+REQUIRED_STANDALONE_COGS = {
+    "cogs.economy",
+    "cogs.city",
+    "cogs.city.businesses",
+    "cogs.unverified_visibility",
+}
 
 
 def _configure_cog_bridge(shared):
