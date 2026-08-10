@@ -46,6 +46,7 @@ CORE_COGS = [
 
 # Standalone Cogs keep their dependency-safe order.
 GAMES_COGS = [
+    "cogs.owner_security",
     "cogs.economy",
     "cogs.city",
     "cogs.city.businesses",
@@ -69,6 +70,7 @@ GAMES_COGS = [
 
 # هاد الـCog أمني: إلا فشل ما خاصش البوت يكمل وكأن الحماية خدامة.
 REQUIRED_STANDALONE_COGS = {
+    "cogs.owner_security",
     "cogs.economy",
     "cogs.city",
     "cogs.city.businesses",
@@ -85,6 +87,10 @@ def _configure_cog_bridge(shared):
     bot.gg = {
         "DATA_DIR": shared["DATA_DIR"],
         "OWNER_ID": shared["OWNER_ID"],
+        "ADMIN_ROLE_ID": shared["ADMIN_ROLE_ID"],
+        "MODERATOR_ROLE_ID": shared["MODERATOR_ROLE_ID"],
+        "MUTED_ROLE_ID": shared["MUTED_ROLE_ID"],
+        "JOIN_TO_CREATE_CHANNEL_ID": shared["JOIN_TO_CREATE_CHANNEL_ID"],
         "UNVERIFIED_ROLE_ID": shared["UNVERIFIED_ROLE_ID"],
         "RULES_CHANNEL_ID": shared["RULES_CHANNEL_ID"],
         "VERIFY_CHANNEL_ID": shared["VERIFY_CHANNEL_ID"],
@@ -114,6 +120,7 @@ def _configure_cog_bridge(shared):
         "is_temp_voice_protected_target": shared["is_temp_voice_protected_target"],
         "set_temp_voice_private": shared["set_temp_voice_private"],
         "refresh_temp_voice_control_panel": shared["refresh_temp_voice_control_panel"],
+        "enforce_temp_voice_security_overwrites": shared["enforce_temp_voice_security_overwrites"],
     }
 
 
