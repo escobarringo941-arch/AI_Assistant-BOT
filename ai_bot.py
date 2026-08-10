@@ -46,7 +46,6 @@ CORE_COGS = [
 
 # Standalone Cogs keep their dependency-safe order.
 GAMES_COGS = [
-    "cogs.owner_security",
     "cogs.economy",
     "cogs.city",
     "cogs.city.businesses",
@@ -70,7 +69,6 @@ GAMES_COGS = [
 
 # هاد الـCog أمني: إلا فشل ما خاصش البوت يكمل وكأن الحماية خدامة.
 REQUIRED_STANDALONE_COGS = {
-    "cogs.owner_security",
     "cogs.economy",
     "cogs.city",
     "cogs.city.businesses",
