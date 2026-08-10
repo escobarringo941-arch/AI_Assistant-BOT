@@ -288,29 +288,35 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
 
 
     async def enforce_temp_voice_security_overwrites(channel: discord.VoiceChannel):
-        """Idempotently deny native human moderation and preserve bot control."""
+        """Idempotently deny native human moderation and preserve bot control.
+        التعديلات الحساسة (default_role/Admin/Moderator/Staff/Bot) كيتجمعو فـ
+        dict وحدة وكيتبعتو بطلب channel.edit() واحد بدل عدة طلبات
+        set_permissions وحدة ورا وحدة — القديم كان كيصاوب رايت-ليميت (429)
+        منين كيتخلق روم وكاين عدد كبير ديال Staff (Admin/Moderator)."""
         if not is_temp_voice_channel(channel):
             return
 
-        async def set_sensitive(target, value: bool, reason: str):
+        overwrites = dict(channel.overwrites)
+        changed = False
+
+        def queue_sensitive(target, value: bool):
+            nonlocal changed
             if target is None:
                 return
             overwrite = channel.overwrites_for(target)
-            changed = False
+            target_changed = False
             for name in ("manage_channels", "manage_roles", "move_members", "mute_members", "deafen_members"):
                 if getattr(overwrite, name, None) is not value:
                     setattr(overwrite, name, value)
-                    changed = True
-            if changed:
-                try:
-                    await channel.set_permissions(target, overwrite=overwrite, reason=reason)
-                except (discord.Forbidden, discord.HTTPException) as e:
-                    print(f"[TEMP-VOICE SECURITY] overwrite failed {channel.id}/{getattr(target, 'id', 0)}: {e}")
+                    target_changed = True
+            if target_changed:
+                overwrites[target] = overwrite
+                changed = True
 
         admin_role = channel.guild.get_role(ADMIN_ROLE_ID) if ADMIN_ROLE_ID else None
         moderator_role = channel.guild.get_role(MODERATOR_ROLE_ID) if MODERATOR_ROLE_ID else None
         for target in (channel.guild.default_role, admin_role, moderator_role):
-            await set_sensitive(target, False, "TEMP room: native human moderation is disabled")
+            queue_sensitive(target, False)
 
         # Member denies are the final overwrite layer and beat any secondary role allow.
         staff = {}
@@ -319,7 +325,16 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                 staff.update({member.id: member for member in role.members})
         for staff_member in staff.values():
             if not is_temp_voice_protected_target(staff_member):
-                await set_sensitive(staff_member, False, "TEMP room: staff-specific security deny")
+                queue_sensitive(staff_member, False)
+
+        if channel.guild.me:
+            queue_sensitive(channel.guild.me, True)
+
+        if changed:
+            try:
+                await channel.edit(overwrites=overwrites, reason="TEMP room: native human moderation is disabled")
+            except (discord.Forbidden, discord.HTTPException) as e:
+                print(f"[TEMP-VOICE SECURITY] batched overwrite failed {channel.id}: {e}")
 
         owner_id = get_temp_voice_owner_id(channel)
         room_owner = channel.guild.get_member(owner_id) if owner_id else None
@@ -327,9 +342,6 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             await apply_temp_voice_member_permissions(
                 channel, room_owner, reason="TEMP room owner panel-only permission repair"
             )
-
-        if channel.guild.me:
-            await set_sensitive(channel.guild.me, True, "TEMP room: bot performs guarded panel actions")
     
     
     def build_temp_voice_control_embed(channel: discord.VoiceChannel) -> discord.Embed:
