@@ -565,33 +565,38 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
 
 
     async def _upsert_relationship_list(channel: discord.TextChannel, kind: str):
-        """كتلقى الرسالة القديمة ديال اللائحة (بواسطة الـ footer marker) وكتبدلها،
-        وإلا كتصاوب وحدة جديدة إلا ماكانتش."""
-        embed = await _relationship_list_embed(kind, channel.guild)
+        """كتلقى الرسالة القديمة ديال اللائحة (بـ message_id محفوظ ولا بحث فالتاريخ)
+        وكتبدلها، وإلا كتصاوب وحدة جديدة إلا ماكانتش — بحال Leaderboard/Admin List بالضبط."""
+        guild = channel.guild
+        embed = await _relationship_list_embed(kind, guild)
         marker = f"GGMW9:RELLIST:{kind}"
-        try:
-            async for msg in channel.history(limit=50):
-                if (
-                    msg.author.id == channel.guild.me.id
-                    and msg.embeds
-                    and (msg.embeds[0].footer.text if msg.embeds[0].footer else "") == marker
-                ):
-                    try:
-                        await msg.edit(embed=embed)
-                    except discord.HTTPException:
-                        pass
-                    return
-        except discord.HTTPException:
-            pass
-        try:
-            await channel.send(embed=embed)
-        except discord.HTTPException:
-            pass
+        state_key = f"{guild.id}:{kind}"
+        msg_id = relationship_list_message_ids.get(state_key)
+
+        def remember(message_id: int):
+            if relationship_list_message_ids.get(state_key) != int(message_id):
+                relationship_list_message_ids[state_key] = int(message_id)
+                save_relationship_list_message_ids()
+
+        await upsert_fixed_panel(
+            bot,
+            channel,
+            key=f"relationship_list_{kind}",
+            matches=lambda msg: (
+                msg.author == bot.user
+                and bool(msg.embeds)
+                and (msg.embeds[0].footer.text if msg.embeds[0].footer else "") == marker
+            ),
+            embed=embed,
+            message_id=msg_id,
+            save_message_id=remember,
+            history_limit=100,
+        )
 
 
     async def refresh_relationship_lists(guild: discord.Guild):
         """كتحدث لائحة الأزواج ولائحة الأصدقاء (تحت كل بانل فـ channel العدول) —
-        كتتصاوب منين كاين زواج/صداقة جديدة، ومنين تنتهي وحدة."""
+        كتتصاوب فوراً منين كاين زواج/صداقة جديدة، ومنين تنتهي وحدة."""
         if not MARRIAGE_CENTER_CHANNEL_ID:
             return
         channel = guild.get_channel(MARRIAGE_CENTER_CHANNEL_ID)
@@ -599,6 +604,31 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             return
         await _upsert_relationship_list(channel, "marriages")
         await _upsert_relationship_list(channel, "bestfriends")
+
+
+    @tasks.loop(minutes=RELATIONSHIP_LIST_UPDATE_MINUTES)
+    async def update_relationship_lists():
+        """كتحدث لوائح الأزواج/الأصدقاء أوتوماتيكياً فـ MARRIAGE_CENTER_CHANNEL_ID كل
+        RELATIONSHIP_LIST_UPDATE_MINUTES دقيقة — بحال Leaderboard ديال XP بالضبط
+        (كتبدل نفس الرسالة، ماكتبعثش وحدة جديدة كل مرة)."""
+        if not MARRIAGE_CENTER_CHANNEL_ID:
+            return
+        for guild in bot.guilds:
+            if guild.get_channel(MARRIAGE_CENTER_CHANNEL_ID):
+                await refresh_relationship_lists(guild)
+
+
+    @update_relationship_lists.before_loop
+    async def before_update_relationship_lists():
+        await bot.wait_until_ready()
+
+
+    @update_relationship_lists.error
+    async def update_relationship_lists_error(error):
+        print(f"[RELATIONSHIP_LIST] ❌❌ خطأ كبير وقف الـ loop: {error}")
+        await asyncio.sleep(5)
+        if not update_relationship_lists.is_running():
+            update_relationship_lists.restart()
 
 
     async def _relationship_leaderboard_cmd(ctx, kind: str):
@@ -1066,9 +1096,9 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         if not channel:
             return None
         await channel.send(embed=_relationship_panel_embed("marriages", "darija"), view=MarriagePanelView())
-        await channel.send(embed=await _relationship_list_embed("marriages", guild))
+        await _upsert_relationship_list(channel, "marriages")
         await channel.send(embed=_relationship_panel_embed("bestfriends", "darija"), view=BestfriendPanelView())
-        await channel.send(embed=await _relationship_list_embed("bestfriends", guild))
+        await _upsert_relationship_list(channel, "bestfriends")
         return channel
 
 

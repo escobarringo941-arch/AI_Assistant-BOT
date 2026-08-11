@@ -258,6 +258,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     RELATIONSHIP_DM_PROPOSALS = True    # ← الطلب يتبعث فـ DM للشخص المطلوب (True)، ولا فنفس الـ channel ديال السيرفر (False)
     RELATIONSHIP_ANNOUNCE_CHANNEL_ID = 1524957892925456545   # ← الـ channel (# general) فين كيتبعث إعلان عام ملي شي حد يقبل الزواج/الصداقة، ولا يطلق/يقطع الصداقة — خليها 0 إلا مابغيتيش
     MARRIAGE_CENTER_CHANNEL_ID = 1536602981359685724   # ← channel "marriage-club" — فيها كتصاوب البانلات ديال الزواج/الصداقة
+    RELATIONSHIP_LIST_UPDATE_MINUTES = 15       # ← كل شحال ديال الدقايق كتتحدث لائحة الأزواج/الأصدقاء أوتوماتيكياً (بحال Leaderboard)
     RELATIONSHIP_PERSONAL_ROLE_ENABLED = True   # ← كل واحد فالعلاقة ياخد رول شخصي بسمية الشريك ديالو (بحال "💍 Aya")
     MARRIAGE_PERSONAL_ROLE_COLOR = 0xd41b1b     # ← لون الرولات الشخصية ديال الزواج (روز)
     BESTFRIEND_PERSONAL_ROLE_COLOR = 0xffd119   # ← لون الرولات الشخصية ديال الصداقة (أزرق فاتح)

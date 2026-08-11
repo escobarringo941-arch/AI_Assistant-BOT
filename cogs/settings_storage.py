@@ -190,6 +190,34 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     load_admin_list_message_ids()
     
     
+    RELATIONSHIP_LIST_MESSAGE_FILE = os.path.join(DATA_DIR, "relationship_list_messages.json")
+    relationship_list_message_ids = {}  # {"guild_id:kind": message_id} — kind = marriages/bestfriends
+    
+    
+    def load_relationship_list_message_ids():
+        """يقرا IDs ديال رسائل لائحة الأزواج/الأصدقاء المحفوظة، باش يبدلهم بدل ما يبعث وحدة جديدة كل مرة"""
+        global relationship_list_message_ids
+        try:
+            with open(RELATIONSHIP_LIST_MESSAGE_FILE, "r", encoding="utf-8") as f:
+                relationship_list_message_ids = json.load(f)
+            print(f"[RELATIONSHIP_LIST] تحملو {len(relationship_list_message_ids)} رسالة لائحة محفوظة")
+        except FileNotFoundError:
+            print("[RELATIONSHIP_LIST] ماكايناش رسائل لائحة سابقة، غادي نبعثو وحدات جداد")
+        except Exception as e:
+            print(f"[RELATIONSHIP_LIST] خطأ فـ التحميل: {e}")
+    
+    
+    def save_relationship_list_message_ids():
+        try:
+            with open(RELATIONSHIP_LIST_MESSAGE_FILE, "w", encoding="utf-8") as f:
+                json.dump(relationship_list_message_ids, f, ensure_ascii=False)
+        except Exception as e:
+            print(f"[RELATIONSHIP_LIST] خطأ فـ الحفظ: {e}")
+    
+    
+    load_relationship_list_message_ids()
+    
+    
     # ═══════════════════════════════════════════════════════
     # ║                  نظام التذكيرات (Reminders)             ║
     # ═══════════════════════════════════════════════════════

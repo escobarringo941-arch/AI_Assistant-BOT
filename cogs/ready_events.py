@@ -26,6 +26,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         print(f"📊 Stats Channel: {STATS_CHANNEL_ID if STATS_CHANNEL_ID else 'ماشي معطي بعد'} (كل {STATS_UPDATE_MINUTES} د)")
         print(f"🏆 Leaderboard أوتوماتيكي: {LEADERBOARD_CHANNEL_ID if LEADERBOARD_CHANNEL_ID else 'ماشي معطي بعد'} (كل {LEADERBOARD_UPDATE_MINUTES} د)")
         print(f"👑 Administrators Channel: {ADMINISTRATORS_CHANNEL_ID if ADMINISTRATORS_CHANNEL_ID else 'ماشي معطي بعد'} (كل {ADMIN_LIST_UPDATE_MINUTES} د)")
+        print(f"💌 Marriage Center: {MARRIAGE_CENTER_CHANNEL_ID if MARRIAGE_CENTER_CHANNEL_ID else 'ماشي معطي بعد'} (لوائح الأزواج/الأصدقاء كل {RELATIONSHIP_LIST_UPDATE_MINUTES} د)")
         print(f"🆘 Support: Center={SUPPORT_CENTER_CHANNEL_ID or 'ماشي معطي'} | Reports={REPORTS_CHANNEL_ID or 'ماشي معطي'} | Tickets Category={TICKETS_CATEGORY_ID or 'ماشي معطي'} | Ticket Logs={TICKET_LOGS_CHANNEL_ID or 'MOD_LOGS_CHANNEL_ID'}")
         print(f"📋 Applications: Panel={APPLICATIONS_PANEL_CHANNEL_ID or 'ماشي معطي'} | Review={APPLICATIONS_REVIEW_CHANNEL_ID or 'MOD_LOGS_CHANNEL_ID'} | Cooldown={APPLICATIONS_COOLDOWN_HOURS}h")
         print(f"💡 Suggestions: Channel={SUGGESTIONS_CHANNEL_ID or 'ماشي معطي'}")
@@ -56,6 +57,9 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     
         if ADMINISTRATORS_CHANNEL_ID and not update_admin_list.is_running():
             update_admin_list.start()
+    
+        if MARRIAGE_CENTER_CHANNEL_ID and not update_relationship_lists.is_running():
+            update_relationship_lists.start()
     
         if not check_reminders.is_running():
             check_reminders.start()
