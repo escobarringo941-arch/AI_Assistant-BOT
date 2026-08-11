@@ -105,6 +105,77 @@ class BuyLandModal(discord.ui.Modal, title="شراء أرض داخل GGMW9 CITY"
         await interaction.followup.send(msg, ephemeral=True)
 
 
+class ListLandModal(discord.ui.Modal, title="عرض الأرض ديالي للبيع/الكراء"):
+    plot_id = discord.ui.TextInput(label="رقم الأرض", placeholder="PLOT-01", max_length=20)
+    action = discord.ui.TextInput(label="نوع العرض: sale / rent / cancel", placeholder="sale", max_length=10)
+    price = discord.ui.TextInput(label="الثمن (خاصو sale/rent، فارغ عند cancel)", placeholder="50000", required=False, max_length=12)
+    days = discord.ui.TextInput(label="عدد أيام الكراء (خاصو غير rent)", placeholder="7", required=False, max_length=4)
+
+    def __init__(self, hub):
+        super().__init__()
+        self.hub = hub
+
+    async def on_submit(self, interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        ok, msg = await self.hub.list_land(
+            interaction, str(self.plot_id), str(self.action), str(self.price), str(self.days),
+        )
+        await interaction.followup.send(msg, ephemeral=True)
+
+
+class MarketBuyModal(discord.ui.Modal, title="شراء أرض من صاحبها (السوق)"):
+    plot_id = discord.ui.TextInput(label="رقم الأرض المعروضة للبيع", placeholder="PLOT-01", max_length=20)
+
+    def __init__(self, hub):
+        super().__init__()
+        self.hub = hub
+
+    async def on_submit(self, interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        ok, msg = await self.hub.buy_from_owner(interaction, str(self.plot_id))
+        await interaction.followup.send(msg, ephemeral=True)
+
+
+class MarketRentModal(discord.ui.Modal, title="كراء أرض من صاحبها (السوق)"):
+    plot_id = discord.ui.TextInput(label="رقم الأرض المعروضة للكراء", placeholder="PLOT-01", max_length=20)
+
+    def __init__(self, hub):
+        super().__init__()
+        self.hub = hub
+
+    async def on_submit(self, interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        ok, msg = await self.hub.rent_from_owner(interaction, str(self.plot_id))
+        await interaction.followup.send(msg, ephemeral=True)
+
+
+class LandMarketView(discord.ui.View):
+    """بانل خاص (ephemeral) كيبان منين تضغط 'سوق الأراضي' — زوج أزرار: شري / كري."""
+
+    def __init__(self, hub, user_id: int):
+        super().__init__(timeout=600)
+        self.hub = hub
+        self.user_id = int(user_id)
+
+    async def _guard(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("❌ هاد الجلسة ماشي ديالك.", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="شري أرض", emoji="🛒", style=discord.ButtonStyle.success)
+    async def buy(self, interaction, button):
+        if not await self._guard(interaction):
+            return
+        await interaction.response.send_modal(MarketBuyModal(self.hub))
+
+    @discord.ui.button(label="كري أرض", emoji="🔑", style=discord.ButtonStyle.primary)
+    async def rent(self, interaction, button):
+        if not await self._guard(interaction):
+            return
+        await interaction.response.send_modal(MarketRentModal(self.hub))
+
+
 class BusinessApplicationModal(discord.ui.Modal, title="طلب بناء مشروع"):
     plot_id = discord.ui.TextInput(label="رقم الأرض", placeholder="PLOT-01", max_length=20)
     name = discord.ui.TextInput(label="اسم المشروع", placeholder="عيادة ليلى", max_length=60)
@@ -165,11 +236,14 @@ class BookAppointmentModal(discord.ui.Modal, title="حجز خدمة"):
 
 _BUSINESS_BTN_LABELS = {
     "darija": {"land": "شراء أرض", "apply": "فتح مشروع", "book": "حجز خدمة", "add_service": "إضافة خدمة",
-               "listing": "المشاريع والخدمات", "jobs": "أشغال البناء", "not_verified": "❌ خاصك تفعل الحساب ديالك أولاً."},
+               "listing": "المشاريع والخدمات", "jobs": "أشغال البناء", "market": "سوق الأراضي", "list_land": "عرض أرضي",
+               "not_verified": "❌ خاصك تفعل الحساب ديالك أولاً."},
     "en": {"land": "Buy Land", "apply": "Open a Venture", "book": "Book a Service", "add_service": "Add a Service",
-           "listing": "Ventures & Services", "jobs": "Construction Jobs", "not_verified": "❌ You need to verify your account first."},
+           "listing": "Ventures & Services", "jobs": "Construction Jobs", "market": "Land Market", "list_land": "List My Land",
+           "not_verified": "❌ You need to verify your account first."},
     "fr": {"land": "Acheter un terrain", "apply": "Ouvrir une entreprise", "book": "Réserver un service", "add_service": "Ajouter un service",
-           "listing": "Entreprises & Services", "jobs": "Chantiers", "not_verified": "❌ Il faut d'abord vérifier ton compte."},
+           "listing": "Entreprises & Services", "jobs": "Chantiers", "market": "Marché des terrains", "list_land": "Mettre mon terrain",
+           "not_verified": "❌ Il faut d'abord vérifier ton compte."},
 }
 
 
@@ -243,6 +317,18 @@ class BusinessDirectoryView(discord.ui.View):
     async def jobs(self, interaction, button):
         await private_reply(interaction, "", embed=self.hub.jobs_embed(interaction.guild))
 
+    @discord.ui.button(label="سوق الأراضي", emoji="🏘️", style=discord.ButtonStyle.secondary, custom_id="ggmw9:business:market", row=1)
+    async def market(self, interaction, button):
+        if not self.hub.verified(interaction.user):
+            return await private_reply(interaction, "❌ خاصك تفعل الحساب ديالك أولاً.")
+        await private_reply(interaction, "", embed=self.hub.market_embed(interaction.guild), view=LandMarketView(self.hub, interaction.user.id))
+
+    @discord.ui.button(label="عرض أرضي", emoji="🏷️", style=discord.ButtonStyle.secondary, custom_id="ggmw9:business:list_land", row=1)
+    async def list_land_btn(self, interaction, button):
+        if not self.hub.verified(interaction.user):
+            return await private_reply(interaction, "❌ خاصك تفعل الحساب ديالك أولاً.")
+        await interaction.response.send_modal(ListLandModal(self.hub))
+
 
 class _BusinessDirectoryPrivateView(discord.ui.View):
     """نسخة خاصة (ephemeral) مترجمة — نفس الأزرار بلغة مختلفة."""
@@ -276,6 +362,14 @@ class _BusinessDirectoryPrivateView(discord.ui.View):
         jobs_btn = discord.ui.Button(label=labels["jobs"], emoji="🏗️", style=discord.ButtonStyle.secondary, row=1)
         jobs_btn.callback = self._jobs
         self.add_item(jobs_btn)
+
+        market_btn = discord.ui.Button(label=labels["market"], emoji="🏘️", style=discord.ButtonStyle.secondary, row=1)
+        market_btn.callback = self._market
+        self.add_item(market_btn)
+
+        list_land_btn = discord.ui.Button(label=labels["list_land"], emoji="🏷️", style=discord.ButtonStyle.secondary, row=1)
+        list_land_btn.callback = self._list_land
+        self.add_item(list_land_btn)
 
         self.add_item(_BusinessLanguageSelect(hub, private_user_id=self.user_id, lang=self.lang, row=2))
 
@@ -320,6 +414,16 @@ class _BusinessDirectoryPrivateView(discord.ui.View):
         if not await self._guard(interaction):
             return
         await private_reply(interaction, "", embed=self.hub.jobs_embed(interaction.guild, self.lang))
+
+    async def _market(self, interaction):
+        if not await self._guard(interaction) or await self._need_verify(interaction):
+            return
+        await private_reply(interaction, "", embed=self.hub.market_embed(interaction.guild, self.lang), view=LandMarketView(self.hub, self.user_id))
+
+    async def _list_land(self, interaction):
+        if not await self._guard(interaction) or await self._need_verify(interaction):
+            return
+        await interaction.response.send_modal(ListLandModal(self.hub))
 
 
 class AppointmentRoomView(discord.ui.View):
@@ -594,6 +698,141 @@ class BusinessHub(commands.Cog):
         e.set_footer(text=footer)
         return e
 
+    def market_embed(self, guild, lang="darija"):
+        if lang == "en":
+            title, no_sale, no_rent, f_sale, f_rent, footer = (
+                "🏘️ Land Market — Peer-to-Peer", "No plot listed for sale right now.", "No plot listed for rent right now.",
+                "🏷️ For Sale", "🔑 For Rent", "Use 🛒/🔑 below with the plot ID to close a deal.",
+            )
+        elif lang == "fr":
+            title, no_sale, no_rent, f_sale, f_rent, footer = (
+                "🏘️ Marché des terrains entre joueurs", "Aucun terrain en vente pour l'instant.", "Aucun terrain en location pour l'instant.",
+                "🏷️ À vendre", "🔑 À louer", "Utilise 🛒/🔑 ci-dessous avec l'ID du terrain pour conclure.",
+            )
+        else:
+            title, no_sale, no_rent, f_sale, f_rent, footer = (
+                "🏘️ سوق الأراضي بين الملاك", "ما كاين حتى أرض معروضة للبيع دابا.", "ما كاين حتى أرض معروضة للكراء دابا.",
+                "🏷️ للبيع", "🔑 للكراء", "دخل رقم الأرض فزر 🛒/🔑 باش تكمل الصفقة.",
+            )
+        state = self.state(guild.id)
+        sale_rows, rent_rows = [], []
+        for pid, p in state["plots"].items():
+            if p["status"] == "listed_sale":
+                sale_rows.append(f"`{pid}` • {fmt(p['sale_price'])} • <@{p['owner_id']}>")
+            elif p["status"] == "listed_rent":
+                rent_rows.append(f"`{pid}` • {fmt(p['rent_price'])} / {p.get('rent_days')} 📅 • <@{p['owner_id']}>")
+        e = discord.Embed(title=title, color=0xEB459E)
+        e.add_field(name=f_sale, value="\n".join(sale_rows[:15]) or no_sale, inline=False)
+        e.add_field(name=f_rent, value="\n".join(rent_rows[:15]) or no_rent, inline=False)
+        e.set_footer(text=footer)
+        return e
+
+    async def list_land(self, interaction, plot_id, action, price_raw, days_raw):
+        if not interaction.guild or not self.verified(interaction.user):
+            return False, "❌ خاص الحساب يكون مفعّل."
+        plot_id = clean_text(plot_id, 20).upper()
+        action = clean_text(action, 10).lower()
+        action = {"بيع": "sale", "كراء": "rent", "الغاء": "cancel", "إلغاء": "cancel"}.get(action, action)
+        if action not in {"sale", "rent", "cancel"}:
+            return False, "❌ نوع العرض خاصو يكون: sale / rent / cancel."
+        async with self.lock:
+            state = self.state(interaction.guild.id)
+            plot = state["plots"].get(plot_id)
+            if not plot or int(plot.get("owner_id") or 0) != interaction.user.id:
+                return False, "❌ هاد الأرض ماشي ديالك."
+            if action == "cancel":
+                if plot["status"] not in {"listed_sale", "listed_rent"}:
+                    return False, "❌ ماكاينش إعلان نشط على هاد الأرض باش يتسحب."
+                plot["status"] = "owned"
+                plot.pop("sale_price", None)
+                plot.pop("rent_price", None)
+                plot.pop("rent_days", None)
+                self.store.save()
+                msg = f"✅ تسحب الإعلان ديال **{plot_id}**."
+            elif action == "sale":
+                if plot["status"] != "owned":
+                    return False, "❌ خاص الأرض تكون فارغة (بلا مشروع أو إعلان قائم) باش تعرضها للبيع."
+                try:
+                    price = int(float(clean_text(price_raw, 12).replace(",", "")))
+                except ValueError:
+                    return False, "❌ الثمن غير صحيح."
+                if price <= 0:
+                    return False, "❌ الثمن خاصو يكون أكبر من صفر."
+                plot.update({"status": "listed_sale", "sale_price": price})
+                self.store.save()
+                msg = f"✅ تعرضت **{plot_id}** للبيع بـ {fmt(price)}. غادي تبان فـ'سوق الأراضي'."
+            else:
+                if plot["status"] != "owned":
+                    return False, "❌ خاص الأرض تكون فارغة (بلا مشروع أو إعلان قائم) باش تعرضها للكراء."
+                try:
+                    price = int(float(clean_text(price_raw, 12).replace(",", "")))
+                    days = int(clean_text(days_raw, 4))
+                except ValueError:
+                    return False, "❌ الثمن أو عدد الأيام غير صحيح."
+                if price <= 0 or not (1 <= days <= 90):
+                    return False, "❌ الثمن خاصو يكون أكبر من صفر، وعدد الأيام بين 1 و90."
+                plot.update({"status": "listed_rent", "rent_price": price, "rent_days": days})
+                self.store.save()
+                msg = f"✅ تعرضت **{plot_id}** للكراء بـ {fmt(price)} لمدة {days} يوم. غادي تبان فـ'سوق الأراضي'."
+        await self.refresh_directory(interaction.guild)
+        return True, msg
+
+    async def buy_from_owner(self, interaction, plot_id):
+        if not interaction.guild or not self.verified(interaction.user):
+            return False, "❌ خاص الحساب يكون مفعّل."
+        plot_id = clean_text(plot_id, 20).upper()
+        async with self.lock:
+            state = self.state(interaction.guild.id)
+            plot = state["plots"].get(plot_id)
+            if not plot or plot["status"] != "listed_sale":
+                return False, "❌ هاد الأرض ماشي معروضة للبيع دابا."
+            seller_id = int(plot["owner_id"])
+            if seller_id == interaction.user.id:
+                return False, "❌ ماتقدرش تشري الأرض ديالك."
+            if any(int(p.get("owner_id") or 0) == interaction.user.id for p in state["plots"].values()):
+                return False, "❌ عندك أرض ديجا؛ خاصك تبيعها قبل ما تشري وحدة أخرى."
+            price = int(plot["sale_price"])
+            if not self.economy.spend(interaction.guild.id, interaction.user.id, price):
+                return False, f"❌ خاصك {fmt(price)} فالـWallet."
+            self.economy.add_coins(interaction.guild.id, seller_id, price, source="land_sale", respect_cap=False, count_as_earned=False)
+            plot.update({"status": "owned", "owner_id": interaction.user.id, "bought_at": iso_now()})
+            plot.pop("sale_price", None)
+            plot.pop("renter_id", None)
+            plot.pop("rent_until", None)
+            self.store.save()
+        await self.notify(interaction.guild, seller_id, f"💰 تباعت الأرض **{plot_id}** بـ {fmt(price)} ودخلو الفلوس للـWallet ديالك.")
+        await self.notify(interaction.guild, interaction.user.id, f"🏞️ مبروك! شريتي **{plot_id}** من صاحبها الأصلي. دابا قدم طلب فتح المشروع.")
+        await self.refresh_directory(interaction.guild)
+        return True, f"✅ شريتي **{plot_id}** بـ {fmt(price)}."
+
+    async def rent_from_owner(self, interaction, plot_id):
+        if not interaction.guild or not self.verified(interaction.user):
+            return False, "❌ خاص الحساب يكون مفعّل."
+        plot_id = clean_text(plot_id, 20).upper()
+        async with self.lock:
+            state = self.state(interaction.guild.id)
+            plot = state["plots"].get(plot_id)
+            if not plot or plot["status"] != "listed_rent":
+                return False, "❌ هاد الأرض ماشي معروضة للكراء دابا."
+            owner_id = int(plot["owner_id"])
+            if owner_id == interaction.user.id:
+                return False, "❌ ماتقدرش تكري الأرض ديالك."
+            price, days = int(plot["rent_price"]), int(plot["rent_days"])
+            if not self.economy.spend(interaction.guild.id, interaction.user.id, price):
+                return False, f"❌ خاصك {fmt(price)} فالـWallet."
+            self.economy.add_coins(interaction.guild.id, owner_id, price, source="land_rent", respect_cap=False, count_as_earned=False)
+            plot.update({
+                "status": "owned", "renter_id": interaction.user.id,
+                "rent_until": (utcnow() + timedelta(days=days)).isoformat(),
+            })
+            plot.pop("rent_price", None)
+            plot.pop("rent_days", None)
+            self.store.save()
+        await self.notify(interaction.guild, owner_id, f"🔑 تكرات الأرض **{plot_id}** بـ {fmt(price)} لمدة {days} يوم.")
+        await self.notify(interaction.guild, interaction.user.id, f"🔑 مبروك! كريتي **{plot_id}** لمدة {days} يوم. دابا قدم طلب فتح المشروع.")
+        await self.refresh_directory(interaction.guild)
+        return True, f"✅ كريتي **{plot_id}** بـ {fmt(price)} لمدة {days} يوم."
+
     async def buy_land(self, interaction, plot_id):
         if not interaction.guild or not self.verified(interaction.user):
             return False, "❌ خاص الحساب يكون مفعّل."
@@ -627,13 +866,20 @@ class BusinessHub(commands.Cog):
         async with self.lock:
             state = self.state(interaction.guild.id)
             plot = state["plots"].get(plot_id)
-            if not plot or int(plot.get("owner_id") or 0) != interaction.user.id:
-                return False, "❌ هاد الأرض ماشي ديالك."
+            is_owner = bool(plot) and int(plot.get("owner_id") or 0) == interaction.user.id
+            rent_until = parse_dt(plot.get("rent_until")) if plot else None
+            is_active_renter = (
+                bool(plot) and int(plot.get("renter_id") or 0) == interaction.user.id
+                and rent_until is not None and utcnow() < rent_until
+            )
+            if not plot or not (is_owner or is_active_renter):
+                return False, "❌ هاد الأرض ماشي ديالك (لا كمالك ولا ككاري نشط)."
             if plot["status"] != "owned":
-                return False, "❌ كاين طلب/مشروع مربوط بهاد الأرض ديجا."
+                return False, "❌ كاين طلب/مشروع مربوط بهاد الأرض ديجا، أو هي معروضة للبيع/الكراء دابا."
             bid = self.next_id(interaction.guild.id, "business", "BIZ")
             state["businesses"][bid] = {
                 "id": bid, "plot_id": plot_id, "owner_id": interaction.user.id,
+                "land_owner_id": int(plot.get("owner_id") or 0),
                 "name": name, "type": business_type, "description": clean_text(description, 500),
                 "schedule": clean_text(schedule, 80), "status": "permit_pending", "created_at": iso_now(),
                 "services": {}, "jobs": {}, "channel_id": None,
@@ -1010,6 +1256,16 @@ class BusinessHub(commands.Cog):
     async def business_tick(self):
         for guild in self.bot.guilds:
             now = utcnow()
+            state = self.state(guild.id)
+            for pid, plot in list(state["plots"].items()):
+                rent_until = parse_dt(plot.get("rent_until"))
+                if rent_until and now >= rent_until and plot.get("renter_id"):
+                    renter_id = int(plot["renter_id"])
+                    async with self.lock:
+                        plot.pop("renter_id", None)
+                        plot.pop("rent_until", None)
+                        self.store.save()
+                    await self.notify(guild, renter_id, f"⏳ سالات مدة الكراء ديال **{pid}**. ماعادش تقدر تفتح ليها مشروع جديد إلا كريتيها مرة أخرى.")
             for apt in list(self.appointments(guild.id).values()):
                 status = apt["status"]
                 start, end = parse_dt(apt.get("start_at")), parse_dt(apt.get("end_at"))
