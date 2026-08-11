@@ -207,37 +207,37 @@ class BusinessDirectoryView(discord.ui.View):
     def __init__(self, hub):
         super().__init__(timeout=None)
         self.hub = hub
-        self.add_item(_BusinessLanguageSelect(hub, row=1))
+        self.add_item(_BusinessLanguageSelect(hub, row=2))
 
-    @discord.ui.button(label="شراء أرض", emoji="🏞️", style=discord.ButtonStyle.success, custom_id="ggmw9:business:land")
+    @discord.ui.button(label="شراء أرض", emoji="🏞️", style=discord.ButtonStyle.success, custom_id="ggmw9:business:land", row=0)
     async def land(self, interaction, button):
         if not self.hub.verified(interaction.user):
             return await private_reply(interaction, "❌ خاصك تفعل الحساب ديالك أولاً.")
         await interaction.response.send_modal(BuyLandModal(self.hub))
 
-    @discord.ui.button(label="فتح مشروع", emoji="🏢", style=discord.ButtonStyle.primary, custom_id="ggmw9:business:apply")
+    @discord.ui.button(label="فتح مشروع", emoji="🏢", style=discord.ButtonStyle.primary, custom_id="ggmw9:business:apply", row=0)
     async def apply(self, interaction, button):
         if not self.hub.verified(interaction.user):
             return await private_reply(interaction, "❌ خاصك تفعل الحساب ديالك أولاً.")
         await interaction.response.send_modal(BusinessApplicationModal(self.hub))
 
-    @discord.ui.button(label="حجز خدمة", emoji="📅", style=discord.ButtonStyle.primary, custom_id="ggmw9:business:book")
+    @discord.ui.button(label="حجز خدمة", emoji="📅", style=discord.ButtonStyle.primary, custom_id="ggmw9:business:book", row=0)
     async def book(self, interaction, button):
         if not self.hub.verified(interaction.user):
             return await private_reply(interaction, "❌ خاصك تفعل الحساب ديالك أولاً.")
         await interaction.response.send_modal(BookAppointmentModal(self.hub))
 
-    @discord.ui.button(label="إضافة خدمة", emoji="➕", style=discord.ButtonStyle.secondary, custom_id="ggmw9:business:add_service")
+    @discord.ui.button(label="إضافة خدمة", emoji="➕", style=discord.ButtonStyle.secondary, custom_id="ggmw9:business:add_service", row=1)
     async def add_service(self, interaction, button):
         if not self.hub.verified(interaction.user):
             return await private_reply(interaction, "❌ خاصك تفعل الحساب ديالك أولاً.")
         await interaction.response.send_modal(AddServiceModal(self.hub))
 
-    @discord.ui.button(label="المشاريع والخدمات", emoji="📋", style=discord.ButtonStyle.secondary, custom_id="ggmw9:business:list")
+    @discord.ui.button(label="المشاريع والخدمات", emoji="📋", style=discord.ButtonStyle.secondary, custom_id="ggmw9:business:list", row=1)
     async def listing(self, interaction, button):
         await private_reply(interaction, "", embed=self.hub.listing_embed(interaction.guild))
 
-    @discord.ui.button(label="أشغال البناء", emoji="🏗️", style=discord.ButtonStyle.secondary, custom_id="ggmw9:business:jobs")
+    @discord.ui.button(label="أشغال البناء", emoji="🏗️", style=discord.ButtonStyle.secondary, custom_id="ggmw9:business:jobs", row=1)
     async def jobs(self, interaction, button):
         await private_reply(interaction, "", embed=self.hub.jobs_embed(interaction.guild))
 
