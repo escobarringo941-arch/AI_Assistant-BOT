@@ -982,8 +982,8 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         channel = guild.get_channel(MARRIAGE_CENTER_CHANNEL_ID)
         if not channel:
             return None
-        await channel.send(embed=_build_marriage_panel_embed(), view=MarriagePanelView())
-        await channel.send(embed=_build_bestfriend_panel_embed(), view=BestfriendPanelView())
+        await channel.send(embed=_relationship_panel_embed("marriages", "darija"), view=MarriagePanelView())
+        await channel.send(embed=_relationship_panel_embed("bestfriends", "darija"), view=BestfriendPanelView())
         return channel
 
 
