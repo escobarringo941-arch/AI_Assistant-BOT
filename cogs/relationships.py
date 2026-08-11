@@ -608,7 +608,10 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         """Bridge خفيف: كيلبس Interaction بحال ctx (author/guild/send) باش
         الدوال ديال فوق (_propose_relationship, _end_relationship_cmd,
         _relationship_info_cmd, _relationship_leaderboard_cmd,
-        unbestfriend_interactive) يتستعملو هنا بلا ما نبدلو فيهم حتى حرف."""
+        unbestfriend_interactive) يتستعملو هنا بلا ما نبدلو فيهم حتى حرف.
+        النتائج ديال هاد الدوال (الطلب/الطلاق/المعلومات) كتبقى بالدارجة —
+        نفس اللغة لي خدامة بيها /marry /divorce ديجا، باش ما نبدلوش شي حاجة
+        مشتركة معاهم. غير البانل نفسو (العنوان/الوصف/الأزرار) هو لي مترجم."""
         def __init__(self, interaction: discord.Interaction):
             self.interaction = interaction
             self.author = interaction.user
@@ -621,16 +624,127 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                 await self.interaction.followup.send(content=content, embed=embed, view=view, ephemeral=True)
 
 
+    def _relationship_panel_t(kind: str, lang: str, key: str, **fmt) -> str:
+        data = {
+            "marriages": {
+                "darija": {
+                    "title": "💍 قسم الزواج — العدول",
+                    "desc": (
+                        "مرحبا بيك فـ القسم الرسمي ديال الزواج فـ **" + SERVER_NAME + "**!\n\n"
+                        "💍 **اطلب زواج** — كتختار العضو، كيتبعث ليه طلب فـ DM (5 دقايق باش يرد)\n"
+                        "💔 **طلاق** — كتسال من الشريك ديالك الحالي\n"
+                        "ℹ️ **الزواج ديالي** — تشوف مع شكون متزوج/ة دابا\n"
+                        "🏆 **الترتيب** — أقدم الأزواج فالسيرفر\n\n"
+                        "*ملاحظة: عضو وحد ما يقدرش يكون متزوج بجوج فنفس الوقت.*"
+                    ),
+                    "btn_propose": "اطلب زواج", "btn_end": "طلاق",
+                    "btn_info": "الزواج ديالي", "btn_leaderboard": "الترتيب",
+                    "select_prompt": "💍 اختار العضو لي بغيتي تطلب منه الزواج:",
+                    "saved": "✅ اللغة ديالك ولات **الدارجة**.",
+                },
+                "en": {
+                    "title": "💍 Marriage Center — The Notaries",
+                    "desc": (
+                        f"Welcome to the official Marriage section of **{SERVER_NAME}**!\n\n"
+                        "💍 **Propose** — pick a member, they get a DM request (5 minutes to respond)\n"
+                        "💔 **Divorce** — end your current marriage\n"
+                        "ℹ️ **My Marriage** — see who you're married to right now\n"
+                        "🏆 **Leaderboard** — longest marriages on the server\n\n"
+                        "*Note: a member can only be married to one person at a time.*"
+                    ),
+                    "btn_propose": "Propose", "btn_end": "Divorce",
+                    "btn_info": "My Marriage", "btn_leaderboard": "Leaderboard",
+                    "select_prompt": "💍 Pick the member you want to propose to:",
+                    "saved": "✅ Your language is now **English**.",
+                },
+                "fr": {
+                    "title": "💍 Espace Mariage — Les Notaires",
+                    "desc": (
+                        f"Bienvenue dans l'espace officiel du Mariage sur **{SERVER_NAME}** !\n\n"
+                        "💍 **Demander en mariage** — choisis un membre, il reçoit une demande en DM (5 min pour répondre)\n"
+                        "💔 **Divorce** — mets fin à ton mariage actuel\n"
+                        "ℹ️ **Mon mariage** — vois avec qui tu es marié(e) actuellement\n"
+                        "🏆 **Classement** — les mariages les plus anciens du serveur\n\n"
+                        "*Remarque : un membre ne peut être marié qu'à une seule personne à la fois.*"
+                    ),
+                    "btn_propose": "Demander en mariage", "btn_end": "Divorce",
+                    "btn_info": "Mon mariage", "btn_leaderboard": "Classement",
+                    "select_prompt": "💍 Choisis le membre à qui tu veux faire ta demande :",
+                    "saved": "✅ Ta langue est maintenant **Français**.",
+                },
+            },
+            "bestfriends": {
+                "darija": {
+                    "title": "🤝 قسم الصداقة — Best Friends",
+                    "desc": (
+                        "🤝 **اطلب صداقة** — كتختار العضو، كيتبعث ليه طلب فـ DM (5 دقايق باش يرد)\n"
+                        "💔 **فك صداقة** — كتوري ليك لائحة، كتختار شكون بغيتي تحيد\n"
+                        "ℹ️ **الأصدقاء ديالي** — لائحة الـ Best Friends ديالك دابا\n"
+                        "🏆 **الترتيب** — أقدم الصداقات فالسيرفر\n\n"
+                        "*ملاحظة: تقدر يكون عندك بزاف ديال Best Friends فنفس الوقت.*"
+                    ),
+                    "btn_propose": "اطلب صداقة", "btn_end": "فك صداقة",
+                    "btn_info": "الأصدقاء ديالي", "btn_leaderboard": "الترتيب",
+                    "select_prompt": "🤝 اختار العضو لي بغيتي تطلب منه الصداقة:",
+                    "saved": "✅ اللغة ديالك ولات **الدارجة**.",
+                },
+                "en": {
+                    "title": "🤝 Friendship Center — Best Friends",
+                    "desc": (
+                        "🤝 **Request** — pick a member, they get a DM request (5 minutes to respond)\n"
+                        "💔 **Remove** — pick which best friend to remove\n"
+                        "ℹ️ **My Best Friends** — your current list\n"
+                        "🏆 **Leaderboard** — longest friendships on the server\n\n"
+                        "*Note: you can have several Best Friends at the same time.*"
+                    ),
+                    "btn_propose": "Request", "btn_end": "Remove",
+                    "btn_info": "My Best Friends", "btn_leaderboard": "Leaderboard",
+                    "select_prompt": "🤝 Pick the member you want to request as a best friend:",
+                    "saved": "✅ Your language is now **English**.",
+                },
+                "fr": {
+                    "title": "🤝 Espace Amitié — Best Friends",
+                    "desc": (
+                        "🤝 **Demander** — choisis un membre, il reçoit une demande en DM (5 min pour répondre)\n"
+                        "💔 **Retirer** — choisis quel(le) meilleur(e) ami(e) retirer\n"
+                        "ℹ️ **Mes Best Friends** — ta liste actuelle\n"
+                        "🏆 **Classement** — les amitiés les plus anciennes du serveur\n\n"
+                        "*Remarque : tu peux avoir plusieurs Best Friends en même temps.*"
+                    ),
+                    "btn_propose": "Demander", "btn_end": "Retirer",
+                    "btn_info": "Mes Best Friends", "btn_leaderboard": "Classement",
+                    "select_prompt": "🤝 Choisis le membre à qui tu veux demander d'être ton/ta Best Friend :",
+                    "saved": "✅ Ta langue est maintenant **Français**.",
+                },
+            },
+        }
+        lang = lang if lang in data[kind] else "darija"
+        value = data[kind][lang].get(key, data[kind]["darija"].get(key, key))
+        return value.format(**fmt) if fmt else value
+
+
+    def _relationship_panel_embed(kind: str, lang: str = "darija") -> discord.Embed:
+        lang = lang if lang in {"darija", "en", "fr"} else "darija"
+        color = discord.Color.from_rgb(255, 93, 162) if kind == "marriages" else discord.Color.from_rgb(85, 193, 255)
+        embed = discord.Embed(
+            title=_relationship_panel_t(kind, lang, "title"),
+            description=_relationship_panel_t(kind, lang, "desc"),
+            color=color,
+        )
+        embed.set_footer(text=SERVER_NAME)
+        return embed
+
+
     class _RelationshipTargetSelect(discord.ui.UserSelect):
         """قائمة اختيار العضو (كاع أعضاء السيرفر) — كتبان ephemeral منين تدوس
         على زر 'اطلب زواج/صداقة'."""
-        def __init__(self, kind: str):
+        def __init__(self, kind: str, lang: str = "darija"):
             self.kind = kind
-            label = RELATIONSHIP_LABELS[kind]
+            self.lang = lang
             super().__init__(
-                placeholder=f"{label['emoji']} اختار العضو لي بغيتي {label['verb_propose']}...",
+                placeholder=_relationship_panel_t(kind, lang, "select_prompt")[:150],
                 min_values=1, max_values=1,
-                custom_id=f"relationship_panel_target_{kind}",
+                custom_id=f"relationship_panel_target_{kind}_{lang}",
             )
 
         async def callback(self, interaction: discord.Interaction):
@@ -644,54 +758,64 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
 
 
     class _RelationshipTargetView(discord.ui.View):
-        def __init__(self, kind: str):
+        def __init__(self, kind: str, lang: str = "darija"):
             super().__init__(timeout=60)
-            self.add_item(_RelationshipTargetSelect(kind))
+            self.add_item(_RelationshipTargetSelect(kind, lang))
 
 
-    def _build_marriage_panel_embed() -> discord.Embed:
-        embed = discord.Embed(
-            title="💍 قسم الزواج — العدول",
-            description=(
-                "مرحبا بيك فـ القسم الرسمي ديال الزواج فـ **" + SERVER_NAME + "**!\n\n"
-                "💍 **اطلب زواج** — كتختار العضو، كيتبعث ليه طلب فـ DM (5 دقايق باش يرد)\n"
-                "💔 **طلاق** — كتسال من الشريك ديالك الحالي\n"
-                "ℹ️ **الزواج ديالي** — تشوف مع شكون متزوج/ة دابا\n"
-                "🏆 **الترتيب** — أقدم الأزواج فالسيرفر\n\n"
-                "*ملاحظة: عضو وحد ما يقدرش يكون متزوج بجوج فنفس الوقت.*"
-            ),
-            color=discord.Color.from_rgb(255, 93, 162),
-        )
-        embed.set_footer(text=SERVER_NAME)
-        return embed
+    class _RelationshipLanguageSelect(discord.ui.Select):
+        """مشتركة بين البانل العمومي (marriages/bestfriends) والنسخة الخاصة —
+        نفس المنطق ديال Blacklist/Applications: بانل عمومي بالدارجة، والترجمة
+        كتبان غير فنسخة خاصة (ephemeral) جديدة."""
+        def __init__(self, kind: str, lang: str = "darija", *, private_user_id: int = None, row: int = 2):
+            self.kind = kind
+            self.private_user_id = private_user_id
+            lang = lang if lang in {"darija", "en", "fr"} else "darija"
+            super().__init__(
+                placeholder="🌐 اللغة / Language / Langue",
+                options=[
+                    discord.SelectOption(label="Darija", value="darija", emoji="🇲🇦", default=lang == "darija"),
+                    discord.SelectOption(label="English", value="en", emoji="🇬🇧", default=lang == "en"),
+                    discord.SelectOption(label="Français", value="fr", emoji="🇫🇷", default=lang == "fr"),
+                ],
+                min_values=1, max_values=1,
+                custom_id=None if private_user_id else f"ggmw9:relationship:{kind}:language",
+                row=row,
+            )
 
-
-    def _build_bestfriend_panel_embed() -> discord.Embed:
-        embed = discord.Embed(
-            title="🤝 قسم الصداقة — Best Friends",
-            description=(
-                "🤝 **اطلب صداقة** — كتختار العضو، كيتبعث ليه طلب فـ DM (5 دقايق باش يرد)\n"
-                "💔 **فك صداقة** — كتوري ليك لائحة، كتختار شكون بغيتي تحيد\n"
-                "ℹ️ **الأصدقاء ديالي** — لائحة الـ Best Friends ديالك دابا\n"
-                "🏆 **الترتيب** — أقدم الصداقات فالسيرفر\n\n"
-                "*ملاحظة: تقدر يكون عندك بزاف ديال Best Friends فنفس الوقت.*"
-            ),
-            color=discord.Color.from_rgb(85, 193, 255),
-        )
-        embed.set_footer(text=SERVER_NAME)
-        return embed
+        async def callback(self, interaction: discord.Interaction):
+            if self.private_user_id and interaction.user.id != self.private_user_id:
+                await interaction.response.send_message("❌ هاد الترجمة ماشي ديالك.", ephemeral=True)
+                return
+            lang = set_panel_language(interaction.guild.id if interaction.guild else 0, interaction.user.id, self.values[0])
+            view_cls = MarriagePrivateView if self.kind == "marriages" else BestfriendPrivateView
+            if self.private_user_id:
+                await interaction.response.edit_message(
+                    content=_relationship_panel_t(self.kind, lang, "saved"),
+                    embed=_relationship_panel_embed(self.kind, lang),
+                    view=view_cls(interaction.user.id, lang),
+                )
+            else:
+                # Public Darija message ما كيتبدلش — الترجمة كتبان فـ نسخة خاصة جديدة.
+                await interaction.response.send_message(
+                    embed=_relationship_panel_embed(self.kind, lang),
+                    view=view_cls(interaction.user.id, lang),
+                    ephemeral=True,
+                )
 
 
     class MarriagePanelView(discord.ui.View):
+        """البانل العمومي — الدارجة بشكل ثابت. اختيار لغة كيحل نسخة خاصة مترجمة."""
         def __init__(self):
             super().__init__(timeout=None)
+            self.add_item(_RelationshipLanguageSelect("marriages", "darija"))
 
         @discord.ui.button(label="اطلب زواج", emoji="💍", style=discord.ButtonStyle.success,
                             custom_id="relationship_panel_marry_propose", row=0)
         async def propose_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
             await interaction.response.send_message(
-                "💍 اختار العضو لي بغيتي تطلب منه الزواج:",
-                view=_RelationshipTargetView("marriages"), ephemeral=True
+                _relationship_panel_t("marriages", "darija", "select_prompt"),
+                view=_RelationshipTargetView("marriages", "darija"), ephemeral=True
             )
 
         @discord.ui.button(label="طلاق", emoji="💔", style=discord.ButtonStyle.danger,
@@ -710,16 +834,74 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             await _relationship_leaderboard_cmd(_RelationshipPanelCtx(interaction), "marriages")
 
 
+    class MarriagePrivateView(discord.ui.View):
+        """نسخة خاصة (ephemeral) مترجمة — نفس الأزرار، لغة مختلفة."""
+        def __init__(self, user_id: int, lang: str = "darija"):
+            super().__init__(timeout=1800)
+            self.user_id = int(user_id)
+            self.lang = lang if lang in {"darija", "en", "fr"} else "darija"
+            t = lambda key: _relationship_panel_t("marriages", self.lang, key)
+
+            propose_btn = discord.ui.Button(label=t("btn_propose"), emoji="💍", style=discord.ButtonStyle.success, row=0)
+            propose_btn.callback = self._propose
+            self.add_item(propose_btn)
+
+            divorce_btn = discord.ui.Button(label=t("btn_end"), emoji="💔", style=discord.ButtonStyle.danger, row=0)
+            divorce_btn.callback = self._divorce
+            self.add_item(divorce_btn)
+
+            info_btn = discord.ui.Button(label=t("btn_info"), emoji="ℹ️", style=discord.ButtonStyle.secondary, row=1)
+            info_btn.callback = self._info
+            self.add_item(info_btn)
+
+            leaderboard_btn = discord.ui.Button(label=t("btn_leaderboard"), emoji="🏆", style=discord.ButtonStyle.secondary, row=1)
+            leaderboard_btn.callback = self._leaderboard
+            self.add_item(leaderboard_btn)
+
+            self.add_item(_RelationshipLanguageSelect("marriages", self.lang, private_user_id=self.user_id, row=2))
+
+        async def _guard(self, interaction: discord.Interaction) -> bool:
+            if interaction.user.id != self.user_id:
+                await interaction.response.send_message("❌ هاد الجلسة ماشي ديالك.", ephemeral=True)
+                return False
+            return True
+
+        async def _propose(self, interaction: discord.Interaction):
+            if not await self._guard(interaction):
+                return
+            await interaction.response.send_message(
+                _relationship_panel_t("marriages", self.lang, "select_prompt"),
+                view=_RelationshipTargetView("marriages", self.lang), ephemeral=True
+            )
+
+        async def _divorce(self, interaction: discord.Interaction):
+            if not await self._guard(interaction):
+                return
+            await _end_relationship_cmd(_RelationshipPanelCtx(interaction), "marriages")
+
+        async def _info(self, interaction: discord.Interaction):
+            if not await self._guard(interaction):
+                return
+            await _relationship_info_cmd(_RelationshipPanelCtx(interaction), "marriages", None)
+
+        async def _leaderboard(self, interaction: discord.Interaction):
+            if not await self._guard(interaction):
+                return
+            await _relationship_leaderboard_cmd(_RelationshipPanelCtx(interaction), "marriages")
+
+
     class BestfriendPanelView(discord.ui.View):
+        """البانل العمومي — الدارجة بشكل ثابت. اختيار لغة كيحل نسخة خاصة مترجمة."""
         def __init__(self):
             super().__init__(timeout=None)
+            self.add_item(_RelationshipLanguageSelect("bestfriends", "darija"))
 
         @discord.ui.button(label="اطلب صداقة", emoji="🤝", style=discord.ButtonStyle.success,
                             custom_id="relationship_panel_bf_propose", row=0)
         async def propose_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
             await interaction.response.send_message(
-                "🤝 اختار العضو لي بغيتي تطلب منه الصداقة:",
-                view=_RelationshipTargetView("bestfriends"), ephemeral=True
+                _relationship_panel_t("bestfriends", "darija", "select_prompt"),
+                view=_RelationshipTargetView("bestfriends", "darija"), ephemeral=True
             )
 
         @discord.ui.button(label="فك صداقة", emoji="💔", style=discord.ButtonStyle.danger,
@@ -738,6 +920,62 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             await _relationship_leaderboard_cmd(_RelationshipPanelCtx(interaction), "bestfriends")
 
 
+    class BestfriendPrivateView(discord.ui.View):
+        """نسخة خاصة (ephemeral) مترجمة — نفس الأزرار، لغة مختلفة."""
+        def __init__(self, user_id: int, lang: str = "darija"):
+            super().__init__(timeout=1800)
+            self.user_id = int(user_id)
+            self.lang = lang if lang in {"darija", "en", "fr"} else "darija"
+            t = lambda key: _relationship_panel_t("bestfriends", self.lang, key)
+
+            propose_btn = discord.ui.Button(label=t("btn_propose"), emoji="🤝", style=discord.ButtonStyle.success, row=0)
+            propose_btn.callback = self._propose
+            self.add_item(propose_btn)
+
+            remove_btn = discord.ui.Button(label=t("btn_end"), emoji="💔", style=discord.ButtonStyle.danger, row=0)
+            remove_btn.callback = self._remove
+            self.add_item(remove_btn)
+
+            info_btn = discord.ui.Button(label=t("btn_info"), emoji="ℹ️", style=discord.ButtonStyle.secondary, row=1)
+            info_btn.callback = self._info
+            self.add_item(info_btn)
+
+            leaderboard_btn = discord.ui.Button(label=t("btn_leaderboard"), emoji="🏆", style=discord.ButtonStyle.secondary, row=1)
+            leaderboard_btn.callback = self._leaderboard
+            self.add_item(leaderboard_btn)
+
+            self.add_item(_RelationshipLanguageSelect("bestfriends", self.lang, private_user_id=self.user_id, row=2))
+
+        async def _guard(self, interaction: discord.Interaction) -> bool:
+            if interaction.user.id != self.user_id:
+                await interaction.response.send_message("❌ هاد الجلسة ماشي ديالك.", ephemeral=True)
+                return False
+            return True
+
+        async def _propose(self, interaction: discord.Interaction):
+            if not await self._guard(interaction):
+                return
+            await interaction.response.send_message(
+                _relationship_panel_t("bestfriends", self.lang, "select_prompt"),
+                view=_RelationshipTargetView("bestfriends", self.lang), ephemeral=True
+            )
+
+        async def _remove(self, interaction: discord.Interaction):
+            if not await self._guard(interaction):
+                return
+            await unbestfriend_interactive(_RelationshipPanelCtx(interaction))
+
+        async def _info(self, interaction: discord.Interaction):
+            if not await self._guard(interaction):
+                return
+            await _relationship_info_cmd(_RelationshipPanelCtx(interaction), "bestfriends", None)
+
+        async def _leaderboard(self, interaction: discord.Interaction):
+            if not await self._guard(interaction):
+                return
+            await _relationship_leaderboard_cmd(_RelationshipPanelCtx(interaction), "bestfriends")
+
+
     async def setup_marriage_center(guild: discord.Guild):
         if not MARRIAGE_CENTER_CHANNEL_ID:
             return None
@@ -749,22 +987,24 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         return channel
 
 
-    # Hidden fallback فقط؛ ما بقاش Slash Command — سميها زوج بانلات معزولين
-    # (الزواج بوحدو، الصداقة بوحدها) فنفس الشانيل "العدول".
-    @bot.command(name="setupmarriagecenter", hidden=True)
+    # Slash command (/) — سميها زوج بانلات معزولين (الزواج بوحدو، الصداقة
+    # بوحدها) فنفس الشانيل "العدول" — راه محمي بـ owner_only، ماكيبانش لحتى
+    # واحد فـ Discord (Slash commands ماعندهمش "hidden"، بصح ماكيقدر يخدمها
+    # غير الـ Owner).
+    @bot.hybrid_command(name="setupmarriagecenter", description="(Owner) صاوب بانل الزواج والصداقة فـ channel العدول")
     @owner_only()
     async def setup_marriage_center_cmd(ctx):
         if not MARRIAGE_CENTER_CHANNEL_ID:
             await ctx.send(
                 "⚠️ خاصك تحط الـ ID ديال شانيل \"العدول\" فـ `MARRIAGE_CENTER_CHANNEL_ID` "
-                "جوة `cogs/bootstrap.py` قبل ما تخدم هاد الأمر.", delete_after=12
+                "جوة `cogs/bootstrap.py` قبل ما تخدم هاد الأمر.", ephemeral=True
             )
             return
         channel = await setup_marriage_center(ctx.guild)
         if not channel:
-            await ctx.send("❌ ما لقيتش هاد الشانيل. تأكد من الـ ID فـ bootstrap.py.", delete_after=10)
+            await ctx.send("❌ ما لقيتش هاد الشانيل. تأكد من الـ ID فـ bootstrap.py.", ephemeral=True)
             return
-        await ctx.send(f"✅ بانل الزواج وبانل الصداقة تصاوبو، معزولين، فـ {channel.mention}.", delete_after=10)
+        await ctx.send(f"✅ بانل الزواج وبانل الصداقة تصاوبو، معزولين، فـ {channel.mention}.", ephemeral=True)
 
     
     
