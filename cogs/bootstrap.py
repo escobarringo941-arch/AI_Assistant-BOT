@@ -257,6 +257,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     RELATIONSHIP_PROPOSAL_TIMEOUT_SECONDS = 300   # ← شحال ديال الوقت (بالثواني) عندو الشخص التاني باش يرد على الطلب
     RELATIONSHIP_DM_PROPOSALS = True    # ← الطلب يتبعث فـ DM للشخص المطلوب (True)، ولا فنفس الـ channel ديال السيرفر (False)
     RELATIONSHIP_ANNOUNCE_CHANNEL_ID = 1524957892925456545   # ← الـ channel (# general) فين كيتبعث إعلان عام ملي شي حد يقبل الزواج/الصداقة، ولا يطلق/يقطع الصداقة — خليها 0 إلا مابغيتيش
+    MARRIAGE_CENTER_CHANNEL_ID = 0   # ← حط هنا ID ديال channel "العدول" (كليك يمين ع الشانيل → Copy Channel ID) — فيها غادي يتصاوبو البانلات ديال الزواج/الصداقة
     RELATIONSHIP_PERSONAL_ROLE_ENABLED = True   # ← كل واحد فالعلاقة ياخد رول شخصي بسمية الشريك ديالو (بحال "💍 Aya")
     MARRIAGE_PERSONAL_ROLE_COLOR = 0xd41b1b     # ← لون الرولات الشخصية ديال الزواج (روز)
     BESTFRIEND_PERSONAL_ROLE_COLOR = 0xffd119   # ← لون الرولات الشخصية ديال الصداقة (أزرق فاتح)

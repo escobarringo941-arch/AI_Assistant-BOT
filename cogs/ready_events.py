@@ -88,6 +88,8 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             bot.add_view(SuggestionsPanelView().add_language_selector())  # Public Suggestions panel
             bot.add_view(RoomMuteToggleView())     # باش زر كتم/فك كتم الروم يبقى خدام حتى بعد ريستارت البوت
             bot.add_view(TempVoiceControlView())    # Panel: ACL/Kick/Mutes + Music helper
+            bot.add_view(MarriagePanelView())       # قسم "العدول" — بانل الزواج
+            bot.add_view(BestfriendPanelView())     # قسم "العدول" — بانل الصداقة (Best Friends)
             bot._ggmw9_ready_views_registered = True
     
         for guild in bot.guilds:

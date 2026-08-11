@@ -595,6 +595,177 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     async def bestfriends_cmd(ctx):
         """أطول 10 صداقات فالسيرفر (Leaderboard)"""
         await _relationship_leaderboard_cmd(ctx, "bestfriends")
+
+
+    # ═══════════════════════════════════════════════════════
+    # ║   قسم "العدول" — بانلات دائمة (زر بدل /command) للزواج    ║
+    # ║   والصداقة، معزولين كل وحد فبانل بوحدو، كيستافدو من      ║
+    # ║   نفس الدوال ديال /marry /divorce /bestfriend فوق —      ║
+    # ║   حتى منطق ما تبدل، غير واجهة زر بدل كتابة يدوية.        ║
+    # ═══════════════════════════════════════════════════════
+
+    class _RelationshipPanelCtx:
+        """Bridge خفيف: كيلبس Interaction بحال ctx (author/guild/send) باش
+        الدوال ديال فوق (_propose_relationship, _end_relationship_cmd,
+        _relationship_info_cmd, _relationship_leaderboard_cmd,
+        unbestfriend_interactive) يتستعملو هنا بلا ما نبدلو فيهم حتى حرف."""
+        def __init__(self, interaction: discord.Interaction):
+            self.interaction = interaction
+            self.author = interaction.user
+            self.guild = interaction.guild
+
+        async def send(self, content=None, *, embed=None, view=None, ephemeral=True, delete_after=None, **_ignored):
+            if not self.interaction.response.is_done():
+                await self.interaction.response.send_message(content=content, embed=embed, view=view, ephemeral=True)
+            else:
+                await self.interaction.followup.send(content=content, embed=embed, view=view, ephemeral=True)
+
+
+    class _RelationshipTargetSelect(discord.ui.UserSelect):
+        """قائمة اختيار العضو (كاع أعضاء السيرفر) — كتبان ephemeral منين تدوس
+        على زر 'اطلب زواج/صداقة'."""
+        def __init__(self, kind: str):
+            self.kind = kind
+            label = RELATIONSHIP_LABELS[kind]
+            super().__init__(
+                placeholder=f"{label['emoji']} اختار العضو لي بغيتي {label['verb_propose']}...",
+                min_values=1, max_values=1,
+                custom_id=f"relationship_panel_target_{kind}",
+            )
+
+        async def callback(self, interaction: discord.Interaction):
+            raw = self.values[0]
+            target = raw if isinstance(raw, discord.Member) else (interaction.guild.get_member(raw.id) if interaction.guild else None)
+            if not target:
+                await interaction.response.send_message("❌ ما لقيتش هاد العضو فالسيرفر (يمكن خرج منو).", ephemeral=True)
+                return
+            pctx = _RelationshipPanelCtx(interaction)
+            await _propose_relationship(pctx, self.kind, target)
+
+
+    class _RelationshipTargetView(discord.ui.View):
+        def __init__(self, kind: str):
+            super().__init__(timeout=60)
+            self.add_item(_RelationshipTargetSelect(kind))
+
+
+    def _build_marriage_panel_embed() -> discord.Embed:
+        embed = discord.Embed(
+            title="💍 قسم الزواج — العدول",
+            description=(
+                "مرحبا بيك فـ القسم الرسمي ديال الزواج فـ **" + SERVER_NAME + "**!\n\n"
+                "💍 **اطلب زواج** — كتختار العضو، كيتبعث ليه طلب فـ DM (5 دقايق باش يرد)\n"
+                "💔 **طلاق** — كتسال من الشريك ديالك الحالي\n"
+                "ℹ️ **الزواج ديالي** — تشوف مع شكون متزوج/ة دابا\n"
+                "🏆 **الترتيب** — أقدم الأزواج فالسيرفر\n\n"
+                "*ملاحظة: عضو وحد ما يقدرش يكون متزوج بجوج فنفس الوقت.*"
+            ),
+            color=discord.Color.from_rgb(255, 93, 162),
+        )
+        embed.set_footer(text=SERVER_NAME)
+        return embed
+
+
+    def _build_bestfriend_panel_embed() -> discord.Embed:
+        embed = discord.Embed(
+            title="🤝 قسم الصداقة — Best Friends",
+            description=(
+                "🤝 **اطلب صداقة** — كتختار العضو، كيتبعث ليه طلب فـ DM (5 دقايق باش يرد)\n"
+                "💔 **فك صداقة** — كتوري ليك لائحة، كتختار شكون بغيتي تحيد\n"
+                "ℹ️ **الأصدقاء ديالي** — لائحة الـ Best Friends ديالك دابا\n"
+                "🏆 **الترتيب** — أقدم الصداقات فالسيرفر\n\n"
+                "*ملاحظة: تقدر يكون عندك بزاف ديال Best Friends فنفس الوقت.*"
+            ),
+            color=discord.Color.from_rgb(85, 193, 255),
+        )
+        embed.set_footer(text=SERVER_NAME)
+        return embed
+
+
+    class MarriagePanelView(discord.ui.View):
+        def __init__(self):
+            super().__init__(timeout=None)
+
+        @discord.ui.button(label="اطلب زواج", emoji="💍", style=discord.ButtonStyle.success,
+                            custom_id="relationship_panel_marry_propose", row=0)
+        async def propose_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+            await interaction.response.send_message(
+                "💍 اختار العضو لي بغيتي تطلب منه الزواج:",
+                view=_RelationshipTargetView("marriages"), ephemeral=True
+            )
+
+        @discord.ui.button(label="طلاق", emoji="💔", style=discord.ButtonStyle.danger,
+                            custom_id="relationship_panel_marry_divorce", row=0)
+        async def divorce_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+            await _end_relationship_cmd(_RelationshipPanelCtx(interaction), "marriages")
+
+        @discord.ui.button(label="الزواج ديالي", emoji="ℹ️", style=discord.ButtonStyle.secondary,
+                            custom_id="relationship_panel_marry_info", row=1)
+        async def info_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+            await _relationship_info_cmd(_RelationshipPanelCtx(interaction), "marriages", None)
+
+        @discord.ui.button(label="الترتيب", emoji="🏆", style=discord.ButtonStyle.secondary,
+                            custom_id="relationship_panel_marry_leaderboard", row=1)
+        async def leaderboard_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+            await _relationship_leaderboard_cmd(_RelationshipPanelCtx(interaction), "marriages")
+
+
+    class BestfriendPanelView(discord.ui.View):
+        def __init__(self):
+            super().__init__(timeout=None)
+
+        @discord.ui.button(label="اطلب صداقة", emoji="🤝", style=discord.ButtonStyle.success,
+                            custom_id="relationship_panel_bf_propose", row=0)
+        async def propose_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+            await interaction.response.send_message(
+                "🤝 اختار العضو لي بغيتي تطلب منه الصداقة:",
+                view=_RelationshipTargetView("bestfriends"), ephemeral=True
+            )
+
+        @discord.ui.button(label="فك صداقة", emoji="💔", style=discord.ButtonStyle.danger,
+                            custom_id="relationship_panel_bf_remove", row=0)
+        async def remove_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+            await unbestfriend_interactive(_RelationshipPanelCtx(interaction))
+
+        @discord.ui.button(label="الأصدقاء ديالي", emoji="ℹ️", style=discord.ButtonStyle.secondary,
+                            custom_id="relationship_panel_bf_info", row=1)
+        async def info_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+            await _relationship_info_cmd(_RelationshipPanelCtx(interaction), "bestfriends", None)
+
+        @discord.ui.button(label="الترتيب", emoji="🏆", style=discord.ButtonStyle.secondary,
+                            custom_id="relationship_panel_bf_leaderboard", row=1)
+        async def leaderboard_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+            await _relationship_leaderboard_cmd(_RelationshipPanelCtx(interaction), "bestfriends")
+
+
+    async def setup_marriage_center(guild: discord.Guild):
+        if not MARRIAGE_CENTER_CHANNEL_ID:
+            return None
+        channel = guild.get_channel(MARRIAGE_CENTER_CHANNEL_ID)
+        if not channel:
+            return None
+        await channel.send(embed=_build_marriage_panel_embed(), view=MarriagePanelView())
+        await channel.send(embed=_build_bestfriend_panel_embed(), view=BestfriendPanelView())
+        return channel
+
+
+    # Hidden fallback فقط؛ ما بقاش Slash Command — سميها زوج بانلات معزولين
+    # (الزواج بوحدو، الصداقة بوحدها) فنفس الشانيل "العدول".
+    @bot.command(name="setupmarriagecenter", hidden=True)
+    @owner_only()
+    async def setup_marriage_center_cmd(ctx):
+        if not MARRIAGE_CENTER_CHANNEL_ID:
+            await ctx.send(
+                "⚠️ خاصك تحط الـ ID ديال شانيل \"العدول\" فـ `MARRIAGE_CENTER_CHANNEL_ID` "
+                "جوة `cogs/bootstrap.py` قبل ما تخدم هاد الأمر.", delete_after=12
+            )
+            return
+        channel = await setup_marriage_center(ctx.guild)
+        if not channel:
+            await ctx.send("❌ ما لقيتش هاد الشانيل. تأكد من الـ ID فـ bootstrap.py.", delete_after=10)
+            return
+        await ctx.send(f"✅ بانل الزواج وبانل الصداقة تصاوبو، معزولين، فـ {channel.mention}.", delete_after=10)
+
     
     
     async def check_and_announce_birthdays():
