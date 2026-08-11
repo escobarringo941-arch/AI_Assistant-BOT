@@ -163,10 +163,51 @@ class BookAppointmentModal(discord.ui.Modal, title="حجز خدمة"):
         await interaction.followup.send(msg, ephemeral=True)
 
 
+_BUSINESS_BTN_LABELS = {
+    "darija": {"land": "شراء أرض", "apply": "فتح مشروع", "book": "حجز خدمة", "add_service": "إضافة خدمة",
+               "listing": "المشاريع والخدمات", "jobs": "أشغال البناء", "not_verified": "❌ خاصك تفعل الحساب ديالك أولاً."},
+    "en": {"land": "Buy Land", "apply": "Open a Venture", "book": "Book a Service", "add_service": "Add a Service",
+           "listing": "Ventures & Services", "jobs": "Construction Jobs", "not_verified": "❌ You need to verify your account first."},
+    "fr": {"land": "Acheter un terrain", "apply": "Ouvrir une entreprise", "book": "Réserver un service", "add_service": "Ajouter un service",
+           "listing": "Entreprises & Services", "jobs": "Chantiers", "not_verified": "❌ Il faut d'abord vérifier ton compte."},
+}
+
+
+class _BusinessLanguageSelect(discord.ui.Select):
+    """بانل عمومي بالدارجة بشكل ثابت — اختيار اللغة كيحل نسخة خاصة مترجمة (نفس نمط بانل الزواج)."""
+    def __init__(self, hub, *, private_user_id: int = None, lang: str = "darija", row: int = 1):
+        self.hub = hub
+        self.private_user_id = private_user_id
+        lang = lang if lang in {"darija", "en", "fr"} else "darija"
+        super().__init__(
+            placeholder="🌐 اللغة / Language / Langue",
+            options=[
+                discord.SelectOption(label="Darija", value="darija", emoji="🇲🇦", default=lang == "darija"),
+                discord.SelectOption(label="English", value="en", emoji="🇬🇧", default=lang == "en"),
+                discord.SelectOption(label="Français", value="fr", emoji="🇫🇷", default=lang == "fr"),
+            ],
+            min_values=1, max_values=1, row=row,
+            custom_id=None if private_user_id else "ggmw9:business:directory:language",
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        if self.private_user_id and interaction.user.id != self.private_user_id:
+            await interaction.response.send_message("❌ هاد الترجمة ماشي ديالك.", ephemeral=True)
+            return
+        lang = self.hub.set_lang(interaction.guild.id, interaction.user.id, self.values[0])
+        embed = self.hub.directory_embed(interaction.guild, lang)
+        view = _BusinessDirectoryPrivateView(self.hub, interaction.user.id, lang)
+        if self.private_user_id:
+            await interaction.response.edit_message(embed=embed, view=view)
+        else:
+            await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+
 class BusinessDirectoryView(discord.ui.View):
     def __init__(self, hub):
         super().__init__(timeout=None)
         self.hub = hub
+        self.add_item(_BusinessLanguageSelect(hub, row=1))
 
     @discord.ui.button(label="شراء أرض", emoji="🏞️", style=discord.ButtonStyle.success, custom_id="ggmw9:business:land")
     async def land(self, interaction, button):
@@ -199,6 +240,84 @@ class BusinessDirectoryView(discord.ui.View):
     @discord.ui.button(label="أشغال البناء", emoji="🏗️", style=discord.ButtonStyle.secondary, custom_id="ggmw9:business:jobs")
     async def jobs(self, interaction, button):
         await private_reply(interaction, "", embed=self.hub.jobs_embed(interaction.guild))
+
+
+class _BusinessDirectoryPrivateView(discord.ui.View):
+    """نسخة خاصة (ephemeral) مترجمة — نفس الأزرار بلغة مختلفة."""
+    def __init__(self, hub, user_id: int, lang: str = "darija"):
+        super().__init__(timeout=1800)
+        self.hub = hub
+        self.user_id = int(user_id)
+        self.lang = lang if lang in {"darija", "en", "fr"} else "darija"
+        labels = _BUSINESS_BTN_LABELS[self.lang]
+
+        land_btn = discord.ui.Button(label=labels["land"], emoji="🏞️", style=discord.ButtonStyle.success, row=0)
+        land_btn.callback = self._land
+        self.add_item(land_btn)
+
+        apply_btn = discord.ui.Button(label=labels["apply"], emoji="🏢", style=discord.ButtonStyle.primary, row=0)
+        apply_btn.callback = self._apply
+        self.add_item(apply_btn)
+
+        book_btn = discord.ui.Button(label=labels["book"], emoji="📅", style=discord.ButtonStyle.primary, row=0)
+        book_btn.callback = self._book
+        self.add_item(book_btn)
+
+        add_service_btn = discord.ui.Button(label=labels["add_service"], emoji="➕", style=discord.ButtonStyle.secondary, row=1)
+        add_service_btn.callback = self._add_service
+        self.add_item(add_service_btn)
+
+        listing_btn = discord.ui.Button(label=labels["listing"], emoji="📋", style=discord.ButtonStyle.secondary, row=1)
+        listing_btn.callback = self._listing
+        self.add_item(listing_btn)
+
+        jobs_btn = discord.ui.Button(label=labels["jobs"], emoji="🏗️", style=discord.ButtonStyle.secondary, row=1)
+        jobs_btn.callback = self._jobs
+        self.add_item(jobs_btn)
+
+        self.add_item(_BusinessLanguageSelect(hub, private_user_id=self.user_id, lang=self.lang, row=2))
+
+    async def _guard(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("❌ هاد الجلسة ماشي ديالك.", ephemeral=True)
+            return False
+        return True
+
+    async def _need_verify(self, interaction: discord.Interaction) -> bool:
+        if not self.hub.verified(interaction.user):
+            await private_reply(interaction, _BUSINESS_BTN_LABELS[self.lang]["not_verified"])
+            return True
+        return False
+
+    async def _land(self, interaction):
+        if not await self._guard(interaction) or await self._need_verify(interaction):
+            return
+        await interaction.response.send_modal(BuyLandModal(self.hub))
+
+    async def _apply(self, interaction):
+        if not await self._guard(interaction) or await self._need_verify(interaction):
+            return
+        await interaction.response.send_modal(BusinessApplicationModal(self.hub))
+
+    async def _book(self, interaction):
+        if not await self._guard(interaction) or await self._need_verify(interaction):
+            return
+        await interaction.response.send_modal(BookAppointmentModal(self.hub))
+
+    async def _add_service(self, interaction):
+        if not await self._guard(interaction) or await self._need_verify(interaction):
+            return
+        await interaction.response.send_modal(AddServiceModal(self.hub))
+
+    async def _listing(self, interaction):
+        if not await self._guard(interaction):
+            return
+        await private_reply(interaction, "", embed=self.hub.listing_embed(interaction.guild, self.lang))
+
+    async def _jobs(self, interaction):
+        if not await self._guard(interaction):
+            return
+        await private_reply(interaction, "", embed=self.hub.jobs_embed(interaction.guild, self.lang))
 
 
 class AppointmentRoomView(discord.ui.View):
@@ -247,6 +366,27 @@ class BusinessHub(commands.Cog):
     @property
     def economy(self):
         return self.bot.get_cog("Economy")
+
+    def lang(self, guild_id: int, user_id: int) -> str:
+        getter = (getattr(self.bot, "gg", {}) or {}).get("get_panel_language")
+        if getter:
+            try:
+                value = getter(guild_id, user_id)
+                if value in {"darija", "en", "fr"}:
+                    return value
+            except Exception:
+                pass
+        return "darija"
+
+    def set_lang(self, guild_id: int, user_id: int, lang: str) -> str:
+        lang = lang if lang in {"darija", "en", "fr"} else "darija"
+        setter = (getattr(self.bot, "gg", {}) or {}).get("set_panel_language")
+        if setter:
+            try:
+                return setter(guild_id, user_id, lang)
+            except Exception:
+                pass
+        return lang
 
     @property
     def store(self):
@@ -363,21 +503,42 @@ class BusinessHub(commands.Cog):
         await self.refresh_directory(guild)
         return channel
 
-    def directory_embed(self, guild):
+    def directory_embed(self, guild, lang="darija"):
         state = self.state(guild.id)
         free = sum(1 for p in state["plots"].values() if p["status"] == "available")
         active = sum(1 for b in state["businesses"].values() if b["status"] == "active")
         pending = sum(1 for b in state["businesses"].values() if b["status"] in {"permit_pending", "construction"})
-        e = discord.Embed(title="🏙️ GGMW9 CITY — المشاريع الخاصة", color=0x2B7FFF)
-        e.description = (
-            "شري الأرض، دوز من الترخيص والبناء، ومن بعد افتح مشروعك الحقيقي داخل المدينة.\n"
-            "الخدمات كتتخلص بالـEscrow، والمواعيد كتفتح ليها غرفة خاصة كتسد تلقائياً."
-        )
-        e.add_field(name="🏞️ الأراضي المتاحة", value=str(free), inline=True)
-        e.add_field(name="🏢 المشاريع المفتوحة", value=str(active), inline=True)
-        e.add_field(name="🏗️ قيد الإجراءات", value=str(pending), inline=True)
-        e.add_field(name="ثمن الأرض", value=fmt(LAND_PRICE), inline=True)
-        e.add_field(name="المشروع الافتراضي", value="الخدمات خاصها تكون قابلة للتقديم داخل Discord بالصوت أو المحتوى الرقمي.", inline=False)
+        if lang == "en":
+            title = "🏙️ GGMW9 CITY — Private Ventures"
+            desc = (
+                "Buy land, go through the permit and construction process, then open your real venture inside the city.\n"
+                "Services are settled through Escrow, and appointments open a private room that closes automatically."
+            )
+            f_free, f_active, f_pending, f_price = "🏞️ Available Plots", "🏢 Open Ventures", "🏗️ In Progress", "Land Price"
+            f_default_name, f_default_val = "Default Venture", "Services must be deliverable inside Discord via voice or digital content."
+        elif lang == "fr":
+            title = "🏙️ GGMW9 CITY — Entreprises privées"
+            desc = (
+                "Achète un terrain, passe par le permis et la construction, puis ouvre ta vraie entreprise dans la ville.\n"
+                "Les services se règlent via Escrow, et les rendez-vous ouvrent une salle privée qui se ferme automatiquement."
+            )
+            f_free, f_active, f_pending, f_price = "🏞️ Terrains disponibles", "🏢 Entreprises ouvertes", "🏗️ En cours", "Prix du terrain"
+            f_default_name, f_default_val = "Entreprise par défaut", "Les services doivent être livrables sur Discord, via voix ou contenu numérique."
+        else:
+            title = "🏙️ GGMW9 CITY — المشاريع الخاصة"
+            desc = (
+                "شري الأرض، دوز من الترخيص والبناء، ومن بعد افتح مشروعك الحقيقي داخل المدينة.\n"
+                "الخدمات كتتخلص بالـEscrow، والمواعيد كتفتح ليها غرفة خاصة كتسد تلقائياً."
+            )
+            f_free, f_active, f_pending, f_price = "🏞️ الأراضي المتاحة", "🏢 المشاريع المفتوحة", "🏗️ قيد الإجراءات", "ثمن الأرض"
+            f_default_name, f_default_val = "المشروع الافتراضي", "الخدمات خاصها تكون قابلة للتقديم داخل Discord بالصوت أو المحتوى الرقمي."
+        e = discord.Embed(title=title, color=0x2B7FFF)
+        e.description = desc
+        e.add_field(name=f_free, value=str(free), inline=True)
+        e.add_field(name=f_active, value=str(active), inline=True)
+        e.add_field(name=f_pending, value=str(pending), inline=True)
+        e.add_field(name=f_price, value=fmt(LAND_PRICE), inline=True)
+        e.add_field(name=f_default_name, value=f_default_val, inline=False)
         e.set_footer(text="GGMW9:BUSINESS:DIRECTORY")
         return e
 
@@ -396,27 +557,39 @@ class BusinessHub(commands.Cog):
             setup["directory_message_id"] = msg.id
             self.store.save()
 
-    def listing_embed(self, guild):
-        e = discord.Embed(title="📋 المشاريع والخدمات المتاحة", color=0x57F287)
+    def listing_embed(self, guild, lang="darija"):
+        if lang == "en":
+            title, no_service, no_items = "📋 Available Ventures & Services", "No service added yet", "No open venture right now."
+        elif lang == "fr":
+            title, no_service, no_items = "📋 Entreprises et services disponibles", "Aucun service ajouté pour l'instant", "Aucune entreprise ouverte pour l'instant."
+        else:
+            title, no_service, no_items = "📋 المشاريع والخدمات المتاحة", "مازال ما تزادت خدمة", "ما كاين حتى مشروع مفتوح دابا."
+        e = discord.Embed(title=title, color=0x57F287)
         rows = []
         for bid, b in self.businesses(guild.id).items():
             if b["status"] != "active":
                 continue
             services = b.get("services", {})
-            srv = ", ".join(f"`{sid}` {s['name']} ({fmt(s['price'])})" for sid, s in list(services.items())[:4]) or "مازال ما تزادت خدمة"
+            srv = ", ".join(f"`{sid}` {s['name']} ({fmt(s['price'])})" for sid, s in list(services.items())[:4]) or no_service
             rows.append(f"**{b['name']}** • `{bid}`\n{srv}")
-        e.description = "\n\n".join(rows[:15]) or "ما كاين حتى مشروع مفتوح دابا."
+        e.description = "\n\n".join(rows[:15]) or no_items
         return e
 
-    def jobs_embed(self, guild):
-        e = discord.Embed(title="🏗️ أوراش البناء المفتوحة", color=0xFEE75C)
+    def jobs_embed(self, guild, lang="darija"):
+        if lang == "en":
+            title, no_items, footer = "🏗️ Open Construction Jobs", "No open job right now.", "Use /businessjobapply JOB-ID to apply"
+        elif lang == "fr":
+            title, no_items, footer = "🏗️ Chantiers de construction ouverts", "Aucun chantier ouvert pour l'instant.", "Utilise /businessjobapply JOB-ID pour postuler"
+        else:
+            title, no_items, footer = "🏗️ أوراش البناء المفتوحة", "ما كاين حتى ورش مفتوح دابا.", "استعمل /businessjobapply JOB-ID باش تقدم"
+        e = discord.Embed(title=title, color=0xFEE75C)
         rows = []
         for b in self.businesses(guild.id).values():
             for jid, job in b.get("jobs", {}).items():
                 if job["status"] in {"open", "assigned"}:
                     rows.append(f"`{jid}` • **{job['name']}** • {fmt(job['amount'])} • `{job['status']}`")
-        e.description = "\n".join(rows[:20]) or "ما كاين حتى ورش مفتوح دابا."
-        e.set_footer(text="استعمل /businessjobapply JOB-ID باش تقدم")
+        e.description = "\n".join(rows[:20]) or no_items
+        e.set_footer(text=footer)
         return e
 
     async def buy_land(self, interaction, plot_id):

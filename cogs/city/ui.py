@@ -73,9 +73,39 @@ class PublicLanguageSelect(discord.ui.Select):
             embed=build_services_home_embed(self.cog,interaction.guild,interaction.user,lang); view=ServicesHomeView(self.cog,interaction.user,lang)
         elif self.source=="projects":
             embed=build_projects_home_embed(self.cog,interaction.guild,interaction.user,lang); view=ProjectsHomeView(self.cog,interaction.user,lang)
+        elif self.source=="market":
+            embed=self.cog.build_job_market_embed(interaction.guild,lang); view=_TranslatedInfoView(self.cog,"market",lang)
+        elif self.source=="alerts":
+            embed=self.cog.build_alerts_embed(interaction.guild,lang); view=_TranslatedInfoView(self.cog,"alerts",lang)
         else:
             embed=build_home_embed(self.cog,interaction.guild,interaction.user,lang); view=CityHomeView(self.cog,interaction.user,lang)
         await interaction.response.send_message(embed=embed,view=view,ephemeral=True)
+
+
+class _TranslatedInfoView(discord.ui.View):
+    """نسخة خاصة (ephemeral) لبانلات ديال المعلومة فقط (market/alerts) — غير select ديال اللغة باش يبدل الترجمة."""
+    def __init__(self,cog,source,lang):
+        super().__init__(timeout=1800); self.add_item(_PrivateInfoLanguageSelect(cog,source,lang))
+
+
+class _PrivateInfoLanguageSelect(discord.ui.Select):
+    def __init__(self,cog,source,lang):
+        super().__init__(placeholder="🌐 اللغة / Language / Langue",options=_lang_options(lang),min_values=1,max_values=1)
+        self.cog=cog; self.source=source
+    async def callback(self,interaction):
+        lang=self.cog.set_lang(interaction.guild.id,interaction.user.id,self.values[0])
+        embed=self.cog.build_job_market_embed(interaction.guild,lang) if self.source=="market" else self.cog.build_alerts_embed(interaction.guild,lang)
+        await interaction.response.edit_message(embed=embed,view=_TranslatedInfoView(self.cog,self.source,lang))
+
+
+class MarketPublicView(ReliableView):
+    def __init__(self,cog):
+        super().__init__(timeout=None); self.cog=cog; self.add_item(PublicLanguageSelect(cog,"market",row=0))
+
+
+class AlertsPublicView(ReliableView):
+    def __init__(self,cog):
+        super().__init__(timeout=None); self.cog=cog; self.add_item(PublicLanguageSelect(cog,"alerts",row=0))
 
 
 class CareerPublicView(ReliableView):

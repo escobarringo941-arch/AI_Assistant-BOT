@@ -244,13 +244,13 @@ class CareerCity(UndergroundEngineMixin, commands.Cog):
         )
 
     async def refresh_city_panels(self, guild: discord.Guild):
-        from .ui import CareerPublicView, ServicesPublicView, ProjectsPublicView
+        from .ui import CareerPublicView, ServicesPublicView, ProjectsPublicView, MarketPublicView, AlertsPublicView
         cc=self.channel(guild,"career_center"); sm=self.channel(guild,"services_market"); pb=self.channel(guild,"projects_board"); jm=self.channel(guild,"job_market"); alerts=self.channel(guild,"city_alerts")
         if isinstance(cc,discord.TextChannel): await self._upsert_panel(cc,key="career",embed=self.build_career_public_embed(guild),view=CareerPublicView(self))
         if isinstance(sm,discord.TextChannel): await self._upsert_panel(sm,key="services",embed=self.build_services_public_embed(guild),view=ServicesPublicView(self))
         if isinstance(pb,discord.TextChannel): await self._upsert_panel(pb,key="projects",embed=self.build_projects_public_embed(guild),view=ProjectsPublicView(self))
-        if isinstance(jm,discord.TextChannel): await self._upsert_panel(jm,key="market",embed=self.build_job_market_embed(guild),view=None)
-        if isinstance(alerts,discord.TextChannel): await self._upsert_panel(alerts,key="alerts",embed=self.build_alerts_embed(guild),view=None)
+        if isinstance(jm,discord.TextChannel): await self._upsert_panel(jm,key="market",embed=self.build_job_market_embed(guild),view=MarketPublicView(self))
+        if isinstance(alerts,discord.TextChannel): await self._upsert_panel(alerts,key="alerts",embed=self.build_alerts_embed(guild),view=AlertsPublicView(self))
 
     # ------------------------------------------------------------------
     # Embeds
@@ -291,14 +291,35 @@ class CareerCity(UndergroundEngineMixin, commands.Cog):
         e.set_footer(text="GGMW9 CITY • CITY:projects • حتى 3 Milestones لكل مشروع")
         return e
 
-    def build_alerts_embed(self,guild):
-        e=discord.Embed(title="🔔 GGMW9 CITY — تنبيهات احتياطية",description=(
-            "هاد القناة **Fallback فقط** إلا كان DM مسدود.\n\n"
-            "ما كيبان هنا لا Salary، لا اسم الزبون، لا قيمة Contract. غير تنبيه أنك عندك Update خاص فـCareer Center.\n"
-            f"التنبيهات كتتحيد أوتوماتيكياً من بعد **{config.ALERT_DELETE_SECONDS//60} دقيقة**."
-        ),color=discord.Color.dark_teal()); e.set_footer(text="GGMW9 CITY • CITY:alerts • الخصوصية أولاً"); return e
+    def build_alerts_embed(self,guild,lang="darija"):
+        minutes=config.ALERT_DELETE_SECONDS//60
+        if lang=="en":
+            title="🔔 GGMW9 CITY — Fallback Alerts"
+            desc=(
+                "This channel is a **Fallback only**, used when your DMs are closed.\n\n"
+                "No Salary, customer name, or Contract value ever shows here — just a notice that you have an Update waiting in the Career Center.\n"
+                f"Alerts auto-delete after **{minutes} minutes**."
+            )
+            footer="GGMW9 CITY • CITY:alerts • Privacy first"
+        elif lang=="fr":
+            title="🔔 GGMW9 CITY — Alertes de secours"
+            desc=(
+                "Ce salon est un **Fallback uniquement**, utilisé quand tes DMs sont fermés.\n\n"
+                "Aucun Salaire, nom de client ou valeur de Contrat n'apparaît ici — juste un avis qu'une Update t'attend au Career Center.\n"
+                f"Les alertes se suppriment automatiquement après **{minutes} minutes**."
+            )
+            footer="GGMW9 CITY • CITY:alerts • Confidentialité d'abord"
+        else:
+            title="🔔 GGMW9 CITY — تنبيهات احتياطية"
+            desc=(
+                "هاد القناة **Fallback فقط** إلا كان DM مسدود.\n\n"
+                "ما كيبان هنا لا Salary، لا اسم الزبون، لا قيمة Contract. غير تنبيه أنك عندك Update خاص فـCareer Center.\n"
+                f"التنبيهات كتتحيد أوتوماتيكياً من بعد **{minutes} دقيقة**."
+            )
+            footer="GGMW9 CITY • CITY:alerts • الخصوصية أولاً"
+        e=discord.Embed(title=title,description=desc,color=discord.Color.dark_teal()); e.set_footer(text=footer); return e
 
-    def build_job_market_embed(self,guild):
+    def build_job_market_embed(self,guild,lang="darija"):
         g=self.store.guild(guild.id); profiles=g.get("profiles",{}); orders=g.get("orders",{}); projects=g.get("projects",{})
         employed=[p for p in profiles.values() if p.get("job_id")]
         demand={cid:0 for cid in CAREERS}
@@ -310,17 +331,32 @@ class CareerCity(UndergroundEngineMixin, commands.Cog):
         for p in employed:
             if p.get("job_id") in workers: workers[p["job_id"]]+=1
         ranked=sorted(CAREERS,key=lambda cid:(demand.get(cid,0)-workers.get(cid,0),demand.get(cid,0)),reverse=True)[:6]
+        if lang=="en":
+            badges=("🔥 High demand","🟡 Wanted","🟢 Balanced"); workers_lbl="workers"; demand_lbl="demand"
+            title="📊 GGMW9 CITY — Live Job Market"; empty="Market is still new."
+            f_employed,f_orders,f_hero="👥 Employees","📦 Orders","🏆 Employee of the Week"
+            footer=f"GGMW9 CITY • CITY:market • Refreshes every {config.JOB_MARKET_REFRESH_MINUTES} min • Africa/Casablanca"
+        elif lang=="fr":
+            badges=("🔥 Forte demande","🟡 Recherché","🟢 Équilibré"); workers_lbl="employés"; demand_lbl="demande"
+            title="📊 GGMW9 CITY — Marché du travail en direct"; empty="Le marché est encore jeune."
+            f_employed,f_orders,f_hero="👥 Employés","📦 Commandes","🏆 Employé de la semaine"
+            footer=f"GGMW9 CITY • CITY:market • Rafraîchi toutes les {config.JOB_MARKET_REFRESH_MINUTES} min • Africa/Casablanca"
+        else:
+            badges=("🔥 طلب قوي","🟡 مطلوب","🟢 متوازن"); workers_lbl="خدامين"; demand_lbl="طلب"
+            title="📊 GGMW9 CITY — سوق الشغل المباشر"; empty="مازال السوق جديد."
+            f_employed,f_orders,f_hero="👥 الموظفين","📦 الطلبات","🏆 موظف الأسبوع"
+            footer=f"GGMW9 CITY • CITY:market • تحديث كل {config.JOB_MARKET_REFRESH_MINUTES} دقائق • Africa/Casablanca"
         lines=[]
         for cid in ranked:
             c=CAREERS[cid]; pressure=demand.get(cid,0)-workers.get(cid,0)
-            badge="🔥 طلب قوي" if pressure>=2 else "🟡 مطلوب" if pressure>=0 else "🟢 متوازن"
-            lines.append(f"{c['emoji']} **{career_name(cid)}** — {badge} • خدامين {workers.get(cid,0)} • طلب {demand.get(cid,0)}")
+            badge=badges[0] if pressure>=2 else badges[1] if pressure>=0 else badges[2]
+            lines.append(f"{c['emoji']} **{career_name(cid,lang)}** — {badge} • {workers_lbl} {workers.get(cid,0)} • {demand_lbl} {demand.get(cid,0)}")
         week=g.get("employee_week",{}); hero="—"
         if week.get("user_id"):
             m=guild.get_member(int(week["user_id"])); hero=m.mention if m else f"<@{week['user_id']}>"
-        e=discord.Embed(title="📊 GGMW9 CITY — سوق الشغل المباشر",description="\n".join(lines) or "مازال السوق جديد.",color=discord.Color.gold(),timestamp=datetime.now())
-        e.add_field(name="👥 الموظفين",value=str(len(employed)),inline=True); e.add_field(name="📦 الطلبات",value=str(sum(1 for x in orders.values() if x.get('status') not in {'completed','refunded','cancelled','rejected'})),inline=True); e.add_field(name="🏆 موظف الأسبوع",value=hero,inline=True)
-        e.set_footer(text=f"GGMW9 CITY • CITY:market • تحديث كل {config.JOB_MARKET_REFRESH_MINUTES} دقائق • Africa/Casablanca")
+        e=discord.Embed(title=title,description="\n".join(lines) or empty,color=discord.Color.gold(),timestamp=datetime.now())
+        e.add_field(name=f_employed,value=str(len(employed)),inline=True); e.add_field(name=f_orders,value=str(sum(1 for x in orders.values() if x.get('status') not in {'completed','refunded','cancelled','rejected'})),inline=True); e.add_field(name=f_hero,value=hero,inline=True)
+        e.set_footer(text=footer)
         return e
 
     def build_profile_embed(self,guild:discord.Guild,member:discord.Member,lang="darija"):
