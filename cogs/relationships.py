@@ -137,6 +137,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     
         await _delete_personal_partner_roles(guild, record)
         end_relationship(kind, key)
+        await refresh_relationship_lists(guild)
     
         await log_action(
             guild, f"💔 {label['noun'].capitalize()} انتهى",
@@ -249,6 +250,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                 return
     
             pair_key = create_relationship(self.kind, proposer.id, target.id)
+            await refresh_relationship_lists(self.guild)
     
             # ═══ الرول العام (اختياري) ═══
             role_note = ""
@@ -520,6 +522,85 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         await ctx.send(embed=embed)
     
     
+    async def _relationship_list_embed(kind: str, guild: discord.Guild) -> discord.Embed:
+        """بانل ثابت كيبان تحت بانل الزواج/الصداقة فـ channel العدول — فيه لائحة
+        كاملة (ماشي top 10 كيفما /marriages) ديال كل الأزواج/الأصدقاء المسجلين، وكيتحدث
+        وحدو منين كاين زواج/صداقة جديدة ولا طلاق/قطيعة."""
+        label = RELATIONSHIP_LABELS[kind]
+        records = list(relationships_db.get(kind, {}).values())
+
+        def _sort_key(r):
+            try:
+                return datetime.strptime(r["since"], "%Y-%m-%d %H:%M:%S")
+            except Exception:
+                return datetime.now()
+
+        records.sort(key=_sort_key)  # الأقدم فوق
+
+        if not records:
+            desc = f"📭 ماكاين حتى {label['noun']} مسجلة دابا فالسيرفر."
+        else:
+            lines = []
+            for i, r in enumerate(records, 1):
+                duration = format_duration_since(r["since"])
+                lines.append(f"**{i}.** <@{r['user_a']}> {label['emoji']} <@{r['user_b']}> — منذ **{duration}**")
+            desc = "\n".join(lines)
+            if len(desc) > 3900:  # حد الـ embed description (4096) — نقصو ونزيدو "و+N آخرين"
+                trimmed, total = [], 0
+                for line in lines:
+                    total += len(line) + 1
+                    if total > 3800:
+                        break
+                    trimmed.append(line)
+                remaining = len(lines) - len(trimmed)
+                desc = "\n".join(trimmed) + (f"\n\n… و **{remaining}** آخرين." if remaining > 0 else "")
+
+        e = discord.Embed(
+            title=f"📜 لائحة {label['noun']}ات السيرفر ({len(records)})",
+            description=desc,
+            color=label["color"],
+        )
+        e.set_footer(text=f"GGMW9:RELLIST:{kind}")
+        return e
+
+
+    async def _upsert_relationship_list(channel: discord.TextChannel, kind: str):
+        """كتلقى الرسالة القديمة ديال اللائحة (بواسطة الـ footer marker) وكتبدلها،
+        وإلا كتصاوب وحدة جديدة إلا ماكانتش."""
+        embed = await _relationship_list_embed(kind, channel.guild)
+        marker = f"GGMW9:RELLIST:{kind}"
+        try:
+            async for msg in channel.history(limit=50):
+                if (
+                    msg.author.id == channel.guild.me.id
+                    and msg.embeds
+                    and (msg.embeds[0].footer.text if msg.embeds[0].footer else "") == marker
+                ):
+                    try:
+                        await msg.edit(embed=embed)
+                    except discord.HTTPException:
+                        pass
+                    return
+        except discord.HTTPException:
+            pass
+        try:
+            await channel.send(embed=embed)
+        except discord.HTTPException:
+            pass
+
+
+    async def refresh_relationship_lists(guild: discord.Guild):
+        """كتحدث لائحة الأزواج ولائحة الأصدقاء (تحت كل بانل فـ channel العدول) —
+        كتتصاوب منين كاين زواج/صداقة جديدة، ومنين تنتهي وحدة."""
+        if not MARRIAGE_CENTER_CHANNEL_ID:
+            return
+        channel = guild.get_channel(MARRIAGE_CENTER_CHANNEL_ID)
+        if not isinstance(channel, discord.TextChannel):
+            return
+        await _upsert_relationship_list(channel, "marriages")
+        await _upsert_relationship_list(channel, "bestfriends")
+
+
     async def _relationship_leaderboard_cmd(ctx, kind: str):
         label = RELATIONSHIP_LABELS[kind]
         records = list(relationships_db.get(kind, {}).values())
@@ -985,7 +1066,9 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         if not channel:
             return None
         await channel.send(embed=_relationship_panel_embed("marriages", "darija"), view=MarriagePanelView())
+        await channel.send(embed=await _relationship_list_embed("marriages", guild))
         await channel.send(embed=_relationship_panel_embed("bestfriends", "darija"), view=BestfriendPanelView())
+        await channel.send(embed=await _relationship_list_embed("bestfriends", guild))
         return channel
 
 
