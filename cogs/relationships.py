@@ -771,7 +771,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             self.kind = kind
             self.private_user_id = private_user_id
             lang = lang if lang in {"darija", "en", "fr"} else "darija"
-            super().__init__(
+            kwargs = dict(
                 placeholder="🌐 اللغة / Language / Langue",
                 options=[
                     discord.SelectOption(label="Darija", value="darija", emoji="🇲🇦", default=lang == "darija"),
@@ -779,9 +779,11 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                     discord.SelectOption(label="Français", value="fr", emoji="🇫🇷", default=lang == "fr"),
                 ],
                 min_values=1, max_values=1,
-                custom_id=None if private_user_id else f"ggmw9:relationship:{kind}:language",
                 row=row,
             )
+            if not private_user_id:
+                kwargs["custom_id"] = f"ggmw9:relationship:{kind}:language"
+            super().__init__(**kwargs)
 
         async def callback(self, interaction: discord.Interaction):
             if self.private_user_id and interaction.user.id != self.private_user_id:
