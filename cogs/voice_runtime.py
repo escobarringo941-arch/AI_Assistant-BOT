@@ -234,14 +234,8 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             await interaction.followup.send(
                 f"{'🔇 تكتم' if new_mute else '🔊 تفك عليه الكتم'} {target.mention}.{protect_note}", ephemeral=True
             )
-            if guild:
-                await log_action(
-                    guild,
-                    "🎯 Room Mute Panel — تبديل عضو معين",
-                    f"**الروم:** {channel.mention}\n**العضو:** {target.mention}\n"
-                    f"**الحالة الجديدة:** {'🔇 مكتوم (محمي من فك الكل)' if new_mute else '🔊 مسموع'}\n**من طرف:** {actor.mention}",
-                    discord.Color.orange()
-                )
+            # Owner stealth: هاد البانل غير للـ Owner + ROOM_MUTE_PANEL_ALLOWED_USER_IDS
+            # (can_toggle_room_mute) — بلا log_action ولا trace فأي log channel.
     
     
     class RoomMuteToggleView(discord.ui.View):
@@ -318,13 +312,8 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                 f"{'🔇 الروم تقفلات، تكتمو' if new_state else '🔊 الروم تحلات، تفك الكتم على'} {count} عضو.{protect_note}",
                 ephemeral=True
             )
-            if guild:
-                await log_action(
-                    guild,
-                    "🔇 Room Mute Panel — كتم الكل" if new_state else "🔊 Room Mute Panel — فك الكل",
-                    f"**الروم:** {channel.mention}\n**العدد المتأثر:** {count}\n**من طرف:** {member.mention}",
-                    discord.Color.red() if new_state else discord.Color.green()
-                )
+            # Owner stealth: هاد البانل غير للـ Owner + ROOM_MUTE_PANEL_ALLOWED_USER_IDS
+            # (can_toggle_room_mute) — بلا log_action ولا trace فأي log channel.
     
     
     @bot.command(name="roommutepanel", hidden=True)
@@ -349,12 +338,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         room_mute_db.setdefault("panels", {})[str(msg.id)] = target_channel.id
         save_room_mute()
     
-        await log_action(
-            ctx.guild,
-            "🎛️ Room Mute Panel — تصاوب",
-            f"**الروم:** {target_channel.mention}\n**channel البانل:** {ctx.channel.mention}\n**من طرف:** {ctx.author.mention}",
-            discord.Color.blue()
-        )
+        # Owner stealth: نفس الدائرة المحدودة (can_toggle_room_mute) — بلا log_action.
     
     
     @bot.event
