@@ -662,6 +662,71 @@ class BusinessHub(commands.Cog):
         if msg:
             setup["directory_message_id"] = msg.id
             self.store.save()
+        registry_msg = await upsert_fixed_panel(
+            self.bot, channel, key="city_business_registry", embed=self.plots_registry_embed(guild),
+            view=None,
+            matches=lambda m: bool(m.author.id == self.bot.user.id and m.embeds and m.embeds[0].footer and m.embeds[0].footer.text == "GGMW9:BUSINESS:REGISTRY"),
+            history_limit=None,
+        )
+        if registry_msg:
+            setup["registry_message_id"] = registry_msg.id
+            self.store.save()
+
+    def plots_registry_embed(self, guild, lang="darija"):
+        if lang == "en":
+            title, footer = "📜 Land Registry — All Plots", "Live list, updates automatically after every deal."
+            s_available, s_owned, s_sale, s_rent, s_permit, s_construction, s_active = (
+                "🟩 Available", "🟦 Owned, no venture yet", "🏷️ Listed for sale", "🔑 Listed for rent",
+                "📝 Permit pending", "🏗️ Under construction", "🏢 Active venture",
+            )
+            rented_to = "rented to"
+        elif lang == "fr":
+            title, footer = "📜 Registre foncier — Tous les terrains", "Liste en direct, mise à jour après chaque transaction."
+            s_available, s_owned, s_sale, s_rent, s_permit, s_construction, s_active = (
+                "🟩 Disponible", "🟦 Possédé, sans entreprise", "🏷️ En vente", "🔑 En location",
+                "📝 Permis en cours", "🏗️ En construction", "🏢 Entreprise active",
+            )
+            rented_to = "loué à"
+        else:
+            title, footer = "📜 سجل الأراضي — كل البلاصات", "لائحة حية، كتتحدث أوتوماتيكياً من بعد كل صفقة."
+            s_available, s_owned, s_sale, s_rent, s_permit, s_construction, s_active = (
+                "🟩 متاحة", "🟦 مملوكة، بلا مشروع", "🏷️ معروضة للبيع", "🔑 معروضة للكراء",
+                "📝 قيد الترخيص", "🏗️ قيد البناء", "🏢 مشروع نشط",
+            )
+            rented_to = "مكراة لـ"
+        state = self.state(guild.id)
+        lines = []
+        for pid in sorted(state["plots"].keys()):
+            p = state["plots"][pid]
+            status = p["status"]
+            owner_id = p.get("owner_id")
+            if status == "available":
+                lines.append(f"`{pid}` {s_available}")
+                continue
+            owner_tag = f"<@{owner_id}>" if owner_id else "—"
+            if status == "owned":
+                extra = ""
+                renter_id = p.get("renter_id")
+                rent_until = parse_dt(p.get("rent_until"))
+                if renter_id and rent_until and utcnow() < rent_until:
+                    extra = f" • {rented_to} <@{renter_id}> ⏳ <t:{int(rent_until.timestamp())}:R>"
+                lines.append(f"`{pid}` {s_owned} • {owner_tag}{extra}")
+            elif status == "listed_sale":
+                lines.append(f"`{pid}` {s_sale} • {fmt(p.get('sale_price', 0))} • {owner_tag}")
+            elif status == "listed_rent":
+                lines.append(f"`{pid}` {s_rent} • {fmt(p.get('rent_price', 0))}/{p.get('rent_days')}📅 • {owner_tag}")
+            elif status == "permit_pending":
+                lines.append(f"`{pid}` {s_permit} • {owner_tag}")
+            elif status == "construction":
+                lines.append(f"`{pid}` {s_construction} • {owner_tag}")
+            elif status == "active":
+                lines.append(f"`{pid}` {s_active} • {owner_tag}")
+            else:
+                lines.append(f"`{pid}` `{status}` • {owner_tag}")
+        e = discord.Embed(title=title, description="\n".join(lines) or "—", color=0x99AAB5)
+        e.set_footer(text="GGMW9:BUSINESS:REGISTRY")
+        e.description = (e.description or "—") + f"\n\n_{footer}_"
+        return e
 
     def listing_embed(self, guild, lang="darija"):
         if lang == "en":
