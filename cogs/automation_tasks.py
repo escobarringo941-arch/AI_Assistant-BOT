@@ -259,15 +259,35 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     # ║      لائحة الإدارة (Administrators) — كل 30 دقيقة       ║
     # ═══════════════════════════════════════════════════════
     
-    async def build_admin_list_embed(guild: discord.Guild) -> discord.Embed:
+    async def build_admin_list_embed(guild: discord.Guild, lang: str = "darija") -> discord.Embed:
         """يبني embed فيه Owner + Admins + Mods مرتبين بالـ roles، باش لي بغا
         يدير report يعرف بسرعة شكون يدير ليه tag."""
-        embed = discord.Embed(
-            title="👑 لائحة الإدارة",
-            description=(
+        lang = lang if lang in {"darija", "en", "fr"} else "darija"
+        if lang == "en":
+            title = "👑 Administrators"
+            desc = (
+                "This is the list of the server's Owner, Admins and Moderators.\n"
+                "To file a Report, use <#1535652036324892763> directly."
+            )
+            owner_label, none_now, missing_role = "👑 Owner", "— nobody right now", "⚠️ This role doesn't exist on the server (check role_id)"
+        elif lang == "fr":
+            title = "👑 Administration"
+            desc = (
+                "Voici la liste du Owner, des Admins et des Modérateurs du serveur.\n"
+                "Pour faire un Report, utilise directement <#1535652036324892763>."
+            )
+            owner_label, none_now, missing_role = "👑 Owner", "— personne pour l'instant", "⚠️ Ce rôle n'existe pas sur le serveur (vérifie le role_id)"
+        else:
+            title = "👑 لائحة الإدارة"
+            desc = (
                 "هادي لائحة الـ Owner والـ Admins والـ Moderators ديال السيرفر.\n"
                 "إلا بغيتي تدير Report، استعمل <#1535652036324892763> مباشرة."
-            ),
+            )
+            owner_label, none_now, missing_role = "👑 Owner", "— محدش دابا", "⚠️ هاد الرول ماكاينش فالسيرفر (تأكد من role_id)"
+
+        embed = discord.Embed(
+            title=title,
+            description=desc,
             color=discord.Color.gold(),
             timestamp=datetime.now()
         )
@@ -279,7 +299,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         if OWNER_ID:
             already_listed_ids.add(OWNER_ID)
         embed.add_field(
-            name="👑 Owner",
+            name=owner_label,
             value=owner_member.mention if owner_member else (f"<@{OWNER_ID}>" if OWNER_ID else "—"),
             inline=False
         )
@@ -288,19 +308,55 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         for entry in STAFF_ROLES_ORDER:
             role = guild.get_role(entry["role_id"])
             if not role:
-                embed.add_field(name=entry["label"], value="⚠️ هاد الرول ماكاينش فالسيرفر (تأكد من role_id)", inline=False)
+                embed.add_field(name=entry["label"], value=missing_role, inline=False)
                 continue
     
             members = [m for m in role.members if m.id not in already_listed_ids]
             already_listed_ids.update(m.id for m in members)
     
-            value = "\n".join(m.mention for m in members) if members else "— محدش دابا"
+            value = "\n".join(m.mention for m in members) if members else none_now
             embed.add_field(name=f"{entry['label']} ({len(members)})", value=value, inline=False)
     
         if guild.icon:
             embed.set_thumbnail(url=guild.icon.url)
         embed.set_footer(text=f"{SERVER_NAME} | آخر تحديث")
         return embed
+
+
+    class _AdminListLanguageSelect(discord.ui.Select):
+        """بانل عمومي بالدارجة بشكل ثابت — اختيار اللغة كيحل نسخة خاصة مترجمة (نفس نمط بانل الزواج)."""
+        def __init__(self, *, private_user_id: int = None, lang: str = "darija", row: int = 0):
+            self.private_user_id = private_user_id
+            lang = lang if lang in {"darija", "en", "fr"} else "darija"
+            super().__init__(
+                placeholder="🌐 اللغة / Language / Langue",
+                options=[
+                    discord.SelectOption(label="Darija", value="darija", emoji="🇲🇦", default=lang == "darija"),
+                    discord.SelectOption(label="English", value="en", emoji="🇬🇧", default=lang == "en"),
+                    discord.SelectOption(label="Français", value="fr", emoji="🇫🇷", default=lang == "fr"),
+                ],
+                min_values=1, max_values=1, row=row,
+                custom_id=None if private_user_id else "ggmw9:admin_list:language",
+            )
+
+        async def callback(self, interaction: discord.Interaction):
+            if self.private_user_id and interaction.user.id != self.private_user_id:
+                await interaction.response.send_message("❌ هاد الترجمة ماشي ديالك.", ephemeral=True)
+                return
+            lang = set_panel_language(interaction.guild.id, interaction.user.id, self.values[0])
+            embed = await build_admin_list_embed(interaction.guild, lang)
+            view = AdminListView(private_user_id=interaction.user.id, lang=lang)
+            if self.private_user_id:
+                await interaction.response.edit_message(embed=embed, view=view)
+            else:
+                await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+
+    class AdminListView(discord.ui.View):
+        """View ثابت على البانل العمومي (Administrators channel) فيه غير select ديال اللغة."""
+        def __init__(self, *, private_user_id: int = None, lang: str = "darija"):
+            super().__init__(timeout=None if not private_user_id else 1800)
+            self.add_item(_AdminListLanguageSelect(private_user_id=private_user_id, lang=lang, row=0))
     
     
     @tasks.loop(minutes=ADMIN_LIST_UPDATE_MINUTES)
@@ -333,6 +389,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                 )
             ),
             embed=embed,
+            view=AdminListView(),
             message_id=msg_id,
             save_message_id=remember,
             history_limit=100,

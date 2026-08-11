@@ -90,6 +90,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             bot.add_view(TempVoiceControlView())    # Panel: ACL/Kick/Mutes + Music helper
             bot.add_view(MarriagePanelView())       # قسم "العدول" — بانل الزواج
             bot.add_view(BestfriendPanelView())     # قسم "العدول" — بانل الصداقة (Best Friends)
+            bot.add_view(AdminListView())           # Administrators — لائحة الإدارة + select ديال اللغة
             bot._ggmw9_ready_views_registered = True
     
         for guild in bot.guilds:
