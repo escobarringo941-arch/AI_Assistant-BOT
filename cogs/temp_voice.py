@@ -368,7 +368,6 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                 "🚪 **Kick:** غير كيخرجو من الروم؛ الروم كتبقى باينة وماكيتزادش Block.\n"
                 "🔇 **Voice Mute:** كتم الصوت فهاد الروم وكيترجع عليه إلا عاود دخل.\n"
                 "💬 **Chat Mute:** كتم الكتابة فـ Chat ديال نفس الروم.\n"
-                "👑 **Server Owner بوحدو محمي** من Block/Kick/Mute ومن Private enforcement."
             ),
             color=discord.Color.orange() if is_private else discord.Color.green(),
             timestamp=datetime.now()
