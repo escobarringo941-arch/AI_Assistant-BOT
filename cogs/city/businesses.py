@@ -700,29 +700,31 @@ class BusinessHub(commands.Cog):
             p = state["plots"][pid]
             status = p["status"]
             owner_id = p.get("owner_id")
+            line = None
             if status == "available":
-                lines.append(f"`{pid}` {s_available}")
-                continue
-            owner_tag = f"<@{owner_id}>" if owner_id else "—"
-            if status == "owned":
-                extra = ""
-                renter_id = p.get("renter_id")
-                rent_until = parse_dt(p.get("rent_until"))
-                if renter_id and rent_until and utcnow() < rent_until:
-                    extra = f" • {rented_to} <@{renter_id}> ⏳ <t:{int(rent_until.timestamp())}:R>"
-                lines.append(f"`{pid}` {s_owned} • {owner_tag}{extra}")
-            elif status == "listed_sale":
-                lines.append(f"`{pid}` {s_sale} • {fmt(p.get('sale_price', 0))} • {owner_tag}")
-            elif status == "listed_rent":
-                lines.append(f"`{pid}` {s_rent} • {fmt(p.get('rent_price', 0))}/{p.get('rent_days')}📅 • {owner_tag}")
-            elif status == "permit_pending":
-                lines.append(f"`{pid}` {s_permit} • {owner_tag}")
-            elif status == "construction":
-                lines.append(f"`{pid}` {s_construction} • {owner_tag}")
-            elif status == "active":
-                lines.append(f"`{pid}` {s_active} • {owner_tag}")
+                line = f"`{pid}` {s_available}"
             else:
-                lines.append(f"`{pid}` `{status}` • {owner_tag}")
+                owner_tag = f"<@{owner_id}>" if owner_id else "—"
+                if status == "owned":
+                    extra = ""
+                    renter_id = p.get("renter_id")
+                    rent_until = parse_dt(p.get("rent_until"))
+                    if renter_id and rent_until and utcnow() < rent_until:
+                        extra = f" • {rented_to} <@{renter_id}> ⏳ <t:{int(rent_until.timestamp())}:R>"
+                    line = f"`{pid}` {s_owned} • {owner_tag}{extra}"
+                elif status == "listed_sale":
+                    line = f"`{pid}` {s_sale} • {fmt(p.get('sale_price', 0))} • {owner_tag}"
+                elif status == "listed_rent":
+                    line = f"`{pid}` {s_rent} • {fmt(p.get('rent_price', 0))}/{p.get('rent_days')}📅 • {owner_tag}"
+                elif status == "permit_pending":
+                    line = f"`{pid}` {s_permit} • {owner_tag}"
+                elif status == "construction":
+                    line = f"`{pid}` {s_construction} • {owner_tag}"
+                elif status == "active":
+                    line = f"`{pid}` {s_active} • {owner_tag}"
+                else:
+                    line = f"`{pid}` `{status}` • {owner_tag}"
+            lines.append(line)
         e = discord.Embed(title=title, description="\n".join(lines) or "—", color=0x99AAB5)
         e.set_footer(text="GGMW9:BUSINESS:REGISTRY")
         e.description = (e.description or "—") + f"\n\n_{footer}_"
