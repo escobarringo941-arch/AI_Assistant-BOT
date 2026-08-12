@@ -10,6 +10,11 @@ import traceback
 from cogs.bootstrap import bot
 from cogs._component_runtime import runtime_namespace, runtime_value
 from cogs.panel_registry import upsert_fixed_panel
+from cogs._rtl import patch_discord_rtl
+
+# Fix Darija/Arabic RTL rendering globally, before any cog builds an embed
+# or sends a message. See cogs/_rtl.py for details.
+patch_discord_rtl()
 
 
 # Dependency-safe order of the split source sections plus focused new systems.
