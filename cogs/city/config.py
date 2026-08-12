@@ -89,3 +89,19 @@ UNDERGROUND_HEIST_MIN_TREASURY = int(getattr(root_cfg, "CITY_UNDERGROUND_HEIST_M
 UNDERGROUND_MARKET_TAX_BPS = int(getattr(root_cfg, "CITY_UNDERGROUND_MARKET_TAX_BPS", 650))
 UNDERGROUND_CREW_HEIST_SHARE_BPS = int(getattr(root_cfg, "CITY_UNDERGROUND_CREW_HEIST_SHARE_BPS", 2500))
 UNDERGROUND_CREW_INVITE_HOURS = int(getattr(root_cfg, "CITY_UNDERGROUND_CREW_INVITE_HOURS", 24))
+
+# ---------------------------------------------------------------------
+# RTL helper — Discord decides a line's direction from its FIRST strong
+# character. Darija lines that start with an emoji, a digit, or a
+# backtick-code (e.g. "📚 ...", "`PLOT-01` ...") get misread as LTR even
+# though the rest of the line is Arabic. Prepending U+200F (Right-to-Left
+# Mark, invisible) forces the whole line to render RTL. Wrap any
+# Darija-facing line that starts with something non-Arabic in rtl(...).
+# ---------------------------------------------------------------------
+RLM = "\u200f"
+
+
+def rtl(text: str) -> str:
+    """Prefix text with an invisible RTL mark so Discord renders the line
+    right-to-left even when it starts with an emoji/digit/backtick."""
+    return text if text.startswith(RLM) else RLM + text
