@@ -443,10 +443,18 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         action: str,
         message: str,
     ) -> Optional[str]:
-        """Block staff room owners from using the bot to bypass TEMP native denies."""
+        """Block Admin/Mod from Block/Kick/Mute/Private on a TEMP room they
+        don't own — bypassing this would defeat the native-controls lockout
+        in enforce_temp_voice_security_overwrites.
+
+        BUT: an Admin/Mod who is the real owner of THIS specific room (they
+        created it themselves via Join to Create) is exempt — on their own
+        room they get exactly the same control as any other member-owner,
+        nothing more, nothing less."""
         if (
             isinstance(actor, discord.Member)
             and actor.id != channel.guild.owner_id
+            and actor.id != get_temp_voice_owner_id(channel)
             and is_temp_voice_staff(actor)
         ):
             await _log_temp_voice_guard_denial(channel, member, actor, action, message)
@@ -1082,7 +1090,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             await interaction.response.send_message("❌ هاد البانل ماعادش مربوط بروم مؤقتة صالحة.", ephemeral=True)
             return None
         if not isinstance(interaction.user, discord.Member) or not is_temp_voice_owner(interaction.user, ch):
-            await interaction.response.send_message("❌ غير مول الروم يقدر يستعمل هاد البانل — Admin/Mod ماعندهمش التحكم فيه.", ephemeral=True)
+            await interaction.response.send_message("❌ غير مول الروم يقدر يستعمل هاد البانل — Admin/Mod ماعندهمش التحكم فيه فروم ماشي ديالهم.", ephemeral=True)
             return None
         return ch
     
