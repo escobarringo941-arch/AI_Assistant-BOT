@@ -569,30 +569,9 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             await ctx.send(f"❌ خطأ: {e}", ephemeral=True)
     
     
-    @bot.hybrid_command(name="voicelock", description="سد الروم الصوتي المؤقت ديالك (حتى واحد ما يقدر يدخل من بعد)")
-    async def voicelock_cmd(ctx):
-        if not ctx.author.voice or not ctx.author.voice.channel:
-            await ctx.send("❌ خاصك تكون داخل لروم صوتي مؤقت.", ephemeral=True)
-            return
-        channel = ctx.author.voice.channel
-        if not is_temp_voice_owner(ctx.author, channel):
-            await ctx.send("❌ هاد الروم ماشي ديالك.", ephemeral=True)
-            return
-        ok, msg = await set_temp_voice_private(channel, True, actor=ctx.author)
-        await ctx.send(msg, ephemeral=not ok)
-    
-    
-    @bot.hybrid_command(name="voiceunlock", description="حل الروم الصوتي المؤقت ديالك")
-    async def voiceunlock_cmd(ctx):
-        if not ctx.author.voice or not ctx.author.voice.channel:
-            await ctx.send("❌ خاصك تكون داخل لروم صوتي مؤقت.", ephemeral=True)
-            return
-        channel = ctx.author.voice.channel
-        if not is_temp_voice_owner(ctx.author, channel):
-            await ctx.send("❌ هاد الروم ماشي ديالك.", ephemeral=True)
-            return
-        ok, msg = await set_temp_voice_private(channel, False, actor=ctx.author)
-        await ctx.send(msg, ephemeral=not ok)
+    # ملاحظة: /voicelock و /voiceunlock تحيدو — زر "🔒 Private" فـ
+    # TempVoiceControlView (temp_voice.py) كيدير نفس الخدمة بالضبط عبر
+    # نفس الدالة set_temp_voice_private.
     
     
     def is_afk_channel(channel: discord.VoiceChannel, guild: discord.Guild) -> bool:

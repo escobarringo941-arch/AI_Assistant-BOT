@@ -120,73 +120,11 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         await ctx.send("✅ رسالة شرح نظام الـ Leveling تصاوبات (ولا كانت ديجا موجودة).", delete_after=8)
     
     
-    @bot.hybrid_command(name="closeticket")
-    async def closeticket_cmd(ctx):
-        """كيسد ticket بأمر (بديل للزر) — خدام غير جوة channel ديال ticket"""
-        record = tickets_db.get("open", {}).get(str(ctx.channel.id))
-        if not record:
-            await ctx.send("❌ هاد الأمر خدام غير جوة channel ديال ticket.", delete_after=6)
-            return
-        is_opener = ctx.author.id == record.get("opener_id")
-        if not (is_opener or _is_ticket_staff(ctx.author)):
-            await ctx.send("❌ غير صاحب الـ ticket ولا الإدارة يقدرو يسدوه.", delete_after=6)
-            return
-    
-        await ctx.send("🔒 غادي نسدو هاد الـ ticket من بعد 5 ثواني...")
-        ticket_id = record["id"]
-        channel = ctx.channel
-    
-        lines = []
-        try:
-            async for msg in channel.history(limit=500, oldest_first=True):
-                ts = msg.created_at.strftime("%Y-%m-%d %H:%M:%S")
-                content = msg.content or "[بلا نص / embed / attachment]"
-                lines.append(f"[{ts}] {msg.author}: {content}")
-        except Exception as e:
-            lines.append(f"[خطأ فـ تجميع transcript: {e}]")
-    
-        transcript_text = "\n".join(lines) if lines else "ماكاين حتى رسالة."
-        transcript_path = f"/tmp/ticket_{ticket_id}_transcript.txt"
-        try:
-            with open(transcript_path, "w", encoding="utf-8") as f:
-                f.write(transcript_text)
-        except Exception:
-            transcript_path = None
-    
-        log_channel_id = TICKET_LOGS_CHANNEL_ID or MOD_LOGS_CHANNEL_ID
-        log_channel = bot.get_channel(log_channel_id) if log_channel_id else None
-        if log_channel:
-            opener_id = record.get("opener_id")
-            claimed_by = record.get("claimed_by")
-            embed = discord.Embed(
-                title=f"🎫 Ticket #{ticket_id} — تسد",
-                color=discord.Color.dark_grey(),
-                timestamp=datetime.now()
-            )
-            embed.add_field(name="👤 صاحب الـ Ticket", value=f"<@{opener_id}>" if opener_id else "غير معروف", inline=False)
-            embed.add_field(name="🙋 استلمو", value=(f"<@{claimed_by}>" if claimed_by else "محدش استلمو"), inline=False)
-            embed.add_field(name="🔒 سداه", value=ctx.author.mention, inline=False)
-            embed.add_field(name="🕐 تحلق فـ", value=record.get("opened_at", "—"), inline=False)
-            embed.set_footer(text=f"{SERVER_NAME} | Ticket #{ticket_id}")
-            try:
-                if transcript_path:
-                    await log_channel.send(embed=embed, file=discord.File(transcript_path, filename=f"ticket-{ticket_id}-transcript.txt"))
-                else:
-                    await log_channel.send(embed=embed)
-            except Exception as e:
-                print(f"[TICKETS] خطأ فـ بعث الـ transcript: {e}")
-    
-        if str(channel.id) in tickets_db.get("open", {}):
-            del tickets_db["open"][str(channel.id)]
-            save_tickets()
-    
-        await asyncio.sleep(5)
-        try:
-            await channel.delete(reason=f"Ticket #{ticket_id} تسد من طرف {ctx.author}")
-        except Exception as e:
-            print(f"[TICKETS] خطأ فـ حذف الـ channel: {e}")
-    
-    
+    # ملاحظة: الأمر /closeticket تحيد — البانل ديال التذكرة عندو زر
+    # "🔒 سد الـ Ticket" (TicketControlView فـ support_system.py) كيدير
+    # نفس الخدمة بالضبط.
+
+
     async def trigger_raid_lockdown(guild: discord.Guild, reason: str, duration_minutes: int = None):
         """كيصعد verification_level ديال السيرفر لأعلى درجة مؤقتاً، وكيبعث تنبيه للإدارة."""
         state = raid_state.setdefault(guild.id, {})

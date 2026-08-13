@@ -659,53 +659,12 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         await ctx.send(embed=embed)
     
     
-    @bot.hybrid_command(name="marry", description="اطلب من عضو يتزوجك 💍 (كيتبعث ليه DM)")
-    async def marry_cmd(ctx, user: discord.Member):
-        """اطلب من عضو يتزوجك 💍 — كيتبعث ليه طلب فـ DM وخاصو يقبل بزر"""
-        await _propose_relationship(ctx, "marriages", user)
-    
-    
-    @bot.hybrid_command(name="divorce")
-    async def divorce_cmd(ctx):
-        """طلق الزوج/الزوجة ديالك 💔 (كيحيد الرولات الشخصية ديال الجوج)"""
-        await _end_relationship_cmd(ctx, "marriages")
-    
-    
-    @bot.hybrid_command(name="marriage")
-    async def marriage_cmd(ctx, user: Optional[discord.Member] = None):
-        """بين معلومات الزواج ديالك ولا ديال عضو آخر"""
-        await _relationship_info_cmd(ctx, "marriages", user)
-    
-    
-    @bot.hybrid_command(name="marriages")
-    async def marriages_cmd(ctx):
-        """أطول 10 علاقات زواج فالسيرفر (Leaderboard)"""
-        await _relationship_leaderboard_cmd(ctx, "marriages")
-    
-    
-    @bot.hybrid_command(name="bestfriend", description="اطلب من عضو يكون Best Friend ديالك 🤝 (كيتبعث ليه DM)")
-    async def bestfriend_cmd(ctx, user: discord.Member):
-        """اطلب من عضو يكون Best Friend ديالك 🤝 — كيتبعث ليه طلب فـ DM وخاصو يقبل بزر
-        (تقدر يكون عندك بزاف ديال الـ Best Friends فنفس الوقت)"""
-        await _propose_relationship(ctx, "bestfriends", user)
-    
-    
-    @bot.hybrid_command(name="unbestfriend", description="حيد شي صديق مقرب — كتوري ليك لائحة تختار منها")
-    async def unbestfriend_cmd(ctx):
-        """قطع الصداقة مع واحد من الـ Best Friends ديالك — كتوري ليك لائحة (dropdown) تختار منها بالضبط شكون"""
-        await unbestfriend_interactive(ctx)
-    
-    
-    @bot.hybrid_command(name="bestfriendinfo")
-    async def bestfriendinfo_cmd(ctx, user: Optional[discord.Member] = None):
-        """بين لائحة الـ Best Friends ديالك ولا ديال عضو آخر"""
-        await _relationship_info_cmd(ctx, "bestfriends", user)
-    
-    
-    @bot.hybrid_command(name="bestfriends")
-    async def bestfriends_cmd(ctx):
-        """أطول 10 صداقات فالسيرفر (Leaderboard)"""
-        await _relationship_leaderboard_cmd(ctx, "bestfriends")
+    # ملاحظة: الأوامر /marry /divorce /marriage /marriages /bestfriend
+    # /unbestfriend /bestfriendinfo /bestfriends تحيدو (حيت البانل ديال
+    # /setupmarriagecenter كيدير نفس الخدمة بالضبط عبر الأزرار). الدوال
+    # الأساسية (_propose_relationship, _end_relationship_cmd,
+    # _relationship_info_cmd, _relationship_leaderboard_cmd,
+    # unbestfriend_interactive) بقاو حالهم — البانل كيستافد منهم مباشرة.
 
 
     # ═══════════════════════════════════════════════════════

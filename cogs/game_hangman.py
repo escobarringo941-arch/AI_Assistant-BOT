@@ -58,21 +58,9 @@ class Hangman(commands.Cog):
 
     # ═══════════════════════════════════════════════════
 
-    @commands.hybrid_command(name="hangman", aliases=["مشنوق"],
-                             description="لعبة المشنوق بالدارجة 🪢")
-    @commands.cooldown(1, cfg.COOLDOWN_HANGMAN, commands.BucketType.user)
-    async def hangman_cmd(self, ctx: commands.Context):
-        if not self.bank:
-            await ctx.send("❌ bank الكلمات خاوي — تأكد من `banks/hangman_words.json`.",
-                           ephemeral=True)
-            return
-        key = (ctx.guild.id, ctx.author.id)
-        if key in self.active:
-            await ctx.send("❌ عندك جلسة خدّامة ديجا — سالّيها أولاً.", ephemeral=True)
-            return
-
-        view = CategoryView(self, ctx.author)
-        await ctx.send("📚 اختار الفئة اللي بغيتي:", view=view, ephemeral=True)
+    # ملاحظة: الأمر /hangman تحيد — بانل الأركيد (GameMenuView فـ
+    # games_panel.py) كيبدا نفس اللعبة مباشرة (CategoryView) بلا ما يحتاج
+    # للأمر.
 
     def build_stats_embed(self, guild: discord.Guild, target: discord.Member) -> discord.Embed:
         """كيتسمى من /gamestats hangman"""

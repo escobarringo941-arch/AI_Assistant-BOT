@@ -614,34 +614,9 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             await ctx.send(embed=embed)
     
     
-    @bot.hybrid_command(name="suggest")
-    async def suggest_cmd(ctx, *, idea: str):
-        """Compatibility fallback. The main Suggestions flow is now the panel."""
-        if not ctx.guild:
-            return
-        ok, sug_id, channel, error = await _create_suggestion_from_panel(
-            ctx.guild,
-            ctx.author,
-            idea,
-        )
-        if not ok:
-            await ctx.send(
-                "❌ ما قدرناش نصيفطو الاقتراح دابا. جرب من بعد أو بلغ الإدارة.",
-                delete_after=8,
-            )
-            return
-    
-        if channel.id != ctx.channel.id:
-            await ctx.send(
-                f"✅ تم بعث الاقتراح ديالك (#{sug_id}) فـ {channel.mention}!",
-                delete_after=8,
-            )
-        else:
-            await ctx.send(
-                f"✅ تم بعث الاقتراح ديالك (#{sug_id})!",
-                delete_after=5,
-            )
-    
+    # ملاحظة: الأمر /suggest تحيد — البانل عندو زر "💡 دير اقتراح" كيدير
+    # نفس الخدمة بالضبط (كيستافد من نفس الدالة _create_suggestion_from_panel).
+
     
     async def setup_suggestions_info(guild: discord.Guild):
         """Keep ONE public Darija Suggestions panel; language sessions are private."""
