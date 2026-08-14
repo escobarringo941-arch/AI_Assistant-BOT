@@ -16,23 +16,22 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     
             if state.get("active"):
                 # Raid Mode مفعل → كل عضو جديد كيتطبق عليه bot_settings['raid_action'] مباشرة
+                # (كيطرد "kick" ولا كيبان "ban" — كيفما هو مضبوط، ماشي حبس)
                 try:
-                    # 🔒 Anti-Raid ما بقاش كيطرد — كيحبس فـ maximum-security.
-                    from cogs.prison import imprison_member
-                    result = await imprison_member(
-                        bot, member, offense_key="raid",
-                        reason="انضم خلال فترة Anti-Raid Lockdown", actor=None,
-                    )
-                    if not result.get("ok"):
-                        print(f"[ANTI-RAID] ❌ السجن فشل على {member}: {result.get('error')}")
-                        raise discord.Forbidden(None, result.get("error", "prison failed"))
-                    action_label = "🚨 سجن تلقائي (Anti-Raid)"
+                    action = bot_settings['raid_action']
+                    reason = "انضم خلال فترة Anti-Raid Lockdown"
+                    if action == "ban":
+                        await member.guild.ban(member, reason=reason, delete_message_seconds=0)
+                        action_label = "🚨 حظر تلقائي (Anti-Raid)"
+                    else:
+                        await member.guild.kick(member, reason=reason)
+                        action_label = "🚨 طرد تلقائي (Anti-Raid)"
                     color = discord.Color.dark_red()
     
                     await log_case(
                         member.guild, action_label, action_label.split(" ")[0], color,
                         target=member, moderator=None,
-                        reason="انضم خلال فترة Anti-Raid Lockdown",
+                        reason=reason,
                     )
                 except discord.Forbidden:
                     print(f"[ANTI-RAID] ❌ ماقدرتش نطبق {bot_settings['raid_action']} على {member} — صلاحية ناقصة")
