@@ -73,6 +73,8 @@ GAMES_COGS = [
     # 🔒 نظام السجن — خاصو يتحمل قبل ما يعيطو عليه باقي الـCogs فالـruntime
     "cogs.prison",
     "cogs.prison_panel",
+    # 🔒 شانيلز البانلز فقط (بنك/قوانين/متجر/كازينو/...) — بلا كتابة لـ Member/Boys/Girls
+    "cogs.panel_channels_readonly",
     # 🛡️ قفل الصلاحيات — آخر واحد باش يشوف كاع الرومز ديال الأنظمة الأخرى
     "cogs.channel_lockdown",
 ]
