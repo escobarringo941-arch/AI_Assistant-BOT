@@ -339,6 +339,9 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             discord.Color.green(),
         )
     
+        # وافق على القوانين → كنمسحو ليه الرسالة الترحيبية (وأي رسالة أخرى) من الـ DM
+        await purge_bot_dm_messages(member)
+    
         gender_embed = discord.Embed(
             title=_rules_lang_text(lang, "🚻 واش نتا/نتي ولد ولا بنت؟", "🚻 Are you a boy or a girl?", "🚻 Es-tu un garçon ou une fille ?"),
             description=_rules_lang_text(lang, "ضغط/ي على الزر المناسب باش نعطيوك الرول الصحيح.", "Choose the correct button to receive the right role.", "Choisis le bon bouton pour recevoir le rôle correspondant."),
@@ -404,6 +407,12 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             )
         except Exception:
             pass
+    
+        # رفض القوانين → كنمسحو ليه الرسالة الترحيبية (وأي رسالة أخرى) من الـ DM،
+        # وكنمسحو الرولات المحفوظة ديالو باش إلا رجع بـ invite جديد يتعامل معاه
+        # البوت كعضو جديد بصح (رسالة ترحيبية جديدة، ماشي "رجع للسيرفر").
+        await purge_bot_dm_messages(member)
+        forget_member_roles(member)
     
         await log_action(
             guild,
