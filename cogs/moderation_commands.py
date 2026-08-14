@@ -193,14 +193,21 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     # ║   OWNER ONLY — تحكم كامل فالسيرفر (كتم/حظر/طرد)          ║
     # ═══════════════════════════════════════════════════════
     # هاد الأوامر منفصلة على /kick//ban//mute العاديين (اللي خدامين بالصلاحيات
-    # ديال Discord)، وخاصة غير بالـ Owner بواسطة الـ ID — حتى admin/mod ما
-    # يقدروش يستعملوها. الـ Admins والـ Moderators كيبقاو خدامين بالأوامر
-    # العادية فوق حسب الصلاحيات ديال الـ role ديالهم بحال ماكانو.
+    # ديال Discord)، وخاصة غير بالـ Owner الحقيقي ديال السيرفر فديسكورد
+    # (guild.owner_id) — نفس الفحص بالضبط اللي كيدير بانل السجن، باش يبقى
+    # موحّد بين البانل والأوامر اليدوية. حتى admin/mod ما يقدروش يستعملوها.
+    # الـ Admins والـ Moderators كيبقاو خدامين بالأوامر العادية فوق حسب
+    # الصلاحيات ديال الـ role ديالهم بحال ماكانو.
+    
+    def _is_real_owner(ctx) -> bool:
+        """كيتأكد بلي الشخص هو بالضبط الأونر الحقيقي ديال السيرفر فديسكورد
+        (guild.owner_id) — نفس المنطق ديال prison_panel.py."""
+        return bool(ctx.guild) and ctx.author.id == ctx.guild.owner_id
     
     @bot.hybrid_command(name="ownerkick", description="اطرد عضو (Owner بوحدو)")
     @app_commands.default_permissions(administrator=True)
     async def ownerkick_cmd(ctx, member: discord.Member, *, reason="ما ذكرش سبب"):
-        if not is_owner(ctx):
+        if not _is_real_owner(ctx):
             return
         if member.id == member.guild.owner_id:
             await ctx.send("❌ ما نقدرش نمس فـ Owner ديال السيرفر!", delete_after=5)
@@ -231,7 +238,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     @bot.hybrid_command(name="ownerban", description="احظر عضو (Owner بوحدو)")
     @app_commands.default_permissions(administrator=True)
     async def ownerban_cmd(ctx, member: discord.Member, *, reason="ما ذكرش سبب"):
-        if not is_owner(ctx):
+        if not _is_real_owner(ctx):
             return
         if member.id == member.guild.owner_id:
             await ctx.send("❌ ما نقدرش نمس فـ Owner ديال السيرفر!", delete_after=5)
@@ -262,7 +269,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     @bot.hybrid_command(name="ownermute", description="كتم عضو (Owner بوحدو)")
     @app_commands.default_permissions(administrator=True)
     async def ownermute_cmd(ctx, member: discord.Member, duration: int = 5, *, reason="ما ذكرش سبب"):
-        if not is_owner(ctx):
+        if not _is_real_owner(ctx):
             return
         if member.id == member.guild.owner_id:
             await ctx.send("❌ ما نقدرش نمس فـ Owner ديال السيرفر!", delete_after=5)
