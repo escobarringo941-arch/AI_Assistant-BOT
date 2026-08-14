@@ -105,12 +105,6 @@ DEFAULT_OFFENSES: dict[str, dict[str, Any]] = {
         "cell": "block",
         "severity": 2,
     },
-    "rules_reject": {
-        "label": "رفض قوانين السيرفر",
-        "seconds": 7 * DAY,
-        "cell": "block",
-        "severity": 2,
-    },
     "nsfw": {
         "label": "محتوى NSFW",
         "seconds": 7 * DAY,
