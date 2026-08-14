@@ -38,6 +38,7 @@ CHANNEL_NAMES = {
     "max":        "🚨┃maximum-security",  # قاسح
     "warden":     "🗣️┃warden-office",     # استئناف / تواصل
     "complaints": "📮┃complaint-desk",    # Warden + Owner — الشكايات الخفيفة
+    "visits":     "🧑‍🤝‍🧑┃visit-room",    # بانل تنظيم الزيارات — Admin/Mod/Warden/Owner
     "log":        "📋┃prison-log",        # Owner بوحدو
 }
 
@@ -169,6 +170,23 @@ def solitary_channel_name(display_name: str, user_id: int) -> str:
     return f"{SOLITARY_PREFIX}{cleaned}"
 
 
+# ═══════ الزيارات (Visits) ═══════
+VISIT_DEFAULT_SECONDS = 15 * MINUTE
+VISIT_MIN_SECONDS = 3 * MINUTE
+VISIT_MAX_SECONDS = 60 * MINUTE
+VISIT_INVITE_TIMEOUT_SECONDS = 5 * MINUTE
+VISIT_CHANNEL_PREFIX = "💬┃visit-"
+
+
+def visit_channel_name(display_name: str, user_id: int) -> str:
+    """سمية فويس شانيل الزيارة المؤقتة، مبنية على اسم السجين."""
+    cleaned = re.sub(r"[^a-zA-Z0-9\-]+", "-", str(display_name or "")).strip("-").lower()
+    cleaned = re.sub(r"-{2,}", "-", cleaned)[:20].strip("-")
+    if not cleaned:
+        cleaned = f"inmate-{int(user_id) % 100000}"
+    return f"{VISIT_CHANNEL_PREFIX}{cleaned}"
+
+
 # أقصى ما يقدر يدير الـ Warden (الشرطة): زنزانة holding + 12 ساعة.
 WARDEN_MAX_SECONDS = 12 * HOUR
 WARDEN_ALLOWED_CELLS = ("holding",)
@@ -286,6 +304,12 @@ def _blank_guild() -> dict:
         # ── اللوحة العامة ──
         "wanted_channel_id": 0,
         "wanted_message_id": 0,
+        # ── فويس شانيلز الزنازن (نفس سمية الروم النصية) ──
+        "voice_channels": {key: 0 for key in CELL_KEYS},
+        # ── الزيارات ──
+        "visits": {},         # visit_id → record
+        "visit_seq": 0,
+        "visits_message_id": 0,
     }
 
 
@@ -313,6 +337,12 @@ class PrisonStore:
             record["channels"].setdefault(key, 0)
         record["roles"].setdefault("prisoner", 0)
         record["roles"].setdefault("warden", 0)
+        record.setdefault("voice_channels", {})
+        for key in CELL_KEYS:
+            record["voice_channels"].setdefault(key, 0)
+        record.setdefault("visits", {})
+        record.setdefault("visit_seq", 0)
+        record.setdefault("visits_message_id", 0)
         return record
 
     def save(self) -> bool:
@@ -492,6 +522,95 @@ class PrisonStore:
 
     def solitary_count(self, guild_id: int) -> int:
         return len(self.solitary(guild_id))
+
+    # ───── فويس شانيلز الزنازن ─────
+
+    def voice_channels(self, guild_id: int) -> dict[str, int]:
+        return self.guild(guild_id).setdefault("voice_channels", {})
+
+    def voice_channel_id(self, guild_id: int, key: str) -> int:
+        return int(self.voice_channels(guild_id).get(key) or 0)
+
+    def set_voice_channel(self, guild_id: int, key: str, channel_id: int) -> None:
+        self.voice_channels(guild_id)[key] = int(channel_id)
+        self.save()
+
+    # ───── الزيارات ─────
+
+    def visits(self, guild_id: int) -> dict[str, dict]:
+        return self.guild(guild_id).setdefault("visits", {})
+
+    def visit(self, guild_id: int, visit_id) -> Optional[dict]:
+        return self.visits(guild_id).get(str(visit_id))
+
+    def active_visit_for_inmate(self, guild_id: int, user_id: int) -> Optional[dict]:
+        uid = int(user_id)
+        for record in self.visits(guild_id).values():
+            if int(record.get("prisoner_id", 0) or 0) == uid and record.get("status") in ("pending", "active"):
+                return record
+        return None
+
+    def active_visit_for_visitor(self, guild_id: int, user_id: int) -> Optional[dict]:
+        uid = int(user_id)
+        for record in self.visits(guild_id).values():
+            if int(record.get("visitor_id", 0) or 0) == uid and record.get("status") in ("pending", "active"):
+                return record
+        return None
+
+    def next_visit_id(self, guild_id: int) -> str:
+        record = self.guild(guild_id)
+        record["visit_seq"] = int(record.get("visit_seq", 0) or 0) + 1
+        return str(record["visit_seq"])
+
+    def add_visit(
+        self,
+        guild_id: int,
+        *,
+        prisoner_id: int,
+        visitor_id: int,
+        seconds: int,
+        by: int,
+    ) -> dict:
+        vid = self.next_visit_id(guild_id)
+        record = {
+            "id": vid,
+            "prisoner_id": int(prisoner_id),
+            "visitor_id": int(visitor_id),
+            "channel_id": 0,
+            "seconds": int(seconds),
+            "since": 0,
+            "until": 0,
+            "created": now_ts(),
+            "by": int(by),
+            "status": "pending",   # pending → active → (كتمسح ملي تسالي)
+        }
+        self.visits(guild_id)[vid] = record
+        self.save()
+        return record
+
+    def start_visit(self, guild_id: int, visit_id, *, channel_id: int, seconds: int) -> Optional[dict]:
+        record = self.visit(guild_id, visit_id)
+        if record is None:
+            return None
+        record["channel_id"] = int(channel_id)
+        record["status"] = "active"
+        record["since"] = now_ts()
+        record["until"] = now_ts() + int(seconds)
+        self.save()
+        return record
+
+    def remove_visit(self, guild_id: int, visit_id) -> Optional[dict]:
+        record = self.visits(guild_id).pop(str(visit_id), None)
+        if record is not None:
+            self.save()
+        return record
+
+    def expired_visits(self, guild_id: int) -> list[tuple[str, dict]]:
+        return [
+            (vid, record)
+            for vid, record in list(self.visits(guild_id).items())
+            if record.get("status") == "active" and now_ts() >= int(record.get("until", 0) or 0)
+        ]
 
     # ───── الشكايات ─────
 

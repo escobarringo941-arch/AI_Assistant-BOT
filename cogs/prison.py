@@ -34,9 +34,13 @@ from cogs.prison_core import (
     SOLITARY_MAX_ROOMS,
     SOLITARY_MAX_SECONDS,
     SOLITARY_PREFIX,
+    VISIT_CHANNEL_PREFIX,
+    VISIT_DEFAULT_SECONDS,
+    VISIT_INVITE_TIMEOUT_SECONDS,
     WANTED_BOARD_CHANNEL_NAME,
     parse_duration,
     solitary_channel_name,
+    visit_channel_name,
     PRISON_CATEGORY_NAME,
     PRISONER_ROLE_COLOR,
     PRISONER_ROLE_NAME,
@@ -74,6 +78,27 @@ COLOR_INFO = discord.Color.blurple()
 
 def _cell_display(key: str) -> str:
     return CHANNEL_NAMES.get(key, key)
+
+
+async def _reply(interaction: discord.Interaction, message: str) -> None:
+    if interaction.response.is_done():
+        await interaction.followup.send(message, ephemeral=True)
+    else:
+        await interaction.response.send_message(message, ephemeral=True)
+
+
+def _is_visit_staff(cog, member: discord.Member) -> bool:
+    """Admin / Mod / Warden / Owner — هوما لي عندهم صلاحية يستعملو بانل الزيارات."""
+    if cog.is_server_owner(member, member.guild):
+        return True
+    if cog.is_warden(member):
+        return True
+    role_ids = {role.id for role in member.roles}
+    if cog.admin_role_id and cog.admin_role_id in role_ids:
+        return True
+    if cog.moderator_role_id and cog.moderator_role_id in role_ids:
+        return True
+    return False
 
 
 class PrisonerCardView(discord.ui.View):
@@ -447,6 +472,302 @@ class SolitaryDurationModal(discord.ui.Modal, title="🔗 مدة الحبس ال
         )
 
 
+# ═══════════════════════════════════════════════════════
+# ║          الزيارات — الواجهة (UI) ديال الغرفة           ║
+# ═══════════════════════════════════════════════════════
+
+class VisitStaffView(discord.ui.View):
+    """أي View كيرث من هادي = Admin/Mod/Warden/Owner بوحدهم."""
+
+    def __init__(self, timeout: float = 180):
+        super().__init__(timeout=timeout)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        cog = interaction.client.get_cog("PrisonSystem")
+        if cog is None or not isinstance(interaction.user, discord.Member):
+            await _reply(interaction, "❌ النظام ماشي متاح دابا.")
+            return False
+        if not _is_visit_staff(cog, interaction.user):
+            await _reply(interaction, "❌ هاد البانل خاصة بالإدارة (Admin / Mod / Warden / Owner).")
+            return False
+        return True
+
+
+class VisitVisitorSelect(discord.ui.UserSelect):
+    def __init__(self, prisoner_id: int):
+        super().__init__(placeholder="اختار الشخص لي بغيتي تدعوه…", min_values=1, max_values=1)
+        self.prisoner_id = prisoner_id
+
+    async def callback(self, interaction: discord.Interaction):
+        cog = interaction.client.get_cog("PrisonSystem")
+        if cog is None:
+            await _reply(interaction, "❌ النظام ماشي متاح دابا.")
+            return
+        visitor = self.values[0]
+        if visitor.bot:
+            await _reply(interaction, "❌ ما يمكنش تدعو بوت.")
+            return
+        if visitor.id == self.prisoner_id:
+            await _reply(interaction, "❌ السجين ما يقدرش يزور راسو.")
+            return
+        if cog.store.is_inmate(interaction.guild.id, visitor.id):
+            await _reply(interaction, "❌ الزائر ماخصوش يكون سجين هو الآخر.")
+            return
+        if cog.store.active_visit_for_visitor(interaction.guild.id, visitor.id):
+            await _reply(interaction, "❌ هاد الشخص عندو زيارة جارية ولا معلّقة أصلاً.")
+            return
+
+        result = await cog.request_visit(
+            interaction.guild,
+            prisoner_id=self.prisoner_id,
+            visitor_id=visitor.id,
+            actor=interaction.user,
+        )
+        if not result.get("ok"):
+            await _reply(interaction, f"❌ {result.get('error')}")
+            return
+        note = "" if result.get("dm") else "\n⚠️ الـDM ديالو مسدودة — الدعوة تبعثات فروم الزيارات."
+        await _reply(
+            interaction,
+            f"✅ تبعثات الدعوة لـ {visitor.mention} باش يزور <@{self.prisoner_id}>."
+            f"{note}\n⏳ عندو {format_duration(VISIT_INVITE_TIMEOUT_SECONDS)} باش يجاوب.",
+        )
+
+
+class VisitVisitorPickView(VisitStaffView):
+    def __init__(self, prisoner_id: int):
+        super().__init__(timeout=180)
+        self.add_item(VisitVisitorSelect(prisoner_id))
+
+
+class VisitPrisonerSelect(discord.ui.Select):
+    def __init__(self, cog, guild: discord.Guild):
+        options: list[discord.SelectOption] = []
+        for uid, record in cog.store.inmates(guild.id).items():
+            uid_int = int(uid)
+            if cog.store.in_solitary(guild.id, uid_int):
+                continue
+            if cog.store.active_visit_for_inmate(guild.id, uid_int):
+                continue
+            member = guild.get_member(uid_int)
+            offense = cog.store.offense(guild.id, record.get("offense", "manual"))
+            options.append(
+                discord.SelectOption(
+                    label=(member.display_name if member else f"ID {uid}")[:100],
+                    value=str(uid_int),
+                    description=offense["label"][:100],
+                )
+            )
+            if len(options) >= 25:
+                break
+        super().__init__(
+            placeholder="اختار السجين اللي بغا يتزار…" if options else "ماكاين حتى سجين متاح دابا للزيارة",
+            options=options or [discord.SelectOption(label="—", value="0")],
+            min_values=1,
+            max_values=1,
+            disabled=not options,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        prisoner_id = int(self.values[0])
+        member = interaction.guild.get_member(prisoner_id)
+        if member is None:
+            await _reply(interaction, "❌ هاد السجين ماشي فالسيرفر دابا.")
+            return
+        await interaction.response.send_message(
+            f"👥 بغيتي تدعو شكون يزور {member.mention}؟ اختارو تحت:",
+            view=VisitVisitorPickView(prisoner_id),
+            ephemeral=True,
+        )
+
+
+class VisitPanelPrisonerView(VisitStaffView):
+    def __init__(self, cog, guild: discord.Guild):
+        super().__init__(timeout=180)
+        self.add_item(VisitPrisonerSelect(cog, guild))
+
+
+class VisitEndSelect(discord.ui.Select):
+    def __init__(self, cog, guild: discord.Guild):
+        options: list[discord.SelectOption] = []
+        for vid, record in cog.store.visits(guild.id).items():
+            if record.get("status") != "active":
+                continue
+            prisoner = guild.get_member(int(record.get("prisoner_id", 0)))
+            visitor = guild.get_member(int(record.get("visitor_id", 0)))
+            label = f"{(prisoner.display_name if prisoner else '؟')} × {(visitor.display_name if visitor else '؟')}"
+            left = format_duration(remaining_seconds(record))
+            options.append(
+                discord.SelectOption(label=label[:100], value=vid, description=f"باقي {left}"[:100])
+            )
+            if len(options) >= 25:
+                break
+        super().__init__(
+            placeholder="اختار الزيارة اللي بغيتي تسدها…" if options else "ماكاين حتى زيارة جارية",
+            options=options or [discord.SelectOption(label="—", value="0")],
+            min_values=1,
+            max_values=1,
+            disabled=not options,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        cog = interaction.client.get_cog("PrisonSystem")
+        await interaction.response.defer(ephemeral=True)
+        result = await cog.end_visit(
+            interaction.guild, self.values[0], reason="سدها الإدارة يدويا", actor=interaction.user
+        )
+        if not result.get("ok"):
+            await interaction.followup.send(f"❌ {result.get('error')}", ephemeral=True)
+        else:
+            await interaction.followup.send("✅ تسدات الزيارة ورجع السجين لزنزانتو.", ephemeral=True)
+
+
+class VisitEndView(VisitStaffView):
+    def __init__(self, cog, guild: discord.Guild):
+        super().__init__(timeout=180)
+        self.add_item(VisitEndSelect(cog, guild))
+
+
+class VisitInviteView(discord.ui.View):
+    """
+    دعوة الزيارة — كتبعث DM (ولا روم الزيارات إلا DM مسدودة) للزائر بوحدو.
+    """
+
+    def __init__(self, cog, visit_id: str, visitor_id: int, guild_id: int):
+        super().__init__(timeout=VISIT_INVITE_TIMEOUT_SECONDS)
+        self.cog = cog
+        self.visit_id = visit_id
+        self.visitor_id = visitor_id
+        self.guild_id = guild_id
+        self.invite_message: Optional[discord.Message] = None
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.visitor_id:
+            await _reply(interaction, "❌ هاد الدعوة ماشي ليك.")
+            return False
+        return True
+
+    def _lock(self) -> None:
+        for child in self.children:
+            child.disabled = True
+
+    async def _sync_message(self, interaction: Optional[discord.Interaction] = None) -> None:
+        target = interaction.message if interaction is not None else self.invite_message
+        if target is None:
+            return
+        try:
+            await target.edit(view=self)
+        except (discord.Forbidden, discord.HTTPException, discord.NotFound):
+            pass
+
+    @discord.ui.button(
+        label="قبول الزيارة", emoji="✅", style=discord.ButtonStyle.success, custom_id="ggmw9:visit:accept"
+    )
+    async def accept(self, interaction: discord.Interaction, button: discord.ui.Button):
+        guild = self.cog.bot.get_guild(self.guild_id)
+        if guild is None:
+            await _reply(interaction, "❌ السيرفر ماشي متاح دابا.")
+            return
+        await interaction.response.defer(ephemeral=True)
+        result = await self.cog.accept_visit(guild, self.visit_id, visitor_id=self.visitor_id)
+        if not result.get("ok"):
+            await interaction.followup.send(f"❌ {result.get('error')}", ephemeral=True)
+        else:
+            channel = result["channel"]
+            await interaction.followup.send(
+                f"✅ قبلتي الزيارة! دخل هنا: {channel.mention}", ephemeral=True
+            )
+        self._lock()
+        await self._sync_message(interaction)
+        self.stop()
+
+    @discord.ui.button(
+        label="رفض", emoji="❌", style=discord.ButtonStyle.secondary, custom_id="ggmw9:visit:decline"
+    )
+    async def decline(self, interaction: discord.Interaction, button: discord.ui.Button):
+        guild = self.cog.bot.get_guild(self.guild_id)
+        if guild is not None:
+            await self.cog.decline_visit(guild, self.visit_id, reason="رفض الزائر الدعوة")
+        await _reply(interaction, "🚫 رفضتي الزيارة.")
+        self._lock()
+        await self._sync_message(interaction)
+        self.stop()
+
+    async def on_timeout(self) -> None:
+        self._lock()
+        await self._sync_message()
+        guild = self.cog.bot.get_guild(self.guild_id)
+        if guild is not None:
+            await self.cog.decline_visit(guild, self.visit_id, reason="⏳ ما تجاوبش فالوقت المحدد")
+
+
+class VisitPanelView(discord.ui.View):
+    """
+    البانل الثابتة فغرفة الزيارات — Admin/Mod/Warden/Owner بوحدهم كيقدرو يستعملوها.
+    persistent (timeout=None) باش تخدم حتى بعد ريستارت البوت.
+    """
+
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        cog = interaction.client.get_cog("PrisonSystem")
+        if cog is None or not isinstance(interaction.user, discord.Member):
+            await _reply(interaction, "❌ النظام ماشي متاح دابا.")
+            return False
+        if not _is_visit_staff(cog, interaction.user):
+            await _reply(interaction, "❌ هاد البانل خاصة بالإدارة (Admin / Mod / Warden / Owner).")
+            return False
+        return True
+
+    @discord.ui.button(
+        label="طلب زيارة",
+        emoji="🔔",
+        style=discord.ButtonStyle.success,
+        custom_id="ggmw9:visit:request",
+    )
+    async def request_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        cog = interaction.client.get_cog("PrisonSystem")
+        if not cog.store.inmates(interaction.guild.id):
+            await _reply(interaction, "🕊️ ماكاين حتى سجين دابا.")
+            return
+        await interaction.response.send_message(
+            "🔒 اختار السجين اللي بغيتي تنظم ليه زيارة:",
+            view=VisitPanelPrisonerView(cog, interaction.guild),
+            ephemeral=True,
+        )
+
+    @discord.ui.button(
+        label="الزيارات الجارية",
+        emoji="📋",
+        style=discord.ButtonStyle.secondary,
+        custom_id="ggmw9:visit:list",
+    )
+    async def list_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        cog = interaction.client.get_cog("PrisonSystem")
+        await interaction.response.send_message(
+            embed=cog.visits_embed(interaction.guild), ephemeral=True
+        )
+
+    @discord.ui.button(
+        label="سد زيارة",
+        emoji="📴",
+        style=discord.ButtonStyle.danger,
+        custom_id="ggmw9:visit:end",
+    )
+    async def end_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        cog = interaction.client.get_cog("PrisonSystem")
+        active = [r for r in cog.store.visits(interaction.guild.id).values() if r.get("status") == "active"]
+        if not active:
+            await _reply(interaction, "🕊️ ماكاين حتى زيارة جارية دابا.")
+            return
+        await interaction.response.send_message(
+            "📴 اختار الزيارة اللي بغيتي تسدها:",
+            view=VisitEndView(cog, interaction.guild),
+            ephemeral=True,
+        )
+
+
 class PrisonSystem(commands.Cog):
     """النواة التنفيذية ديال السجن."""
 
@@ -502,12 +823,22 @@ class PrisonSystem(commands.Cog):
     def prison_channel(self, guild: discord.Guild, key: str):
         return guild.get_channel(int(self.store.guild(guild.id)["channels"].get(key) or 0))
 
+    def cell_voice_channel(self, guild: discord.Guild, key: str):
+        return guild.get_channel(int(self.store.voice_channel_id(guild.id, key)))
+
+    def visit_channel(self, guild: discord.Guild):
+        return self.prison_channel(guild, "visits")
+
     def prison_channel_ids(self, guild: discord.Guild) -> set[int]:
         record = self.store.guild(guild.id)
         ids = {int(record.get("category_id") or 0)}
         ids.update(int(cid or 0) for cid in record["channels"].values())
+        ids.update(int(cid or 0) for cid in record.get("voice_channels", {}).values())
         ids.update(
             int(s.get("channel_id") or 0) for s in record.get("solitary", {}).values()
+        )
+        ids.update(
+            int(v.get("channel_id") or 0) for v in record.get("visits", {}).values()
         )
         ids.add(int(record.get("wanted_channel_id") or 0))
         ids.discard(0)
@@ -526,7 +857,12 @@ class PrisonSystem(commands.Cog):
         for solitary in record.get("solitary", {}).values():
             if int(solitary.get("channel_id") or 0) == channel.id:
                 return True
-        return str(getattr(channel, "name", "")).startswith(SOLITARY_PREFIX)
+        # رومز الزيارات المؤقتة (حتى إلا تحركو من الكاتيكوري)
+        for visit in record.get("visits", {}).values():
+            if int(visit.get("channel_id") or 0) == channel.id:
+                return True
+        name = str(getattr(channel, "name", ""))
+        return name.startswith(SOLITARY_PREFIX) or name.startswith(VISIT_CHANNEL_PREFIX)
 
     def is_warden(self, member: discord.Member) -> bool:
         role = self.warden_role(member.guild)
@@ -641,19 +977,33 @@ class PrisonSystem(commands.Cog):
                 read_message_history=True,
             )
 
-        # إسقاط سلطة الادمين والمود داخل السجن
+        # الادمين والمود: يشوفو كاع السجن (view-only) ولكن حرفيا ميقدروش يديرو
+        # تا شي حاجة فيه — لا يكتبو، لا يدخلو للفويس، لا يديرو تا صلاحية إدارية.
+        # الاستثناء الوحيد ديالهم هو غرفة الزيارات (_visit_voice_overwrites).
+        # التحكم الفعلي (سجن/فك/تعديل) محسوب بالرول ديال Warden فمنطق البوت،
+        # ماشي بالـDiscord permissions.
         for role_id in (self.admin_role_id, self.moderator_role_id):
             role = guild.get_role(role_id) if role_id else None
             if role:
                 overwrites[role] = discord.PermissionOverwrite(
-                    view_channel=False,
-                    read_messages=False,
+                    view_channel=True,
+                    read_messages=True,
+                    read_message_history=True,
                     send_messages=False,
+                    add_reactions=False,
+                    create_public_threads=False,
+                    create_private_threads=False,
                     manage_messages=False,
                     manage_channels=False,
                     manage_permissions=False,
                     manage_threads=False,
                     manage_webhooks=False,
+                    connect=False,
+                    speak=False,
+                    stream=False,
+                    mute_members=False,
+                    deafen_members=False,
+                    move_members=False,
                 )
 
         if warden:
@@ -702,7 +1052,9 @@ class PrisonSystem(commands.Cog):
                 create_private_threads=False,
             )
         elif key == "log":
-            # 🕵️ prison-log = Owner بوحدو. حتى Warden ما كيشوفش أش كيدير الاونر.
+            # 🕵️ prison-log = Owner بوحدو. حتى Warden/Admin/Mod ما كيشوفوش أش كيدير الاونر.
+            # (الادمين والمود عندهم دابا view-only على باقي السجن، ولكن هاد الروم
+            #  بالذات محمية بشكل صريح باش يبقى الـstealth log حقيقي.)
             overwrites[prisoner] = discord.PermissionOverwrite(view_channel=False)
             warden_role = self.warden_role(guild)
             if warden_role:
@@ -712,10 +1064,70 @@ class PrisonSystem(commands.Cog):
                     read_message_history=False,
                     send_messages=False,
                 )
+            for role_id in (self.admin_role_id, self.moderator_role_id):
+                role = guild.get_role(role_id) if role_id else None
+                if role:
+                    overwrites[role] = discord.PermissionOverwrite(
+                        view_channel=False,
+                        read_messages=False,
+                        read_message_history=False,
+                        send_messages=False,
+                    )
         else:
             # الزنازن: الوصول كيتعطى **للعضو بذاتو** ماشي للرول،
             # باش السجين يشوف غير الزنزانة ديالو.
             overwrites[prisoner] = discord.PermissionOverwrite(view_channel=False)
+        return overwrites
+
+    def _cell_voice_overwrites(self, guild: discord.Guild, key: str) -> dict:
+        """
+        صلاحيات فويس شانيل الزنزانة (نفس سمية الروم النصية):
+          • الادمين/المود: يشوفو (view_channel) ولكن ميقدروش يدخلو (connect=False).
+          • الـWarden: دخول وتكلم كامل — بحال الاونر.
+          • السجين: بلا صلاحية على مستوى الرول؛ الوصول الفردي فـ _grant_cell_access.
+        """
+        overwrites = dict(self._category_overwrites(guild))
+        warden = self.warden_role(guild)
+        if warden:
+            overwrites[warden] = discord.PermissionOverwrite(
+                view_channel=True,
+                connect=True,
+                speak=True,
+                stream=True,
+                use_voice_activation=True,
+            )
+        prisoner = self.prisoner_role(guild)
+        if prisoner:
+            overwrites[prisoner] = discord.PermissionOverwrite(view_channel=False, connect=False)
+        return overwrites
+
+    def _visit_voice_overwrites(
+        self, guild: discord.Guild, prisoner: discord.Member, visitor: discord.Member
+    ) -> dict:
+        """
+        فويس شانيل الزيارة المؤقتة: الاستثناء الوحيد اللي الادمين/المود يقدرو
+        يدخلو ليه (بحال Warden/Owner) — ولكن غير هو، ماشي باقي السجن.
+        """
+        overwrites = dict(self._category_overwrites(guild))
+        for role_id in (self.admin_role_id, self.moderator_role_id):
+            role = guild.get_role(role_id) if role_id else None
+            if role:
+                overwrites[role] = discord.PermissionOverwrite(
+                    view_channel=True, connect=True, speak=True, stream=True,
+                )
+        warden = self.warden_role(guild)
+        if warden:
+            overwrites[warden] = discord.PermissionOverwrite(
+                view_channel=True, connect=True, speak=True, stream=True,
+            )
+        prisoner_role = self.prisoner_role(guild)
+        if prisoner_role:
+            overwrites[prisoner_role] = discord.PermissionOverwrite(view_channel=False, connect=False)
+        full = discord.PermissionOverwrite(
+            view_channel=True, connect=True, speak=True, use_voice_activation=True,
+        )
+        overwrites[prisoner] = full
+        overwrites[visitor] = full
         return overwrites
 
     async def ensure_infrastructure(self, guild: discord.Guild) -> dict:
@@ -793,6 +1205,43 @@ class PrisonSystem(commands.Cog):
 
             self.store.save()
 
+            # ───── فويس شانيلز الزنازن (نفس سمية الروم النصية) ─────
+            voice_map = record.setdefault("voice_channels", {})
+            for key in CELL_KEYS:
+                name = CHANNEL_NAMES[key]
+                voice_channel = guild.get_channel(int(voice_map.get(key) or 0))
+                if not isinstance(voice_channel, discord.VoiceChannel):
+                    voice_channel = discord.utils.find(
+                        lambda c: c.name == name and c.category_id == category.id,
+                        guild.voice_channels,
+                    )
+                overwrites = self._cell_voice_overwrites(guild, key)
+                if voice_channel is None:
+                    try:
+                        voice_channel = await guild.create_voice_channel(
+                            name,
+                            category=category,
+                            overwrites=overwrites,
+                            reason=f"{REASON_TAG}: create cell voice channel",
+                        )
+                        result["created"].append(f"{name} (voice)")
+                    except (discord.Forbidden, discord.HTTPException) as exc:
+                        result["errors"].append(f"{name} (voice): {exc}")
+                        continue
+                else:
+                    try:
+                        await voice_channel.edit(
+                            category=category,
+                            overwrites=overwrites,
+                            reason=f"{REASON_TAG}: repair cell voice channel",
+                        )
+                        result["repaired"].append(f"{name} (voice)")
+                    except (discord.Forbidden, discord.HTTPException) as exc:
+                        result["errors"].append(f"{name} (voice): {exc}")
+                voice_map[key] = voice_channel.id
+
+            self.store.save()
+
         # رجّع الوصول ديال السجناء الحاليين لزنازنهم + خبّي السجن على الباقي
         await self.hide_everywhere(guild)
         for uid in list(self.store.inmates(guild.id)):
@@ -801,6 +1250,7 @@ class PrisonSystem(commands.Cog):
                 await self._grant_cell_access(member)
         await self.ensure_wanted_board(guild)
         await self.publish_prison_code(guild)
+        await self.publish_visit_panel(guild)
         await self.refresh_wanted_board(guild)
         return result
 
@@ -844,36 +1294,75 @@ class PrisonSystem(commands.Cog):
         return changed
 
     async def _grant_cell_access(self, member: discord.Member) -> None:
-        """كيعطي السجين وصول للزنزانة ديالو بوحدها (overwrite فردي)."""
+        """
+        كيعطي السجين وصول للزنزانة ديالو بوحدها (overwrite فردي) — نصي + صوتي.
+        وإلا كان السجين دابا فشي فويس شانيل، كنرجعوه أوتوماتيكيا لفويس زنزانتو
+        (نفس المنطق ملي يتسجن أول مرة، ملي يخرج من الانفرادي، أو ملي تتبدل الزنزانة ديالو).
+        """
         record = self.store.inmate(member.guild.id, member.id)
         if not record:
             return
         cell_key = record.get("cell", "holding")
+        target_voice: Optional[discord.VoiceChannel] = None
+
         for key in CELL_KEYS:
             channel = self.prison_channel(member.guild, key)
-            if channel is None:
-                continue
+            if channel is not None:
+                try:
+                    if key == cell_key:
+                        await channel.set_permissions(
+                            member,
+                            overwrite=discord.PermissionOverwrite(
+                                view_channel=True,
+                                read_messages=True,
+                                read_message_history=True,
+                                send_messages=True,
+                                attach_files=False,
+                                embed_links=False,
+                                add_reactions=False,
+                            ),
+                            reason=f"{REASON_TAG}: assign cell",
+                        )
+                    elif channel.overwrites_for(member).view_channel is not None:
+                        await channel.set_permissions(
+                            member, overwrite=None, reason=f"{REASON_TAG}: clear old cell"
+                        )
+                except (discord.Forbidden, discord.HTTPException, discord.NotFound):
+                    pass
+
+            voice_channel = self.cell_voice_channel(member.guild, key)
+            if voice_channel is not None:
+                try:
+                    if key == cell_key:
+                        await voice_channel.set_permissions(
+                            member,
+                            overwrite=discord.PermissionOverwrite(
+                                view_channel=True,
+                                connect=True,
+                                speak=True,
+                                use_voice_activation=True,
+                                stream=False,
+                            ),
+                            reason=f"{REASON_TAG}: assign cell voice",
+                        )
+                        target_voice = voice_channel
+                    elif voice_channel.overwrites_for(member).view_channel is not None:
+                        await voice_channel.set_permissions(
+                            member, overwrite=None, reason=f"{REASON_TAG}: clear old cell voice"
+                        )
+                except (discord.Forbidden, discord.HTTPException, discord.NotFound):
+                    pass
+
+        # 🔊 نقل أوتوماتيكي: إلا كان السجين دابا فشي فويس، نرجعوه لفويس زنزانتو.
+        if target_voice is not None:
             try:
-                if key == cell_key:
-                    await channel.set_permissions(
-                        member,
-                        overwrite=discord.PermissionOverwrite(
-                            view_channel=True,
-                            read_messages=True,
-                            read_message_history=True,
-                            send_messages=True,
-                            attach_files=False,
-                            embed_links=False,
-                            add_reactions=False,
-                        ),
-                        reason=f"{REASON_TAG}: assign cell",
+                state = member.voice
+                if state and state.channel and state.channel.id != target_voice.id:
+                    await member.move_to(
+                        target_voice, reason=f"{REASON_TAG}: auto-move to assigned cell voice"
                     )
-                elif channel.overwrites_for(member).view_channel is not None:
-                    await channel.set_permissions(
-                        member, overwrite=None, reason=f"{REASON_TAG}: clear old cell"
-                    )
-            except (discord.Forbidden, discord.HTTPException, discord.NotFound):
-                continue
+            except (discord.Forbidden, discord.HTTPException):
+                pass
 
     async def _revoke_cell_access(self, guild: discord.Guild, member_or_id) -> None:
         target = member_or_id
@@ -883,15 +1372,35 @@ class PrisonSystem(commands.Cog):
             return
         for key in CELL_KEYS:
             channel = self.prison_channel(guild, key)
-            if channel is None:
-                continue
-            try:
-                if channel.overwrites_for(target).view_channel is not None:
-                    await channel.set_permissions(
-                        target, overwrite=None, reason=f"{REASON_TAG}: release"
-                    )
-            except (discord.Forbidden, discord.HTTPException, discord.NotFound):
-                continue
+            if channel is not None:
+                try:
+                    if channel.overwrites_for(target).view_channel is not None:
+                        await channel.set_permissions(
+                            target, overwrite=None, reason=f"{REASON_TAG}: release"
+                        )
+                except (discord.Forbidden, discord.HTTPException, discord.NotFound):
+                    pass
+
+            voice_channel = self.cell_voice_channel(guild, key)
+            if voice_channel is not None:
+                try:
+                    if voice_channel.overwrites_for(target).view_channel is not None:
+                        await voice_channel.set_permissions(
+                            target, overwrite=None, reason=f"{REASON_TAG}: release voice"
+                        )
+                except (discord.Forbidden, discord.HTTPException, discord.NotFound):
+                    pass
+                # طرد ديركت إلا كان مازال داخل فويس زنزانتو
+                try:
+                    if (
+                        isinstance(target, discord.Member)
+                        and target.voice
+                        and target.voice.channel
+                        and target.voice.channel.id == voice_channel.id
+                    ):
+                        await target.move_to(None, reason=f"{REASON_TAG}: release — disconnect")
+                except (discord.Forbidden, discord.HTTPException):
+                    pass
 
     # ═══════════════════════════════════════════════════
     # ║              3. السجن وإطلاق السراح               ║
@@ -1681,6 +2190,290 @@ class PrisonSystem(commands.Cog):
         return {"ok": True}
 
     # ═══════════════════════════════════════════════════
+    # ║                  5ب. الزيارات                     ║
+    # ═══════════════════════════════════════════════════
+
+    async def publish_visit_panel(self, guild: discord.Guild) -> None:
+        channel = self.visit_channel(guild)
+        if channel is None:
+            return
+        record = self.store.guild(guild.id)
+        embed = discord.Embed(
+            title="👥 غرفة الزيارات",
+            description=(
+                "هنا كتنظم الزيارات بين السجناء والمعارف ديالهم.\n\n"
+                "🔔 **طلب زيارة** — اختار سجين، من بعد اختار الشخص لي بغيتي تدعوه.\n"
+                "📋 **الزيارات الجارية** — شوف شكون كيزور شكون دابا.\n"
+                "📴 **سد زيارة** — وقّف زيارة جارية قبل ما تسالي مدتها.\n\n"
+                f"⏱️ كل زيارة كتدوم **{format_duration(VISIT_DEFAULT_SECONDS)}** بشكل تلقائي، "
+                "ومن بعد كيرجع السجين أوتوماتيكيا لزنزانتو.\n"
+                "⚠️ هاد البانل خاصة بالإدارة (Admin / Mod / Warden / Owner) — "
+                "روم الزيارة الصوتية كتبقى خاصة بالسجين والزائر المدعو (+ الإدارة للإشراف)."
+            ),
+            color=discord.Color.blurple(),
+        )
+        message_id = int(record.get("visits_message_id") or 0)
+        if message_id:
+            try:
+                message = await channel.fetch_message(message_id)
+                await message.edit(embed=embed, view=VisitPanelView())
+                return
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                pass
+        try:
+            message = await channel.send(embed=embed, view=VisitPanelView())
+            record["visits_message_id"] = message.id
+            self.store.save()
+        except (discord.Forbidden, discord.HTTPException):
+            pass
+
+    def visits_embed(self, guild: discord.Guild) -> discord.Embed:
+        visits = self.store.visits(guild.id)
+        embed = discord.Embed(
+            title="👥 الزيارات — الحالة", color=discord.Color.blurple(), timestamp=datetime.now()
+        )
+        active = [r for r in visits.values() if r.get("status") == "active"]
+        pending = [r for r in visits.values() if r.get("status") == "pending"]
+        if not active and not pending:
+            embed.description = "🕊️ ماكاين حتى زيارة دابا."
+            return embed
+        if active:
+            lines = [
+                f"👥 <@{r['prisoner_id']}> × <@{r['visitor_id']}> — تسالي <t:{int(r['until'])}:R>"
+                for r in active
+            ]
+            embed.add_field(name=f"🟢 جارية ({len(active)})", value="\n".join(lines)[:1024], inline=False)
+        if pending:
+            lines = [f"⏳ <@{r['prisoner_id']}> × <@{r['visitor_id']}>" for r in pending]
+            embed.add_field(name=f"🟡 معلّقة ({len(pending)})", value="\n".join(lines)[:1024], inline=False)
+        return embed
+
+    async def request_visit(
+        self, guild: discord.Guild, *, prisoner_id: int, visitor_id: int, actor
+    ) -> dict:
+        """كتبعث دعوة زيارة للزائر. كترجع {"ok": bool, "error"?: str, "record"?, "dm"?: bool}."""
+        if not self.store.is_inmate(guild.id, prisoner_id):
+            return {"ok": False, "error": "هاد السجين خرج من السجن."}
+        if self.store.in_solitary(guild.id, prisoner_id):
+            return {"ok": False, "error": "السجين فالحبس الانفرادي — ما يقدرش يستقبل زوار دابا."}
+        if self.store.active_visit_for_inmate(guild.id, prisoner_id):
+            return {"ok": False, "error": "عندو زيارة جارية ولا معلّقة أصلاً."}
+        if self.store.active_visit_for_visitor(guild.id, visitor_id):
+            return {"ok": False, "error": "هاد الزائر عندو زيارة جارية ولا معلّقة أصلاً."}
+
+        prisoner = guild.get_member(prisoner_id)
+        visitor = guild.get_member(visitor_id)
+        if prisoner is None or visitor is None:
+            return {"ok": False, "error": "شي حد ماشي متاح دابا."}
+
+        record = self.store.add_visit(
+            guild.id,
+            prisoner_id=prisoner_id,
+            visitor_id=visitor_id,
+            seconds=VISIT_DEFAULT_SECONDS,
+            by=int(getattr(actor, "id", 0) or 0),
+        )
+
+        embed = discord.Embed(
+            title="👥 دعوة زيارة",
+            description=(
+                f"شي حد بغاك تزور **{prisoner.display_name}** فالسجن.\n\n"
+                f"⏱️ الزيارة غادي تدوم **{format_duration(VISIT_DEFAULT_SECONDS)}** إلا قبلتي.\n"
+                "غادي تنعطاو فويس شانيل خاص بيكم بجوج."
+            ),
+            color=discord.Color.blurple(),
+            timestamp=datetime.now(),
+        )
+        embed.set_footer(text=f"الدعوة كتلغى تلقائيا بعد {format_duration(VISIT_INVITE_TIMEOUT_SECONDS)}")
+
+        view = VisitInviteView(self, record["id"], visitor_id, guild.id)
+        sent_dm = False
+        try:
+            message = await visitor.send(embed=embed, view=view)
+            view.invite_message = message
+            sent_dm = True
+        except (discord.Forbidden, discord.HTTPException):
+            pass
+
+        if not sent_dm:
+            channel = self.visit_channel(guild)
+            if channel is None:
+                self.store.remove_visit(guild.id, record["id"])
+                return {"ok": False, "error": "الـDM مسدودة وروم الزيارات ماكايناش."}
+            try:
+                message = await channel.send(content=visitor.mention, embed=embed, view=view)
+                view.invite_message = message
+            except (discord.Forbidden, discord.HTTPException):
+                self.store.remove_visit(guild.id, record["id"])
+                return {"ok": False, "error": "ما قدرتش نوصل الدعوة (DM مسدودة + ماقدرتش نكتب فروم الزيارات)."}
+
+        log_embed = discord.Embed(
+            title="📮 طلب زيارة جديد",
+            description=f"{prisoner.mention} × {visitor.mention}",
+            color=discord.Color.blurple(),
+            timestamp=datetime.now(),
+        )
+        log_embed.add_field(
+            name="👮 طالب الزيارة",
+            value=(actor.mention if isinstance(actor, (discord.Member, discord.User)) else "؟"),
+            inline=True,
+        )
+        await self._log(guild, log_embed)
+
+        return {"ok": True, "record": record, "dm": sent_dm}
+
+    async def accept_visit(self, guild: discord.Guild, visit_id, *, visitor_id: int) -> dict:
+        record = self.store.visit(guild.id, visit_id)
+        if not record or record.get("status") != "pending":
+            return {"ok": False, "error": "هاد الدعوة ماشي صالحة (تلغات ولا تجاوب عليها قبل)."}
+        if int(record.get("visitor_id", 0)) != int(visitor_id):
+            return {"ok": False, "error": "هاد الدعوة ماشي ليك."}
+
+        prisoner_id = int(record["prisoner_id"])
+        if not self.store.is_inmate(guild.id, prisoner_id):
+            self.store.remove_visit(guild.id, visit_id)
+            return {"ok": False, "error": "السجين خرج من السجن قبل الزيارة."}
+        if self.store.in_solitary(guild.id, prisoner_id):
+            self.store.remove_visit(guild.id, visit_id)
+            return {"ok": False, "error": "السجين تنقل للحبس الانفرادي — ما يقدرش يستقبلك دابا."}
+
+        prisoner = guild.get_member(prisoner_id)
+        visitor = guild.get_member(visitor_id)
+        category = self.prison_category(guild)
+        if prisoner is None or visitor is None or category is None:
+            self.store.remove_visit(guild.id, visit_id)
+            return {"ok": False, "error": "شي حد (ولا الكاتيكوري) ماشي متاح دابا."}
+
+        seconds = int(record.get("seconds") or VISIT_DEFAULT_SECONDS)
+        overwrites = self._visit_voice_overwrites(guild, prisoner, visitor)
+        try:
+            channel = await guild.create_voice_channel(
+                visit_channel_name(prisoner.display_name, prisoner.id),
+                category=category,
+                overwrites=overwrites,
+                reason=f"{REASON_TAG}: visit room ({prisoner} × {visitor})",
+            )
+        except (discord.Forbidden, discord.HTTPException) as exc:
+            return {"ok": False, "error": f"ما قدرتش نصاوب روم الزيارة: {exc}"}
+
+        self.store.start_visit(guild.id, visit_id, channel_id=channel.id, seconds=seconds)
+        record = self.store.visit(guild.id, visit_id)
+
+        # 🔊 نقل أوتوماتيكي: السجين إلا كان دابا فشي فويس
+        try:
+            if prisoner.voice and prisoner.voice.channel:
+                await prisoner.move_to(channel, reason=f"{REASON_TAG}: visit start")
+        except (discord.Forbidden, discord.HTTPException):
+            pass
+        # الزائر: نديرو move إلا كان أصلاً فشي فويس بنفس السيرفر
+        try:
+            if visitor.voice and visitor.voice.channel:
+                await visitor.move_to(channel, reason=f"{REASON_TAG}: visit start")
+        except (discord.Forbidden, discord.HTTPException):
+            pass
+
+        embed = discord.Embed(
+            title="👥 بدات زيارة",
+            description=f"{prisoner.mention} × {visitor.mention}",
+            color=discord.Color.blurple(),
+            timestamp=datetime.now(),
+        )
+        embed.add_field(name="⏱️ المدة", value=format_duration(seconds), inline=True)
+        embed.add_field(name="🚪 الروم", value=channel.mention, inline=True)
+        await self._log(guild, embed)
+
+        try:
+            await channel.send(
+                f"👋 {visitor.mention} جا يزور {prisoner.mention}.\n"
+                f"⏱️ الزيارة غادي تسالي **<t:{int(record['until'])}:R>** — من بعد كترجعو أوتوماتيكيا."
+            )
+        except (discord.Forbidden, discord.HTTPException):
+            pass
+
+        return {"ok": True, "channel": channel, "record": record}
+
+    async def decline_visit(
+        self, guild: discord.Guild, visit_id, *, reason: str = "مرفوضة"
+    ) -> dict:
+        record = self.store.remove_visit(guild.id, visit_id)
+        if not record:
+            return {"ok": False, "error": "الدعوة ماكايناش."}
+        embed = discord.Embed(
+            title="🚫 دعوة زيارة تلغات",
+            description=f"<@{record['prisoner_id']}> × <@{record['visitor_id']}>\n{reason}",
+            color=discord.Color.dark_grey(),
+            timestamp=datetime.now(),
+        )
+        await self._log(guild, embed)
+        return {"ok": True}
+
+    async def end_visit(
+        self, guild: discord.Guild, visit_id, *, reason: str = "سالات المدة", actor=None
+    ) -> dict:
+        """كتسد زيارة جارية: كترجع السجين لفويس زنزانتو أوتوماتيكيا وكتطرد الزائر."""
+        record = self.store.visit(guild.id, visit_id)
+        if not record or record.get("status") != "active":
+            return {"ok": False, "error": "هاد الزيارة ماشي جارية."}
+
+        channel = guild.get_channel(int(record.get("channel_id") or 0))
+        prisoner = guild.get_member(int(record.get("prisoner_id", 0)))
+        visitor = guild.get_member(int(record.get("visitor_id", 0)))
+
+        # 🔊 رجّع السجين لفويس زنزانتو (إلا كان دابا فروم الزيارة)
+        if prisoner is not None:
+            cell_record = self.store.inmate(guild.id, prisoner.id)
+            cell_voice = None
+            if cell_record:
+                cell_voice = self.cell_voice_channel(guild, cell_record.get("cell", "holding"))
+            try:
+                if (
+                    prisoner.voice
+                    and channel is not None
+                    and prisoner.voice.channel
+                    and prisoner.voice.channel.id == channel.id
+                ):
+                    if cell_voice is not None:
+                        await prisoner.move_to(cell_voice, reason=f"{REASON_TAG}: visit ended")
+                    else:
+                        await prisoner.move_to(None, reason=f"{REASON_TAG}: visit ended")
+            except (discord.Forbidden, discord.HTTPException):
+                pass
+
+        # طرد الزائر
+        if visitor is not None and channel is not None:
+            try:
+                if visitor.voice and visitor.voice.channel and visitor.voice.channel.id == channel.id:
+                    await visitor.move_to(None, reason=f"{REASON_TAG}: visit ended")
+            except (discord.Forbidden, discord.HTTPException):
+                pass
+
+        if channel is not None:
+            try:
+                await channel.delete(reason=f"{REASON_TAG}: visit ended")
+            except (discord.Forbidden, discord.HTTPException, discord.NotFound):
+                pass
+
+        self.store.remove_visit(guild.id, visit_id)
+
+        embed = discord.Embed(
+            title="🔚 نهاية الزيارة",
+            description=f"<@{record['prisoner_id']}> × <@{record['visitor_id']}>\n{reason}",
+            color=discord.Color.dark_teal(),
+            timestamp=datetime.now(),
+        )
+        embed.add_field(
+            name="👮 المنفّذ",
+            value=(
+                actor.mention
+                if isinstance(actor, (discord.Member, discord.User))
+                else "النظام الآلي (سالات المدة)"
+            ),
+            inline=True,
+        )
+        await self._log(guild, embed)
+        return {"ok": True}
+
+    # ═══════════════════════════════════════════════════
     # ║          6. لوحة القوانين + لوحة السجناء          ║
     # ═══════════════════════════════════════════════════
 
@@ -2003,6 +2796,20 @@ class PrisonSystem(commands.Cog):
     async def _before_cards(self):
         await self.bot.wait_until_ready()
 
+    @tasks.loop(seconds=20)
+    async def visit_loop(self):
+        """كتسد الزيارات اللي سالات مدتها وكترجع السجين أوتوماتيكيا لفويس زنزانتو."""
+        for guild in list(self.bot.guilds):
+            try:
+                for visit_id, _record in self.store.expired_visits(guild.id):
+                    await self.end_visit(guild, visit_id, reason="سالات مدة الزيارة")
+            except Exception as exc:
+                print(f"[PRISON] ❌ visit_loop: {type(exc).__name__}: {exc}")
+
+    @visit_loop.before_loop
+    async def _before_visits(self):
+        await self.bot.wait_until_ready()
+
     # ═══════════════════════════════════════════════════
     # ║                  7. الأحداث                       ║
     # ═══════════════════════════════════════════════════
@@ -2018,6 +2825,7 @@ class PrisonSystem(commands.Cog):
                     continue  # ما تصاوبش عاد — كيستنا Setup من بانل الاونر
                 await self.hide_everywhere(guild)
                 await self.publish_prison_code(guild)
+                await self.publish_visit_panel(guild)
                 await self.refresh_board(guild)
                 await self.refresh_wanted_board(guild)
                 await self.refresh_cell_cards(guild)
@@ -2029,6 +2837,8 @@ class PrisonSystem(commands.Cog):
             self.board_loop.start()
         if not self.card_loop.is_running():
             self.card_loop.start()
+        if not self.visit_loop.is_running():
+            self.visit_loop.start()
 
     @commands.Cog.listener()
     async def on_guild_channel_create(self, channel: discord.abc.GuildChannel):
@@ -2149,6 +2959,7 @@ class PrisonSystem(commands.Cog):
         self.release_loop.cancel()
         self.board_loop.cancel()
         self.card_loop.cancel()
+        self.visit_loop.cancel()
 
 
 # ═══════════════════════════════════════════════════════
@@ -2195,5 +3006,6 @@ def prison_cog(bot: commands.Bot) -> Optional[PrisonSystem]:
 async def setup(bot: commands.Bot):
     bot.add_view(PrisonerCardView())      # persistent: كيخدم حتى بعد ريستارت
     bot.add_view(ComplaintReviewView())   # persistent: أزرار قبول/رفض الشكايات
+    bot.add_view(VisitPanelView())        # persistent: بانل غرفة الزيارات
     await bot.add_cog(PrisonSystem(bot))
-    print("✅ Prison System: السجن واجد — الرولات، الزنازن، العدادات الحية")
+    print("✅ Prison System: السجن واجد — الرولات، الزنازن الصوتية، الزيارات، العدادات الحية")
