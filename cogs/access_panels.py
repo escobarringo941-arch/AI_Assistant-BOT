@@ -412,7 +412,12 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             discord.Color.red(),
         )
         try:
-            await guild.kick(member, reason="رفض الموافقة على قوانين السيرفر")
+            # 🔒 رفض القوانين ما بقاش كيطرد — كيحبس.
+            from cogs.prison import imprison_member
+            await imprison_member(
+                bot, member, offense_key="rules_reject",
+                reason="رفض الموافقة على قوانين السيرفر", actor=None,
+            )
         except discord.Forbidden:
             await log_action(
                 guild,

@@ -35,7 +35,9 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                 "⚙️ **Bot Settings** — Anti-Raid / Warns / Auto-Info / Features / XP Settings\n"
                 "🔄 **Refresh All Panels** — يجدّد كاع الواجهات الرسمية بلا حذف Messages وبلا Redeploy\n"
                 "🏙️ **GGMW9 CITY** — Setup / Repair ديال المدينة المهنية والقنوات ديالها\n"
-                "🔊 **Voice Tools** — صاوب Room Mute Panel باختيار Voice Channel\n\n"
+                "🔊 **Voice Tools** — صاوب Room Mute Panel باختيار Voice Channel\n"
+                "🔒 **PRISON** — سجن/إطلاق سراح، الـWardens، وقانون العقوبات\n"
+                "🛡️ **Server Lockdown** — قفل صلاحيات كاع الشانيلز على الأعضاء\n\n"
                 "🔒 كل Interaction كتتأكد من **Server Owner الحقيقي** حتى إلا شاف شي حد الرسالة بالغلط."
             ),
             color=discord.Color.dark_gold(),
@@ -1102,6 +1104,93 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                 ephemeral=True,
             )
     
+        @discord.ui.button(
+            label="PRISON", emoji="🔒", style=discord.ButtonStyle.danger,
+            custom_id="ggmw9:owner:prison", row=2
+        )
+        async def prison(self, interaction: discord.Interaction, button: discord.ui.Button):
+            """🔒 المركز الكامل ديال السجن — Owner بوحدو."""
+            prison_cog = bot.get_cog("PrisonSystem")
+            if not prison_cog:
+                await interaction.response.send_message(
+                    "❌ PrisonSystem Cog ماشي محمّلة. شوف Railway logs.",
+                    ephemeral=True,
+                )
+                return
+            from cogs.prison_panel import PrisonOwnerPanelView, prison_panel_embed
+            await interaction.response.send_message(
+                embed=prison_panel_embed(prison_cog, interaction.guild),
+                view=PrisonOwnerPanelView(prison_cog, interaction.guild),
+                ephemeral=True,
+            )
+
+        @discord.ui.button(
+            label="Server Lockdown", emoji="🛡️", style=discord.ButtonStyle.primary,
+            custom_id="ggmw9:owner:lockdown", row=2
+        )
+        async def server_lockdown(self, interaction: discord.Interaction, button: discord.ui.Button):
+            """🛡️ فرض سياسة الصلاحيات على كاع السيرفر — Owner بوحدو."""
+            lockdown = bot.get_cog("ChannelLockdown")
+            if not lockdown:
+                await interaction.response.send_message(
+                    "❌ ChannelLockdown Cog ماشي محمّلة.", ephemeral=True
+                )
+                return
+            await interaction.response.defer(ephemeral=True, thinking=True)
+            result = await lockdown.harden_guild(interaction.guild)
+            embed = discord.Embed(
+                title="🛡️ Server Lockdown — تقرير",
+                description=(
+                    "تفرضات السياسة: **العضو العادي ما يقدر يبدّل والو** فحتى شانيل.\n"
+                    "الحقوق الإدارية بقات غير لـ **Admin** و **Moderator**، "
+                    "وحتى هوما محرومين من المناطق المحمية."
+                ),
+                color=discord.Color.green(),
+                timestamp=datetime.now(),
+            )
+            embed.add_field(name="🔍 شانيلز تفحصو", value=str(result["scanned"]), inline=True)
+            embed.add_field(name="🔒 مناطق محمية", value=str(result["protected"]), inline=True)
+            embed.add_field(name="🛠️ overwrites تصلحو", value=str(len(result["channels"])), inline=True)
+            if result["roles"]:
+                embed.add_field(
+                    name=f"🎭 رولات تنقّاو ({len(result['roles'])})",
+                    value="\n".join(result["roles"])[:1024],
+                    inline=False,
+                )
+            if result["channels"]:
+                embed.add_field(
+                    name="📋 آخر التصحيحات",
+                    value="\n".join(result["channels"][:12])[:1024],
+                    inline=False,
+                )
+            if not result["roles"] and not result["channels"]:
+                embed.add_field(
+                    name="✅ النتيجة", value="كلشي كان أصلاً مضبوط. ما تبدل والو.", inline=False
+                )
+            bypass = result.get("admin_bypass") or []
+            if bypass:
+                embed.color = discord.Color.red()
+                embed.add_field(
+                    name=f"🚨 خطر — {len(bypass)} رول باقي عندو Administrator",
+                    value=(
+                        "\n".join(bypass)[:900]
+                        + "\n\n⚠️ **Administrator كيتجاوز كاع الـoverwrites.**\n"
+                        "هاد الرولات غادي يشوفو السجن و Temp Rooms و Underground "
+                        "حتى إلا دنينا عليهم. حيد منهم Administrator من "
+                        "Server Settings → Roles، ولا خليهم إلا كانو بوتات "
+                        "كتثق فيهم."
+                    ),
+                    inline=False,
+                )
+            else:
+                embed.add_field(
+                    name="🛡️ Administrator bypass",
+                    value="✅ ماكاين حتى رول كيتجاوز الـoverwrites. السجن محكم.",
+                    inline=False,
+                )
+            embed.set_footer(text="كيتصلح أوتوماتيكيا فأي روم جديدة ولا تعديل يدوي")
+            await interaction.followup.send(embed=embed, ephemeral=True)
+
         @discord.ui.button(
             label="Security / Logs", emoji="🧾", style=discord.ButtonStyle.secondary,
             custom_id="ggmw9:owner:logs", row=1

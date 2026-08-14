@@ -205,17 +205,27 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         if member.id == member.guild.owner_id:
             await ctx.send("❌ ما نقدرش نمس فـ Owner ديال السيرفر!", delete_after=5)
             return
+        # 🔒 ما بقاش كاين طرد — كيمشي للسجن.
+        from cogs.prison import imprison_member
+        from cogs.prison_core import format_duration as _fmt
+        result = await imprison_member(
+            bot, member, offense_key="kick", reason=reason, actor=ctx.author
+        )
+        if not result.get("ok"):
+            await ctx.send(f"❌ {result.get('error')}", delete_after=8)
+            return
+        record = result["record"]
+        # 🕵️ Owner stealth: ما كيتسجل والو فـ Mod-Logs، والرد خاص بالاونر بوحدو.
         try:
-            await member.kick(reason=reason)
-            case_id = await log_case(
-                ctx.guild, "👢 طرد (Owner)", "👢", discord.Color.orange(),
-                target=member, moderator=ctx.author, reason=reason
-            )
-            await ctx.send(f"👢 {member.mention} تم طرده من طرف Owner. Case #{case_id}", delete_after=6)
-        except discord.Forbidden:
-            await ctx.send("❌ ما عنديش الصلاحية!", delete_after=5)
-        except Exception as e:
-            await ctx.send(f"❌ خطأ: {str(e)}", delete_after=5)
+            await ctx.message.delete()
+        except Exception:
+            pass
+        await ctx.send(
+            f"⛓️ {member.mention} تحط فالسجن ({_fmt(int(record['sentence']))}). "
+            f"Prison Case #{record['case']}",
+            ephemeral=True,
+            delete_after=10,
+        )
     
     
     @bot.hybrid_command(name="ownerban", description="احظر عضو (Owner بوحدو)")
@@ -226,17 +236,27 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         if member.id == member.guild.owner_id:
             await ctx.send("❌ ما نقدرش نمس فـ Owner ديال السيرفر!", delete_after=5)
             return
+        # 🔒 ما بقاش كاين حظر — سجن مشدد فـ maximum-security.
+        from cogs.prison import imprison_member
+        from cogs.prison_core import format_duration as _fmt
+        result = await imprison_member(
+            bot, member, offense_key="ban", reason=reason, actor=ctx.author
+        )
+        if not result.get("ok"):
+            await ctx.send(f"❌ {result.get('error')}", delete_after=8)
+            return
+        record = result["record"]
+        # 🕵️ Owner stealth: ما كيتسجل والو فـ Mod-Logs.
         try:
-            await member.ban(reason=reason)
-            case_id = await log_case(
-                ctx.guild, "🚫 حظر (Owner)", "🚫", discord.Color.red(),
-                target=member, moderator=ctx.author, reason=reason
-            )
-            await ctx.send(f"🚫 {member.mention} تم حظره من طرف Owner. Case #{case_id}", delete_after=6)
-        except discord.Forbidden:
-            await ctx.send("❌ ما عنديش الصلاحية!", delete_after=5)
-        except Exception as e:
-            await ctx.send(f"❌ خطأ: {str(e)}", delete_after=5)
+            await ctx.message.delete()
+        except Exception:
+            pass
+        await ctx.send(
+            f"🚨 {member.mention} تحط فـ Maximum Security ({_fmt(int(record['sentence']))}). "
+            f"Prison Case #{record['case']}",
+            ephemeral=True,
+            delete_after=10,
+        )
     
     
     @bot.hybrid_command(name="ownermute", description="كتم عضو (Owner بوحدو)")
@@ -247,25 +267,28 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         if member.id == member.guild.owner_id:
             await ctx.send("❌ ما نقدرش نمس فـ Owner ديال السيرفر!", delete_after=5)
             return
-        muted_role = ctx.guild.get_role(MUTED_ROLE_ID)
-        if not muted_role:
-            await ctx.send("❌ ما لقيتش دور Mute! حط ID صحيح فـ MUTED_ROLE_ID.", delete_after=5)
+        # 🔒 الكتم ولّى حبس قصير فـ holding-cell.
+        from cogs.prison import imprison_member
+        from cogs.prison_core import format_duration as _fmt
+        result = await imprison_member(
+            bot, member, offense_key="mute",
+            seconds=max(60, int(duration) * 60), reason=reason, actor=ctx.author
+        )
+        if not result.get("ok"):
+            await ctx.send(f"❌ {result.get('error')}", delete_after=8)
             return
+        record = result["record"]
+        # 🕵️ Owner stealth: ما كيتسجل والو فـ Mod-Logs.
         try:
-            await member.add_roles(muted_role)
-            user_id = str(member.id)
-            if user_id in mute_tasks and not mute_tasks[user_id].done():
-                mute_tasks[user_id].cancel()
-            task = asyncio.create_task(auto_unmute(member, duration, ctx.guild))
-            mute_tasks[user_id] = task
-            case_id = await log_case(
-                ctx.guild, "🔇 كتم (Owner)", "🔇", discord.Color.yellow(),
-                target=member, moderator=ctx.author, reason=reason,
-                extra=f"المدة: {duration} دقيقة"
-            )
-            await ctx.send(f"🔇 {member.mention} تكتم من طرف Owner ({duration} دقيقة). Case #{case_id}", delete_after=6)
-        except discord.Forbidden:
-            await ctx.send("❌ ما عنديش الصلاحية!", delete_after=5)
+            await ctx.message.delete()
+        except Exception:
+            pass
+        await ctx.send(
+            f"⛓️ {member.mention} تحط فـ Holding Cell ({_fmt(int(record['sentence']))}). "
+            f"Prison Case #{record['case']}",
+            ephemeral=True,
+            delete_after=10,
+        )
     
     
     @bot.hybrid_command(name="muteall")

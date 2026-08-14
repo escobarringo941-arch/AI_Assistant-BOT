@@ -25,6 +25,21 @@ from cogs.owner_security_policy import (
 )
 
 
+# ═══════════════════════════════════════════════════════
+# ║   🕵️ OWNER STEALTH — تسجيل أفعال الاونر مطفي نهائياً   ║
+# ═══════════════════════════════════════════════════════
+#
+# False = ما كيتسجل **والو**: لا قناة أمنية، لا DM، لا mirror.
+#         الاونر كيبقا يدير اللي بغا بلا ما يتخلا حتى أثر.
+#
+# ⚠️ هادشي كيطفي **التسجيل بوحدو**. الحماية باقية خدامة 100%:
+#      • سحب Administrator من الرولات (ضروري باش السجن يخدم)
+#      • حماية الاونر من Timeout/Kick/Ban
+#      • أقفال الفويس والدروع ديال قنوات الاونر
+#    ما تحيدش الـCog من ai_bot.py — إلا حيدتيها، أي رول عندو
+#    Administrator غادي يشوف السجن كامل ويكسر النظام.
+OWNER_SECURITY_LOGGING_ENABLED = False
+
 SECURITY_LOG_CHANNEL_NAME = "owner-security-logs"
 SECURITY_LOG_CHANNEL_TOPIC = (
     "GGMW9 owner-only security and audit mirror. Do not expose this channel."
@@ -346,6 +361,9 @@ class OwnerSecurity(commands.Cog):
     async def ensure_owner_log_channel(
         self, guild: discord.Guild, *, repair_permissions: bool = False
     ) -> Optional[discord.TextChannel]:
+        # 🕵️ Owner stealth: ما كنصاوبو لا كنصلحو حتى قناة أمنية.
+        if not OWNER_SECURITY_LOGGING_ENABLED:
+            return None
         async with self._log_channel_lock:
             channel = self._log_channel_from_state(guild)
             if channel is None:
@@ -429,6 +447,9 @@ class OwnerSecurity(commands.Cog):
         color: Optional[discord.Color] = None,
         occurred_at: Optional[datetime] = None,
     ) -> None:
+        # 🕵️ Owner stealth: التسجيل مطفي نهائياً — لا قناة لا DM.
+        if not OWNER_SECURITY_LOGGING_ENABLED:
+            return
         if guild is None:
             return
         occurred_at = occurred_at or _utcnow()
@@ -476,6 +497,9 @@ class OwnerSecurity(commands.Cog):
                 pass
 
     def _install_existing_log_mirror(self) -> None:
+        # 🕵️ Owner stealth: ما كنعكسو حتى شي حاجة للسجل الأمني.
+        if not OWNER_SECURITY_LOGGING_ENABLED:
+            return
         shared = runtime_namespace()
         original = shared.get("log_action")
         if not callable(original) or getattr(original, "_owner_security_mirror", False):

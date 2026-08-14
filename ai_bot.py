@@ -70,6 +70,11 @@ GAMES_COGS = [
     "cogs.moderation",
     "cogs.unverified_visibility",
     "cogs.temp_room_full_control",
+    # 🔒 نظام السجن — خاصو يتحمل قبل ما يعيطو عليه باقي الـCogs فالـruntime
+    "cogs.prison",
+    "cogs.prison_panel",
+    # 🛡️ قفل الصلاحيات — آخر واحد باش يشوف كاع الرومز ديال الأنظمة الأخرى
+    "cogs.channel_lockdown",
 ]
 
 # هاد الـCog أمني: إلا فشل ما خاصش البوت يكمل وكأن الحماية خدامة.
@@ -78,6 +83,7 @@ REQUIRED_STANDALONE_COGS = {
     "cogs.city",
     "cogs.city.businesses",
     "cogs.unverified_visibility",
+    "cogs.prison",
 }
 
 
@@ -93,6 +99,14 @@ def _configure_cog_bridge(shared):
         "ADMIN_ROLE_ID": shared["ADMIN_ROLE_ID"],
         "MODERATOR_ROLE_ID": shared["MODERATOR_ROLE_ID"],
         "MUTED_ROLE_ID": shared["MUTED_ROLE_ID"],
+        # ── Prison / lockdown systems need these too ──
+        "MEMBER_ROLE_ID": shared["MEMBER_ROLE_ID"],
+        "BOYS_ROLE_ID": shared["BOYS_ROLE_ID"],
+        "GIRLS_ROLE_ID": shared["GIRLS_ROLE_ID"],
+        "MOD_LOGS_CHANNEL_ID": shared["MOD_LOGS_CHANNEL_ID"],
+        "OWNER_CONTROL_CHANNEL_ID": shared["OWNER_CONTROL_CHANNEL_ID"],
+        "TEMP_VC_CATEGORY_ID": shared["TEMP_VC_CATEGORY_ID"],
+        "EXEMPT_ROLE_IDS": shared["EXEMPT_ROLE_IDS"],
         "JOIN_TO_CREATE_CHANNEL_ID": shared["JOIN_TO_CREATE_CHANNEL_ID"],
         "UNVERIFIED_ROLE_ID": shared["UNVERIFIED_ROLE_ID"],
         "RULES_CHANNEL_ID": shared["RULES_CHANNEL_ID"],

@@ -25,6 +25,23 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 
+from cogs.prison_core import format_duration as format_prison_duration
+
+
+async def send_to_prison(bot, member, *, offense_key, reason, actor, seconds=None):
+    """🔒 كاع العقوبات كتمر من هنا. ما بقاش كاين طرد ولا حظر."""
+    from cogs.prison import imprison_member
+
+    return await imprison_member(
+        bot,
+        member,
+        offense_key=offense_key,
+        seconds=seconds,
+        reason=reason,
+        actor=actor,
+    )
+
+
 # عدل هاد IDs والاسم باش يوافقو السيرفر ديالك
 OWNER_ID = 1260089246216097832  # صاحب السيرفر
 SERVER_NAME = "GGMW9"
@@ -231,9 +248,52 @@ class Moderation(commands.Cog):
             timestamp=datetime.now(),
         )
         embed.set_footer(text=f"{SERVER_NAME} | Moderation Perms")
-        await ctx.send(embed=embed)
+        await self._respond(ctx, embed=embed)
 
     # ───── Helpers ─────
+
+    @staticmethod
+    def _is_server_owner(ctx) -> bool:
+        return bool(ctx.guild and ctx.author and ctx.author.id == ctx.guild.owner_id)
+
+    async def _respond(self, ctx, *, embed=None, content=None):
+        """
+        🕵️ Owner stealth.
+
+        ملي **الاونر** هو اللي دار الأمر: الرد كيولي خاص بيه بوحدو —
+        ephemeral فـ Slash، وفـ prefix كتتمسح رسالة الأمر والرد كيمشي فـ DM.
+        حتى واحد فالشات ما كيشوف أش دار الاونر.
+
+        ملي ادمين ولا مود هو اللي دار الأمر: كلشي كيبقا عام بحال ما كان.
+        """
+        if not self._is_server_owner(ctx):
+            await ctx.send(embed=embed, content=content)
+            return
+
+        # كنمسحو رسالة الأمر (فحالة prefix) باش ما تبقاش أثر
+        try:
+            await ctx.message.delete()
+        except Exception:
+            pass
+
+        # Slash → ephemeral (حتى واحد ما كيشوفها)
+        if getattr(ctx, "interaction", None) is not None:
+            try:
+                await ctx.send(embed=embed, content=content, ephemeral=True)
+                return
+            except Exception:
+                pass
+
+        # Prefix → DM للاونر، وإلا رد قصير كيتمسح
+        try:
+            await ctx.author.send(embed=embed, content=content)
+            return
+        except Exception:
+            pass
+        try:
+            await ctx.send(embed=embed, content=content, delete_after=6)
+        except Exception:
+            pass
 
     async def auto_unmute(
         self,
@@ -283,23 +343,28 @@ class Moderation(commands.Cog):
             await ctx.send("❌ هاد العضو معفي من Auto-Mod/Moderation (Admin/Mod)!")
             return
 
-        try:
-            await member.kick(reason=reason)
-            embed = discord.Embed(
-                title="👢 طرد",
-                description=f"**{member.mention}** تم طرده.",
-                color=COLOR_KICK,
-                timestamp=datetime.now(),
-            )
-            embed.add_field(name="السبب", value=reason, inline=False)
-            embed.add_field(name="الطارد", value=ctx.author.mention, inline=False)
-            embed.set_footer(text=f"{SERVER_NAME} | Moderation")
-            await ctx.send(embed=embed)
-            await self._log_successful_target(ctx, member, "Kick", reason)
-        except discord.Forbidden:
-            await ctx.send("❌ ما عنديش الصلاحية!", delete_after=5)
-        except Exception as e:
-            await ctx.send(f"❌ خطأ: {str(e)}", delete_after=5)
+        # 🔒 ما بقاش كاين طرد — كلشي كيمشي للسجن.
+        result = await send_to_prison(
+            self.bot, member, offense_key="kick", reason=reason, actor=ctx.author
+        )
+        if not result.get("ok"):
+            await ctx.send(f"❌ {result.get('error')}", delete_after=8)
+            return
+
+        record = result["record"]
+        embed = discord.Embed(
+            title="⛓️ سجن (بدل الطرد)",
+            description=f"**{member.mention}** تحط فـ السجن.",
+            color=COLOR_KICK,
+            timestamp=datetime.now(),
+        )
+        embed.add_field(name="المدة", value=format_prison_duration(int(record["sentence"])), inline=True)
+        embed.add_field(name="Case", value=f"#{record['case']}", inline=True)
+        embed.add_field(name="السبب", value=reason, inline=False)
+        embed.add_field(name="المنفذ", value=ctx.author.mention, inline=False)
+        embed.set_footer(text=f"{SERVER_NAME} | Prison")
+        await self._respond(ctx, embed=embed)
+        await self._log_successful_target(ctx, member, "Imprison (kick converted)", reason)
 
     # ───── ban / unban ─────
 
@@ -325,23 +390,28 @@ class Moderation(commands.Cog):
             await ctx.send("❌ هاد العضو معفي من Auto-Mod/Moderation (Admin/Mod)!")
             return
 
-        try:
-            await member.ban(reason=reason)
-            embed = discord.Embed(
-                title="🚫 حظر",
-                description=f"**{member.mention}** تم حظره.",
-                color=COLOR_BAN,
-                timestamp=datetime.now(),
-            )
-            embed.add_field(name="السبب", value=reason, inline=False)
-            embed.add_field(name="الحاظر", value=ctx.author.mention, inline=False)
-            embed.set_footer(text=f"{SERVER_NAME} | Moderation")
-            await ctx.send(embed=embed)
-            await self._log_successful_target(ctx, member, "Ban", reason)
-        except discord.Forbidden:
-            await ctx.send("❌ ما عنديش الصلاحية!", delete_after=5)
-        except Exception as e:
-            await ctx.send(f"❌ خطأ: {str(e)}", delete_after=5)
+        # 🔒 ما بقاش كاين حظر — كيولي سجن قاسح فـ maximum-security.
+        result = await send_to_prison(
+            self.bot, member, offense_key="ban", reason=reason, actor=ctx.author
+        )
+        if not result.get("ok"):
+            await ctx.send(f"❌ {result.get('error')}", delete_after=8)
+            return
+
+        record = result["record"]
+        embed = discord.Embed(
+            title="🚨 سجن مشدد (بدل الحظر)",
+            description=f"**{member.mention}** تحط فـ Maximum Security.",
+            color=COLOR_BAN,
+            timestamp=datetime.now(),
+        )
+        embed.add_field(name="المدة", value=format_prison_duration(int(record["sentence"])), inline=True)
+        embed.add_field(name="Case", value=f"#{record['case']}", inline=True)
+        embed.add_field(name="السبب", value=reason, inline=False)
+        embed.add_field(name="المنفذ", value=ctx.author.mention, inline=False)
+        embed.set_footer(text=f"{SERVER_NAME} | Prison")
+        await self._respond(ctx, embed=embed)
+        await self._log_successful_target(ctx, member, "Imprison (ban converted)", reason)
 
     @commands.hybrid_command(description="فك الحظر على عضو (بالـ User ID)")
     @app_commands.default_permissions(ban_members=True)
@@ -361,7 +431,7 @@ class Moderation(commands.Cog):
                 timestamp=datetime.now(),
             )
             embed.set_footer(text=f"{SERVER_NAME} | Moderation")
-            await ctx.send(embed=embed)
+            await self._respond(ctx, embed=embed)
             await self._log_successful_target(ctx, user, "Unban")
         except discord.NotFound:
             await ctx.send("❌ ما لقيتش هاد العضو!", delete_after=5)
@@ -432,51 +502,38 @@ class Moderation(commands.Cog):
             await ctx.send("❌ هاد العضو معفي من Auto-Mod/Moderation (Admin/Mod)!")
             return
 
-        muted_role = ctx.guild.get_role(MUTED_ROLE_ID)
-        if not muted_role:
-            await ctx.send("❌ ما لقيتش دور Mute! حط ID صحيح فـ MUTED_ROLE_ID.", delete_after=5)
+        # 🔒 الكتم ولّى حبس قصير فـ holding-cell.
+        result = await send_to_prison(
+            self.bot,
+            member,
+            offense_key="mute",
+            seconds=max(60, int(duration) * 60),
+            reason=reason,
+            actor=ctx.author,
+        )
+        if not result.get("ok"):
+            await ctx.send(f"❌ {result.get('error')}", delete_after=8)
             return
 
-        try:
-            security = self.bot.get_cog("OwnerSecurity")
-            if security:
-                applied = await security.edit_member_muted_role(
-                    ctx.guild,
-                    ctx.author,
-                    member,
-                    muted=True,
-                    reason=f"Mute command by {ctx.author} ({ctx.author.id}): {reason}",
-                )
-                if not applied:
-                    await ctx.send("❌ Owner Security رفض تغيير Muted role.", delete_after=6)
-                    return
-            else:
-                await member.add_roles(muted_role, reason=reason)
-            user_id = str(member.id)
-            if user_id in self.mute_tasks and not self.mute_tasks[user_id].done():
-                self.mute_tasks[user_id].cancel()
-            task = asyncio.create_task(self.auto_unmute(member, duration, ctx.author))
-            self.mute_tasks[user_id] = task
-
-            embed = discord.Embed(
-                title="🔇 كتم",
-                description=f"**{member.mention}** تم كتم صوته.",
-                color=COLOR_MUTE,
-                timestamp=datetime.now(),
-            )
-            embed.add_field(name="المدة", value=f"{duration} دقيقة", inline=False)
-            embed.add_field(name="السبب", value=reason, inline=False)
-            embed.add_field(name="المنفذ", value=ctx.author.mention, inline=False)
-            embed.set_footer(text=f"{SERVER_NAME} | Moderation")
-            await ctx.send(embed=embed)
-            await self._log_successful_target(
-                ctx,
-                member,
-                "Mute role",
-                f"Duration: {duration} minutes • Reason: {reason}",
-            )
-        except discord.Forbidden:
-            await ctx.send("❌ ما عنديش الصلاحية!", delete_after=5)
+        record = result["record"]
+        embed = discord.Embed(
+            title="⛓️ حبس قصير (بدل الكتم)",
+            description=f"**{member.mention}** تحط فـ Holding Cell.",
+            color=COLOR_MUTE,
+            timestamp=datetime.now(),
+        )
+        embed.add_field(name="المدة", value=format_prison_duration(int(record["sentence"])), inline=True)
+        embed.add_field(name="Case", value=f"#{record['case']}", inline=True)
+        embed.add_field(name="السبب", value=reason, inline=False)
+        embed.add_field(name="المنفذ", value=ctx.author.mention, inline=False)
+        embed.set_footer(text=f"{SERVER_NAME} | Prison")
+        await self._respond(ctx, embed=embed)
+        await self._log_successful_target(
+            ctx,
+            member,
+            "Imprison (mute converted)",
+            f"Duration: {duration} minutes • Reason: {reason}",
+        )
 
     @commands.hybrid_command(description="فك الكتم على عضو")
     @app_commands.default_permissions(moderate_members=True)
@@ -531,7 +588,7 @@ class Moderation(commands.Cog):
                 timestamp=datetime.now(),
             )
             embed.set_footer(text=f"{SERVER_NAME} | Moderation")
-            await ctx.send(embed=embed)
+            await self._respond(ctx, embed=embed)
             await self._log_successful_target(ctx, member, "Unmute role")
         except discord.Forbidden:
             await ctx.send("❌ ما عنديش الصلاحية!", delete_after=5)
@@ -566,7 +623,7 @@ class Moderation(commands.Cog):
         embed.add_field(name="عدد التحذيرات", value=f"{count}", inline=False)
         embed.add_field(name="المنفذ", value=ctx.author.mention, inline=False)
         embed.set_footer(text=f"{SERVER_NAME} | Moderation")
-        await ctx.send(embed=embed)
+        await self._respond(ctx, embed=embed)
         await self._log_successful_target(
             ctx,
             member,
@@ -602,7 +659,7 @@ class Moderation(commands.Cog):
             embed.add_field(name="الأسباب", value="ما كاين والو ✅", inline=False)
 
         embed.set_footer(text=f"{SERVER_NAME} | Moderation")
-        await ctx.send(embed=embed)
+        await self._respond(ctx, embed=embed)
 
     @commands.hybrid_command(description="حيد التحذيرات من عضو")
     @app_commands.default_permissions(kick_members=True)
@@ -620,7 +677,7 @@ class Moderation(commands.Cog):
             timestamp=datetime.now(),
         )
         embed.set_footer(text=f"{SERVER_NAME} | Moderation")
-        await ctx.send(embed=embed)
+        await self._respond(ctx, embed=embed)
 
 
 async def setup(bot: commands.Bot):

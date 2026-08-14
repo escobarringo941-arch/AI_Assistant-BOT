@@ -888,7 +888,13 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             kicked = False
             kick_error = None
             try:
-                await member.kick(reason=f"كرر تجاوز Block ديال Temp Room {count} مرات: {channel.name}")
+                # 🔒 ما بقاش كاين طرد — كيمشي للسجن.
+                from cogs.prison import imprison_member
+                await imprison_member(
+                    bot, member, offense_key="temp_bypass",
+                    reason=f"كرر تجاوز Block ديال Temp Room {count} مرات: {channel.name}",
+                    actor=None,
+                )
                 kicked = True
             except (discord.Forbidden, discord.HTTPException) as e:
                 kick_error = str(e)
@@ -946,7 +952,13 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     
         if count >= TEMP_VC_DENY_MAX_ATTEMPTS and TEMP_VC_DENY_KICK_FROM_SERVER:
             try:
-                await member.kick(reason=f"كرر تجاوز Deny ديال Temp Room {count} مرات: {channel.name}")
+                # 🔒 ما بقاش كاين طرد — كيمشي للسجن.
+                from cogs.prison import imprison_member
+                await imprison_member(
+                    bot, member, offense_key="temp_bypass",
+                    reason=f"كرر تجاوز Deny ديال Temp Room {count} مرات: {channel.name}",
+                    actor=None,
+                )
                 await log_action(
                     member.guild, "👢 Kick تلقائي — تجاوز Deny 3 مرات",
                     f"**العضو:** <@{member.id}> (`{member.id}`)\n**الروم:** {channel.mention}\n**المحاولات:** {count}",

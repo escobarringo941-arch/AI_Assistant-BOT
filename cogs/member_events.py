@@ -17,14 +17,17 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             if state.get("active"):
                 # Raid Mode مفعل → كل عضو جديد كيتطبق عليه bot_settings['raid_action'] مباشرة
                 try:
-                    if bot_settings['raid_action'] == "ban":
-                        await member.ban(reason="Anti-Raid: Lockdown مفعل، عضو جديد تلقائياً")
-                        action_label = "🚫 حظر تلقائي (Anti-Raid)"
-                        color = discord.Color.dark_red()
-                    else:
-                        await member.kick(reason="Anti-Raid: Lockdown مفعل، عضو جديد تلقائياً")
-                        action_label = "👢 طرد تلقائي (Anti-Raid)"
-                        color = discord.Color.orange()
+                    # 🔒 Anti-Raid ما بقاش كيطرد — كيحبس فـ maximum-security.
+                    from cogs.prison import imprison_member
+                    result = await imprison_member(
+                        bot, member, offense_key="raid",
+                        reason="انضم خلال فترة Anti-Raid Lockdown", actor=None,
+                    )
+                    if not result.get("ok"):
+                        print(f"[ANTI-RAID] ❌ السجن فشل على {member}: {result.get('error')}")
+                        raise discord.Forbidden(None, result.get("error", "prison failed"))
+                    action_label = "🚨 سجن تلقائي (Anti-Raid)"
+                    color = discord.Color.dark_red()
     
                     await log_case(
                         member.guild, action_label, action_label.split(" ")[0], color,
@@ -447,18 +450,22 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                         f"🛑 {message.author.mention} توقف عن السبام!",
                         delete_after=5
                     )
-                    muted_role = message.guild.get_role(MUTED_ROLE_ID)
-                    if muted_role:
-                        await message.author.add_roles(muted_role)
-                        if user_id in mute_tasks and not mute_tasks[user_id].done():
-                            mute_tasks[user_id].cancel()
-                        task = asyncio.create_task(auto_unmute(message.author, 5, message.guild))
-                        mute_tasks[user_id] = task
+                    # 🔒 السبام كيدير حبس فـ holding-cell بدل الـMute.
+                    from cogs.prison import imprison_member
+                    from cogs.prison_core import format_duration as _fmt
+                    result = await imprison_member(
+                        bot, message.author, offense_key="spam",
+                        reason=f"سبام: {len(spam_tracker[user_id])} رسالة فـ {SPAM_INTERVAL} ثواني",
+                        actor=None,
+                    )
+                    if result.get("ok"):
+                        record = result["record"]
                         await log_action(
                             message.guild,
                             "🛑 Auto-Mod | سبام مكتشف",
                             f"**المستخدم:** {message.author.mention}\n"
-                            f"**الإجراء:** Mute 5 دقائق (تلقائي)\n"
+                            f"**الإجراء:** ⛓️ سجن {_fmt(int(record['sentence']))} (تلقائي)\n"
+                            f"**Prison Case:** #{record['case']}\n"
                             f"**الرسائل:** {len(spam_tracker[user_id])} فـ {SPAM_INTERVAL} ثواني",
                             discord.Color.orange()
                         )

@@ -39,59 +39,49 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         كتبدا من الأعلى (حظر) للأسفل (كتم) باش ما تطبقش عدة عقوبات فنفس الوقت.
         كترجع "ban" / "kick" / "mute" إلا تطبقات عقوبة، وإلا None.
         """
-        if bot_settings['ban_after_warns'] and count >= bot_settings['ban_after_warns']:
-            try:
-                await member.ban(reason=f"{count} تحذيرات: {reason}")
-                case_id = await log_case(
-                    guild, "🚫 حظر تلقائي (Auto-Ban)", "🚫", discord.Color.dark_red(),
-                    target=member, moderator=None,
-                    reason=reason, extra=f"عدد التحذيرات: {count}"
+        # 🔒 التصعيد كامل ولّى **سجن**. حتى واحد ما كيتطرد من السيرفر.
+        from cogs.prison import imprison_member
+        from cogs.prison_core import format_duration as _fmt
+    
+        async def _jail(offense_key, label, emoji, colour, seconds=None):
+            result = await imprison_member(
+                bot, member, offense_key=offense_key, seconds=seconds,
+                reason=f"{count} تحذيرات: {reason}", actor=None,
+            )
+            if not result.get("ok"):
+                print(f"[PRISON] auto-escalation فشلات: {result.get('error')}")
+                return False
+            record = result["record"]
+            case_id = await log_case(
+                guild, label, emoji, colour,
+                target=member, moderator=None, reason=reason,
+                extra=f"عدد التحذيرات: {count} | المدة: {_fmt(int(record['sentence']))} | Prison #{record['case']}"
+            )
+            if channel:
+                await channel.send(
+                    f"{emoji} {member.mention} تحط فالسجن تلقائياً ({count} تحذيرات، "
+                    f"{_fmt(int(record['sentence']))}) — Case #{case_id}!",
+                    delete_after=10,
                 )
-                if channel:
-                    await channel.send(f"🚫 {member.mention} تم حظره تلقائياً ({count} تحذيرات) — Case #{case_id}!", delete_after=10)
+            return True
+    
+        if bot_settings['ban_after_warns'] and count >= bot_settings['ban_after_warns']:
+            if await _jail("ban", "🚨 سجن مشدد تلقائي (بدل Auto-Ban)", "🚨", discord.Color.dark_red()):
                 clear_warns(str(member.id))
                 return "ban"
-            except discord.Forbidden:
-                return None
+            return None
     
         if bot_settings['kick_after_warns'] and count >= bot_settings['kick_after_warns']:
-            try:
-                await member.kick(reason=f"{count} تحذيرات: {reason}")
-                case_id = await log_case(
-                    guild, "👢 طرد تلقائي (Auto-Kick)", "👢", discord.Color.orange(),
-                    target=member, moderator=None,
-                    reason=reason, extra=f"عدد التحذيرات: {count}"
-                )
-                if channel:
-                    await channel.send(f"👢 {member.mention} تم طرده تلقائياً ({count} تحذيرات) — Case #{case_id}!", delete_after=10)
+            if await _jail("kick", "⛓️ سجن تلقائي (بدل Auto-Kick)", "⛓️", discord.Color.orange()):
                 clear_warns(str(member.id))
                 return "kick"
-            except discord.Forbidden:
-                return None
+            return None
     
         if bot_settings['mute_after_warns'] and count >= bot_settings['mute_after_warns']:
-            muted_role = guild.get_role(MUTED_ROLE_ID)
-            if muted_role and muted_role not in member.roles:
-                try:
-                    await member.add_roles(muted_role)
-                    user_id = str(member.id)
-                    if user_id in mute_tasks and not mute_tasks[user_id].done():
-                        mute_tasks[user_id].cancel()
-                    task = asyncio.create_task(auto_unmute(member, bot_settings['mute_duration_minutes'], guild))
-                    mute_tasks[user_id] = task
-                    case_id = await log_case(
-                        guild, "🔇 كتم تلقائي (Auto-Mute)", "🔇", discord.Color.yellow(),
-                        target=member, moderator=None,
-                        reason=reason, extra=f"عدد التحذيرات: {count} | المدة: {bot_settings['mute_duration_minutes']} دقيقة"
-                    )
-                    if channel:
-                        await channel.send(
-                            f"🔇 {member.mention} تكتم تلقائياً ({count} تحذيرات، {bot_settings['mute_duration_minutes']} دقيقة) — Case #{case_id}!",
-                            delete_after=10
-                        )
-                    return "mute"
-                except discord.Forbidden:
-                    return None
+            seconds = max(60, int(bot_settings['mute_duration_minutes']) * 60)
+            if await _jail("warns", "⛓️ حبس قصير تلقائي (بدل Auto-Mute)", "⛓️", discord.Color.yellow(), seconds):
+                return "mute"
+            return None
     
         return None
     
