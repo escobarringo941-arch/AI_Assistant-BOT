@@ -20,7 +20,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Iterable, Optional
 
 import discord
@@ -2079,6 +2079,10 @@ class PrisonSystem(commands.Cog):
         """
         حارس: إلا شي حد عطى رول لسجين (ولا حيّد ليه Prisoner)، كنرجعو الحالة.
         هادشي هو اللي كيخلي السجن **حقيقي** — حتى ادمين ما يقدر يفكّو.
+
+        ⭐ استثناء: إلا الأونر الحقيقي ديال السيرفر (guild.owner_id) هو اللي
+        حيّد رول Prisoner يدويا من ديسكورد، البوت ما كيرجعوش — بالعكس كيدير
+        إفراج رسمي كامل (يرجع الرولات الأصلية، كيحيد التسجيل، كيسجل فـ log).
         """
         if after.id in self._suppress_role_guard:
             return
@@ -2088,6 +2092,28 @@ class PrisonSystem(commands.Cog):
         prisoner = self.prisoner_role(after.guild)
         if prisoner is None:
             return
+
+        prisoner_removed = prisoner in before.roles and prisoner not in after.roles
+        if prisoner_removed:
+            try:
+                async for entry in after.guild.audit_logs(
+                    limit=3, action=discord.AuditLogAction.member_role_update
+                ):
+                    if entry.target is None or entry.target.id != after.id:
+                        continue
+                    age = datetime.now(entry.created_at.tzinfo) - entry.created_at
+                    if age > timedelta(seconds=15):
+                        break
+                    if entry.user and entry.user.id == after.guild.owner_id:
+                        await self.release(
+                            after.guild, after.id,
+                            reason="فك يدوي من طرف الاونر (حيّد رول Prisoner مباشرة من ديسكورد)",
+                            actor=entry.user,
+                        )
+                        return
+                    break
+            except (discord.Forbidden, discord.HTTPException):
+                pass
 
         me = after.guild.me
         top = me.top_role.position if me else 0
