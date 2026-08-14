@@ -327,6 +327,8 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             f"**الطريقة:** Reaction ✅",
             discord.Color.green()
         )
+        # وافق على القوانين → كنمسحو ليه الرسالة الترحيبية (وأي رسالة أخرى) من الـ DM
+        await purge_bot_dm_messages(member)
         try:
             gender_embed = discord.Embed(
                 title="🚻 واش نتا/نتي ولد ولا بنت؟",

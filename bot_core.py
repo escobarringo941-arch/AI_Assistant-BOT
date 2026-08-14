@@ -2422,12 +2422,53 @@ def remember_member_roles(member: discord.Member):
     guild_id = str(member.guild.id)
     user_id = str(member.id)
     role_ids = [r.id for r in member.roles if r.id != member.guild.id]
+    # عضو ماوصلش يتفعل (غير عندو Unverified، ماعندوش رولات حقيقية) —
+    # ماخاصناش نحفظو ليه والو، باش إلا رجع بـ invite جديد (خصوصاً بعد
+    # رفض القوانين والطرد) يتعامل معاه البوت كعضو جديد بصح، ماشي "رجع للسيرفر".
+    if role_ids == [UNVERIFIED_ROLE_ID]:
+        role_ids = []
     if role_ids:
         member_roles_data.setdefault(guild_id, {})[user_id] = role_ids
         save_member_roles()
 
 
+def forget_member_roles(member: discord.Member):
+    """كتمسح الرولات المحفوظة ديال العضو (إلا كانو موجودين)، باش ملي يرجع
+    للسيرفر بـ invite جديد يتعامل معاه البوت كعضو جديد بصح (رسالة ترحيبية
+    جديدة فـ DM، ماشي 'رجع للسيرفر'). كنستعملوها ملي عضو كيرفض القوانين
+    ويتطرد، باش ماتبقاش الرولات ديالو (Unverified) محفوظة."""
+    guild_id = str(member.guild.id)
+    user_id = str(member.id)
+    if guild_id in member_roles_data and user_id in member_roles_data[guild_id]:
+        del member_roles_data[guild_id][user_id]
+        save_member_roles()
+
+
 load_member_roles()
+
+
+# ═══════════════════════════════════════════════════════
+# ║   مسح الرسائل ديال البوت من DM ديال عضو (Welcome DM)   ║
+# ═══════════════════════════════════════════════════════
+# ملي عضو يوافق ولا يرفض القوانين، خاصنا نمسحو ليه الرسالة الترحيبية
+# (وأي رسالة أخرى صيفطها ليه البوت فـ DM) باش الـ DM ديالو يبقى نظيف.
+# إلا رجع من بعد بـ invite جديد، غادي توصلو رسالة ترحيبية جديدة بنفس
+# الطريقة، بحال أول مرة.
+async def purge_bot_dm_messages(member: discord.Member, *, limit: int = 50):
+    """كتمسح كاع الرسائل اللي صيفط البوت (welcome DM إلخ) فـ DM ديال العضو."""
+    try:
+        channel = member.dm_channel or await member.create_dm()
+    except (discord.HTTPException, discord.Forbidden):
+        return
+    try:
+        async for msg in channel.history(limit=limit):
+            if msg.author.id == bot.user.id:
+                try:
+                    await msg.delete()
+                except (discord.Forbidden, discord.NotFound, discord.HTTPException):
+                    pass
+    except (discord.Forbidden, discord.HTTPException):
+        pass
 
 
 def is_owner(ctx) -> bool:
