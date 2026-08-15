@@ -244,6 +244,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         rec = get_temp_voice_acl(channel)
         owner_id = get_temp_voice_owner_id(channel)
         overwrite = channel.overwrites_for(member)
+        before_allow, before_deny = overwrite.pair()
     
         if member.id == owner_id or is_temp_voice_protected_target(member):
             overwrite.view_channel = True
@@ -279,6 +280,16 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         overwrite.move_members = sensitive_value
         overwrite.mute_members = sensitive_value
         overwrite.deafen_members = sensitive_value
+
+        # ما نصيفطوش REST request إلا كانت نفس الصلاحيات مطبقة ديجا.
+        # مهم خصوصاً مباشرة من بعد إنشاء Temp Room حيث الـoverwrites كيتصاوبو
+        # كاملين فـcreate_voice_channel نفسه.
+        after_allow, after_deny = overwrite.pair()
+        if (
+            before_allow.value == after_allow.value
+            and before_deny.value == after_deny.value
+        ):
+            return True, None
     
         try:
             await channel.set_permissions(member, overwrite=overwrite, reason=reason)
@@ -324,7 +335,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             if role:
                 staff.update({member.id: member for member in role.members})
         for staff_member in staff.values():
-            if not is_temp_voice_protected_target(staff_member):
+            if not staff_member.bot and not is_temp_voice_protected_target(staff_member):
                 queue_sensitive(staff_member, False)
 
         if channel.guild.me:
@@ -1038,7 +1049,9 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         return message
     
     
-    async def send_temp_voice_control_panel(channel: discord.VoiceChannel):
+    async def send_temp_voice_control_panel(
+        channel: discord.VoiceChannel, *, newly_created: bool = False
+    ):
         if not is_temp_voice_channel(channel):
             return None
         rec = get_temp_voice_acl(channel)
@@ -1061,6 +1074,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             message_id=rec.get("panel_message_id"),
             save_message_id=remember,
             history_limit=100,
+            trust_empty_channel=newly_created,
             create_if_missing=True,
         )
     

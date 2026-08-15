@@ -1,6 +1,6 @@
 {
   "description": "Hashes lock the reviewed component bytes and execution order; intentional feature revisions update this baseline.",
-  "joined_sha256": "64bcbd096a81b39932eee21a7474b99fd0faba1188cb6d9648acc0bf6bb67f9b",
+  "joined_sha256": "94dbfadee1c63f5d9f73ba3c2ec95b67408238566189d11779460092bae27468",
   "events_before_setup_hook": [
     "on_voice_state_update",
     "on_member_join",
@@ -120,7 +120,7 @@
       "path": "cogs/temp_voice.py",
       "original_start_line": 6736,
       "original_end_line": 7844,
-      "sha256": "2b8e9d18183a02bcf5b32b227521739da0d767c066f9060b21647b6bd69e074e"
+      "sha256": "1f7eeaf54db866889754c70947573f54d77af41aaf8310408b3467da36a81f0c"
     },
     {
       "name": "temp_music",
@@ -134,7 +134,7 @@
       "path": "cogs/voice_runtime.py",
       "original_start_line": 7845,
       "original_end_line": 8413,
-      "sha256": "429f65576b85f2bb4414fcaf347ded05d336b95cd43d851fc004c9242432ee54"
+      "sha256": "b0a0a71594b3dfdbb83919f6cfc9eb141ff78dc5141ba5c224668c0a064ac792"
     },
     {
       "name": "server_setup",

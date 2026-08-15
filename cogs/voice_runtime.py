@@ -339,6 +339,169 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         save_room_mute()
     
         # Owner stealth: نفس الدائرة المحدودة (can_toggle_room_mute) — بلا log_action.
+
+
+    # Join-to-Create fast path: غير create + move كيبقاو فالمسار اللي كيستناه العضو.
+    # الحفظ، Music Bot، Security repair والبانل كيكملو من بعد فـbackground.
+    temp_voice_creation_inflight = set()
+    temp_voice_post_create_tasks = set()
+
+
+    def _temp_voice_initial_overwrites(guild: discord.Guild, owner: discord.Member) -> dict:
+        overwrites = {
+            guild.default_role: discord.PermissionOverwrite(
+                view_channel=True, connect=True,
+                manage_channels=False, manage_roles=False,
+                move_members=False, mute_members=False, deafen_members=False,
+            ),
+            owner: discord.PermissionOverwrite(
+                view_channel=True, connect=True, speak=True,
+                send_messages=True, read_message_history=True,
+                manage_channels=False, manage_roles=False,
+                move_members=False, mute_members=False, deafen_members=False,
+            ),
+        }
+
+        staff = {}
+        for staff_role_id in (ADMIN_ROLE_ID, MODERATOR_ROLE_ID):
+            staff_role = guild.get_role(staff_role_id) if staff_role_id else None
+            if not staff_role:
+                continue
+            overwrites[staff_role] = discord.PermissionOverwrite(
+                manage_channels=False, manage_roles=False,
+                move_members=False, mute_members=False, deafen_members=False,
+            )
+            staff.update({member.id: member for member in staff_role.members})
+
+        # Member denies كتسد أي Allow جاي من رول ثانوية. كنخليو شوية ديال
+        # overwrite slots للـACL المستقبلية باش create مايفشلش فالسيرفرات الكبار.
+        for staff_member in sorted(staff.values(), key=lambda item: item.id):
+            if len(overwrites) >= 95:
+                break
+            if (
+                staff_member.bot
+                or staff_member.id == owner.id
+                or is_temp_voice_protected_target(staff_member)
+            ):
+                continue
+            overwrites[staff_member] = discord.PermissionOverwrite(
+                manage_channels=False, manage_roles=False,
+                move_members=False, mute_members=False, deafen_members=False,
+            )
+
+        # البوت خاصو يبقى قادر يبعث البانل ويطبق Block/Kick/Mutes.
+        if guild.me:
+            overwrites[guild.me] = discord.PermissionOverwrite(
+                view_channel=True, connect=True,
+                send_messages=True, read_message_history=True,
+                manage_messages=(True if guild.me.guild_permissions.manage_messages else None),
+                manage_channels=True, manage_roles=True, move_members=True,
+                mute_members=True, deafen_members=True,
+            )
+
+        unverified_role = guild.get_role(UNVERIFIED_ROLE_ID) if UNVERIFIED_ROLE_ID else None
+        if unverified_role:
+            overwrites[unverified_role] = discord.PermissionOverwrite(
+                view_channel=True, connect=False
+            )
+        return overwrites
+
+
+    async def _finish_new_temp_voice_room(channel: discord.VoiceChannel) -> None:
+        """كل الخدمة غير الضرورية للنقل كتخدم من بعد ما Owner يدخل للروم."""
+        if str(channel.id) not in temp_voice_channels:
+            return
+
+        # جوج writes فقط من بعد النقل بدل ثلاثة قبل النقل.
+        save_temp_voice_channels()
+        save_temp_voice_acl()
+
+        async def setup_music_then_panel():
+            try:
+                await assign_temp_music_bot(channel, attempt_move=True)
+            except Exception as exc:
+                print(f"[TEMP-MUSIC] فشل تعيين Music Bot للروم {channel.id}: {exc}")
+            try:
+                await send_temp_voice_control_panel(channel, newly_created=True)
+            except Exception as exc:
+                print(f"[TEMP-VOICE PANEL] فشل إرسال البانل للروم {channel.id}: {exc}")
+
+        results = await asyncio.gather(
+            enforce_temp_voice_security_overwrites(channel),
+            setup_music_then_panel(),
+            return_exceptions=True,
+        )
+        for result in results:
+            if isinstance(result, Exception):
+                print(f"[TEMP-VOICE] post-create task فشلات فالروم {channel.id}: {result}")
+
+
+    def _schedule_temp_voice_post_create(channel: discord.VoiceChannel) -> None:
+        task = asyncio.create_task(_finish_new_temp_voice_room(channel))
+        temp_voice_post_create_tasks.add(task)
+        task.add_done_callback(temp_voice_post_create_tasks.discard)
+
+
+    async def _create_temp_voice_room_fast(
+        member: discord.Member, creator_channel: discord.VoiceChannel
+    ) -> Optional[discord.VoiceChannel]:
+        creation_key = (member.guild.id, member.id)
+        if creation_key in temp_voice_creation_inflight:
+            return None
+        temp_voice_creation_inflight.add(creation_key)
+
+        new_channel = None
+        try:
+            guild = member.guild
+            category = guild.get_channel(TEMP_VC_CATEGORY_ID) if TEMP_VC_CATEGORY_ID else None
+            if not category:
+                category = creator_channel.category
+
+            new_channel = await guild.create_voice_channel(
+                name=TEMP_VC_NAME_TEMPLATE.format(name=member.display_name)[:100],
+                category=category,
+                overwrites=_temp_voice_initial_overwrites(guild, member),
+                user_limit=TEMP_VC_DEFAULT_LIMIT,
+                reason=f"Join to Create — {member.display_name}",
+            )
+
+            # نسجلو state فالذاكرة قبل move باش الـvoice event الجديد يعرف الروم.
+            channel_id = str(new_channel.id)
+            created_at = int(new_channel.created_at.timestamp())
+            temp_voice_channels[channel_id] = member.id
+            temp_voice_acl[channel_id] = {
+                "owner_id": member.id,
+                "created_at": created_at,
+                "private": False,
+                "allowed": [],
+                "denied": [],
+                "blocked": [],
+                "voice_muted": [],
+                "chat_muted": [],
+                "attempts": {},
+                "panel_message_id": None,
+                "music_bot_id": None,
+                "music_wait_since": created_at,
+            }
+
+            # هادي أول REST call من بعد create: النقل كيوقع بلا security/panel waits.
+            await member.move_to(new_channel, reason="Join to Create")
+            _schedule_temp_voice_post_create(new_channel)
+            return new_channel
+        except discord.Forbidden:
+            print("[VOICE] ⚠️ البوت محتاج Manage Channels وMove Members باش يصاوب Temp Room.")
+        except Exception as exc:
+            print(f"[VOICE] خطأ فـ خلق روم مؤقت: {exc}")
+        finally:
+            temp_voice_creation_inflight.discard(creation_key)
+
+        if new_channel is not None and str(new_channel.id) in temp_voice_channels:
+            await cleanup_temp_voice_room_if_empty(
+                new_channel,
+                grace_seconds=0,
+                reason="Join to Create فشل قبل ما يدخل Owner",
+            )
+        return None
     
     
     @bot.event
@@ -349,6 +512,12 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         # رجوع Human للروم كيلغي cleanup المنتظر بلا ما نقطع coroutine وسط عملية حذف.
         if after.channel and str(after.channel.id) in temp_voice_channels:
             cancel_scheduled_temp_voice_cleanup(after.channel.id)
+
+        # نعطيو الأولوية للغرض الرئيسي ديال Join-to-Create: الروم كتتصاوب
+        # والعضو كيتنقل قبل AFK/Room-Mute bookkeeping ديال نفس event.
+        if (bot_settings['join_to_create_enabled'] and JOIN_TO_CREATE_CHANNEL_ID
+                and after.channel and after.channel.id == JOIN_TO_CREATE_CHANNEL_ID):
+            await _create_temp_voice_room_fast(member, after.channel)
     
         # ═══════ Auto AFK: حتى Owner كيتنقل؛ Undeafen فـ AFK كيرجع للروم الأصلية ═══════
         try:
@@ -436,93 +605,6 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                         )
                 except (discord.Forbidden, discord.HTTPException):
                     pass
-    
-        # ═══════ Join to Create: العضو دخل لـ channel "➕ دير روم" ═══════
-        if (bot_settings['join_to_create_enabled'] and JOIN_TO_CREATE_CHANNEL_ID
-                and after.channel and after.channel.id == JOIN_TO_CREATE_CHANNEL_ID):
-            creator_channel = after.channel
-            guild = member.guild
-            category = None
-            if TEMP_VC_CATEGORY_ID:
-                category = guild.get_channel(TEMP_VC_CATEGORY_ID)
-            if not category:
-                category = creator_channel.category
-    
-            overwrites = {
-                # الروم كتبان للجميع من البداية. Privacy من بعد غادي تسد غير Connect وما غاديش تخبيها.
-                guild.default_role: discord.PermissionOverwrite(
-                    view_channel=True, connect=True,
-                    manage_channels=False, manage_roles=False,
-                    move_members=False, mute_members=False, deafen_members=False,
-                ),
-                member: discord.PermissionOverwrite(
-                    view_channel=True, connect=True, speak=True, send_messages=True, read_message_history=True,
-                    manage_channels=False, manage_roles=False,
-                    move_members=False, mute_members=False, deafen_members=False,
-                ),
-            }
-            for staff_role_id in (ADMIN_ROLE_ID, MODERATOR_ROLE_ID):
-                staff_role = guild.get_role(staff_role_id) if staff_role_id else None
-                if staff_role:
-                    overwrites[staff_role] = discord.PermissionOverwrite(
-                        manage_channels=False, manage_roles=False,
-                        move_members=False, mute_members=False, deafen_members=False,
-                    )
-            # البوت خاصو يبقى قادر يبعث/يحدّث البانل ويطبق Block/Kick/Mutes.
-            if guild.me:
-                overwrites[guild.me] = discord.PermissionOverwrite(
-                    view_channel=True, connect=True, send_messages=True, read_message_history=True,
-                    manage_messages=(True if guild.me.guild_permissions.manage_messages else None),
-                    manage_channels=True, manage_roles=True, move_members=True,
-                    mute_members=True, deafen_members=True,
-                )
-            # Unverified حتى هو يشوف اسم الروم، ولكن ما يدخلش حتى يتفعل.
-            unverified_role = guild.get_role(UNVERIFIED_ROLE_ID) if UNVERIFIED_ROLE_ID else None
-            if unverified_role:
-                overwrites[unverified_role] = discord.PermissionOverwrite(view_channel=True, connect=False)
-            new_channel = None
-            try:
-                new_channel = await guild.create_voice_channel(
-                    name=TEMP_VC_NAME_TEMPLATE.format(name=member.display_name)[:100],
-                    category=category,
-                    overwrites=overwrites,
-                    user_limit=TEMP_VC_DEFAULT_LIMIT,
-                    reason=f"Join to Create — {member.display_name}"
-                )
-                temp_voice_channels[str(new_channel.id)] = member.id
-                save_temp_voice_channels()
-                rec = get_temp_voice_acl(new_channel)
-                rec["owner_id"] = member.id
-                rec["created_at"] = int(new_channel.created_at.timestamp())
-                rec["private"] = False
-                rec["music_bot_id"] = None
-                rec["music_wait_since"] = rec["created_at"]
-                save_temp_voice_acl()
-                await enforce_temp_voice_security_overwrites(new_channel)
-                await member.move_to(new_channel, reason="Join to Create")
-            except discord.Forbidden:
-                print("[VOICE] ⚠️ ماعندش صلاحية Manage Channels باش نخلق الروومات المؤقتة.")
-                if new_channel is not None and str(new_channel.id) in temp_voice_channels:
-                    await cleanup_temp_voice_room_if_empty(
-                        new_channel,
-                        grace_seconds=0,
-                        reason="Join to Create فشل قبل ما يدخل Owner",
-                    )
-            except Exception as e:
-                print(f"[VOICE] خطأ فـ خلق روم مؤقت: {e}")
-                if new_channel is not None and str(new_channel.id) in temp_voice_channels:
-                    await cleanup_temp_voice_room_if_empty(
-                        new_channel,
-                        grace_seconds=0,
-                        reason="Join to Create فشل قبل ما يكمل",
-                    )
-            else:
-                try:
-                    await assign_temp_music_bot(new_channel, attempt_move=True)
-                except Exception as e:
-                    # Music integration ما خاصهاش توقف الروم الأساسية.
-                    print(f"[TEMP-MUSIC] فشل تعيين Music Bot للروم {new_channel.id}: {e}")
-                await send_temp_voice_control_panel(new_channel)
     
         # ═══════ تنظيف: bots ماكيحسبوش أعضاء؛ آخر Human كيخرج كنراجع ونمسحوها ═══════
         if before.channel and str(before.channel.id) in temp_voice_channels:

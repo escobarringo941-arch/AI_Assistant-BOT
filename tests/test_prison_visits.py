@@ -60,6 +60,17 @@ class VisitSourceTests(unittest.TestCase):
     def test_public_panel_contains_only_request_button(self):
         self.assertEqual(button_ids("VisitPanelView"), {"ggmw9:visit:request"})
 
+    def test_visit_request_room_is_hidden_from_prisoners(self):
+        permissions = ast.get_source_segment(
+            SOURCE, method_node("PrisonSystem", "_channel_overwrites")
+        )
+        visits_branch = permissions.split('elif key == "visits":', 1)[1].split(
+            'elif key == "visit_admin":', 1
+        )[0]
+        self.assertIn("overwrites[prisoner]", visits_branch)
+        self.assertIn("view_channel=False", visits_branch)
+        self.assertIn("read_messages=False", visits_branch)
+
     def test_management_panel_is_separate(self):
         self.assertEqual(
             button_ids("VisitManagementPanelView"),

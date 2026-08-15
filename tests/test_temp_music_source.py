@@ -323,10 +323,56 @@ class CrossComponentSourceTests(unittest.TestCase):
 
     def test_voice_runtime_uses_human_aware_scheduled_cleanup(self):
         rendered = ast.unparse(ast.parse(component_source("cogs/voice_runtime.py")))
-        self.assertIn("assign_temp_music_bot(new_channel, attempt_move=True)", rendered)
+        self.assertIn("assign_temp_music_bot(channel, attempt_move=True)", rendered)
         self.assertIn("cancel_scheduled_temp_voice_cleanup(after.channel.id)", rendered)
         self.assertIn("if not has_human_members(left_channel.members)", rendered)
         self.assertIn("schedule_temp_voice_cleanup(", rendered)
+
+    def test_join_to_create_fast_path_moves_before_background_setup(self):
+        runtime = ast.parse(component_source("cogs/voice_runtime.py"))
+        create = ast.unparse(find_function(runtime, "_create_temp_voice_room_fast"))
+        finish = ast.unparse(find_function(runtime, "_finish_new_temp_voice_room"))
+        event = ast.unparse(find_function(runtime, "on_voice_state_update"))
+
+        create_pos = create.index("await guild.create_voice_channel(")
+        move_pos = create.index("await member.move_to(")
+        schedule_pos = create.index("_schedule_temp_voice_post_create(new_channel)")
+        critical_path = create[create_pos:move_pos]
+
+        self.assertLess(create_pos, move_pos)
+        self.assertLess(move_pos, schedule_pos)
+        self.assertNotIn("save_temp_voice_channels()", critical_path)
+        self.assertNotIn("save_temp_voice_acl()", critical_path)
+        self.assertNotIn("enforce_temp_voice_security_overwrites", critical_path)
+        self.assertNotIn("assign_temp_music_bot", critical_path)
+        self.assertNotIn("send_temp_voice_control_panel", critical_path)
+        self.assertIn("asyncio.gather(", finish)
+        self.assertIn("enforce_temp_voice_security_overwrites(channel)", finish)
+        self.assertIn("assign_temp_music_bot(channel, attempt_move=True)", finish)
+        self.assertIn("send_temp_voice_control_panel(channel, newly_created=True)", finish)
+        self.assertLess(
+            event.index("await _create_temp_voice_room_fast(member, after.channel)"),
+            event.index("await handle_afk_auto_return(member, before, after)"),
+        )
+
+    def test_temp_permissions_skip_redundant_http_and_new_panel_skips_history(self):
+        temp = ast.parse(component_source("cogs/temp_voice.py"))
+        apply_permissions = ast.unparse(
+            find_function(temp, "apply_temp_voice_member_permissions")
+        )
+        send_panel = ast.unparse(find_function(temp, "send_temp_voice_control_panel"))
+        panel_registry = read("cogs/panel_registry.py")
+
+        self.assertIn("before_allow, before_deny = overwrite.pair()", apply_permissions)
+        self.assertIn("after_allow, after_deny = overwrite.pair()", apply_permissions)
+        self.assertLess(
+            apply_permissions.index("return (True, None)"),
+            apply_permissions.index("await channel.set_permissions("),
+        )
+        self.assertIn("newly_created: bool=False", send_panel)
+        self.assertIn("trust_empty_channel=newly_created", send_panel)
+        self.assertIn("known_new_empty_channel", panel_registry)
+        self.assertIn("if not known_new_empty_channel:", panel_registry)
 
     def test_cleanup_rechecks_humans_and_orphans_need_durable_ownership(self):
         music = ast.parse(component_source("cogs/temp_music.py"))

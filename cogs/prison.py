@@ -1691,8 +1691,18 @@ class PrisonSystem(commands.Cog):
                             overwrite=discord.PermissionOverwrite(
                                 view_channel=True,
                                 read_message_history=True,
-                                send_messages=False,
+                                # يقدر يكتب غير رسائل عادية فـChat المدمج ديال فويس زنزانتو.
+                                send_messages=True,
+                                send_tts_messages=False,
+                                attach_files=False,
+                                embed_links=False,
                                 add_reactions=False,
+                                mention_everyone=False,
+                                create_public_threads=False,
+                                create_private_threads=False,
+                                send_messages_in_threads=False,
+                                use_external_emojis=False,
+                                use_external_stickers=False,
                                 connect=True,
                                 speak=True,
                                 use_voice_activation=True,
@@ -2390,7 +2400,8 @@ class PrisonSystem(commands.Cog):
     async def on_message(self, message: discord.Message):
         """
         مراقبة تلقائية: أي سجين كيسبام ولا كيكتب حوايج ممنوعة وهو فزنزانتو
-        (نصية) → كيتصعّد مباشرة لزنزانة أقسح، بلا حاجة لتدخل الإدارة.
+        (الروم النصية أو Chat المدمج ديال الفويس) → كيتصعّد مباشرة لزنزانة
+        أقسح، بلا حاجة لتدخل الإدارة.
         """
         if message.author.bot or message.guild is None:
             return
@@ -2411,7 +2422,11 @@ class PrisonSystem(commands.Cog):
 
         cell_key = record.get("cell", "holding")
         cell_channel = self.prison_channel(guild, cell_key)
-        if cell_channel is None or message.channel.id != cell_channel.id:
+        cell_voice = self.cell_voice_channel(guild, cell_key)
+        allowed_cell_chat_ids = {
+            channel.id for channel in (cell_channel, cell_voice) if channel is not None
+        }
+        if message.channel.id not in allowed_cell_chat_ids:
             return
 
         violation = self._detect_cell_violation(message)

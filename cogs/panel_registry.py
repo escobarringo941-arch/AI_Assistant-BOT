@@ -86,6 +86,7 @@ async def upsert_fixed_panel(
     save_message_id: Callable[[int], Any] | None = None,
     history_limit: int | None = 100,
     trust_message_id: bool = False,
+    trust_empty_channel: bool = False,
     create_if_missing: bool = True,
 ) -> Any | None:
     """Edit the canonical panel message, or create it once if it is missing.
@@ -94,7 +95,9 @@ async def upsert_fixed_panel(
     are sorted by Discord snowflake (oldest first), so the original message is
     retained.  All other matching copies are deleted while the same lock is
     held.  If history cannot be read and no trusted saved message exists, the
-    function fails closed and does *not* send a new copy.
+    function fails closed and does *not* send a new copy. ``trust_empty_channel``
+    skips the first history request only for a channel that the caller has just
+    created and therefore knows cannot contain an older panel.
     """
     if channel is None:
         return None
@@ -136,22 +139,26 @@ async def upsert_fixed_panel(
         scan_limit = None if (first_process_scan or fetch_failed) else (100 if cached_id and history_limit is None else history_limit)
 
         history_ok = True
-        try:
-            async for message in channel.history(limit=scan_limit):
-                if any(getattr(message, "id", None) == getattr(item, "id", None) for item in candidates):
-                    continue
-                try:
-                    if matches(message):
-                        candidates.append(message)
-                except Exception:
-                    # A malformed old message must not stop the other panel
-                    # candidates from being repaired.
-                    continue
-        except Exception as exc:
-            if _is_discord_exception(exc):
-                history_ok = False
-            else:
-                raise
+        known_new_empty_channel = bool(
+            trust_empty_channel and first_process_scan and not fetched_id
+        )
+        if not known_new_empty_channel:
+            try:
+                async for message in channel.history(limit=scan_limit):
+                    if any(getattr(message, "id", None) == getattr(item, "id", None) for item in candidates):
+                        continue
+                    try:
+                        if matches(message):
+                            candidates.append(message)
+                    except Exception:
+                        # A malformed old message must not stop the other panel
+                        # candidates from being repaired.
+                        continue
+            except Exception as exc:
+                if _is_discord_exception(exc):
+                    history_ok = False
+                else:
+                    raise
 
         if candidates and (canonical is None or first_process_scan):
             canonical = min(candidates, key=lambda item: int(getattr(item, "id", 0) or 0))

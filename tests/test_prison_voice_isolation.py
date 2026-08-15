@@ -80,14 +80,26 @@ class VoiceIsolationSourceTests(unittest.TestCase):
         self.assertIn("await voice_chat.send", publish)
         self.assertIn("view=CellHelpView()", publish)
 
-    def test_current_voice_cell_access_is_individual_and_read_only(self):
+    def test_current_voice_cell_allows_plain_text_chat_only(self):
         access = method_source("PrisonSystem", "_grant_cell_access")
         self.assertIn("await voice_channel.set_permissions", access)
         self.assertIn("view_channel=True", access)
         self.assertIn("read_message_history=True", access)
-        self.assertIn("send_messages=False", access)
+        self.assertIn("send_messages=True", access)
+        self.assertIn("send_tts_messages=False", access)
+        self.assertIn("attach_files=False", access)
+        self.assertIn("embed_links=False", access)
+        self.assertIn("create_public_threads=False", access)
+        self.assertIn("create_private_threads=False", access)
+        self.assertIn("send_messages_in_threads=False", access)
         self.assertIn("connect=True", access)
         self.assertIn("speak=True", access)
+
+    def test_embedded_voice_chat_uses_the_same_cell_moderation(self):
+        on_message = method_source("PrisonSystem", "on_message")
+        self.assertIn("self.cell_voice_channel(guild, cell_key)", on_message)
+        self.assertIn("allowed_cell_chat_ids", on_message)
+        self.assertIn("message.channel.id not in allowed_cell_chat_ids", on_message)
 
     def test_visit_channels_get_an_explicit_member_deny(self):
         access = method_source("PrisonSystem", "_grant_cell_access")
