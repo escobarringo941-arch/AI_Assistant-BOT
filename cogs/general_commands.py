@@ -10,7 +10,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         latency = round(bot.latency * 1000)
         embed = discord.Embed(
             title="🏓 Pong!",
-            description=f"**Latency:** {latency}ms\n**API:** DeepSeek V3",
+            description=f"**Latency:** {latency}ms\n**AI:** `{AI_MODEL}` • 🌐 Web عند الحاجة",
             color=discord.Color.green(),
             timestamp=datetime.now()
         )

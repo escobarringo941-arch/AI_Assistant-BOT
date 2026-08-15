@@ -47,10 +47,11 @@ class AIChannelCleanlinessTests(unittest.TestCase):
 
     def test_chat_channel_and_economy_limits_are_fixed(self):
         self.assertIn(f"TARGET_CHANNEL_ID = {TARGET_CHANNEL_ID}", self.bootstrap)
-        self.assertIn('AI_MODEL = "deepseek/deepseek-v4-flash"', self.bootstrap)
-        self.assertIn("AI_MAX_OUTPUT_TOKENS = 320", self.bootstrap)
+        self.assertIn('AI_MODEL = "openai/gpt-5.6-terra"', self.bootstrap)
+        self.assertIn('AI_CHAT_REASONING_EFFORT = "low"', self.bootstrap)
+        self.assertIn("AI_MAX_OUTPUT_TOKENS = 520", self.bootstrap)
         self.assertIn("AI_MAX_PROMPT_CHARS = 2500", self.bootstrap)
-        self.assertIn("AI_USER_COOLDOWN_SECONDS = 6", self.bootstrap)
+        self.assertIn("AI_USER_COOLDOWN_SECONDS = 2", self.bootstrap)
         self.assertIn("AI_PRIVATE_THREAD_IDLE_SECONDS = 15 * 60", self.bootstrap)
 
     def test_public_pipeline_hands_ai_channels_to_private_cog(self):
@@ -103,9 +104,16 @@ class AIChannelCleanlinessTests(unittest.TestCase):
     def test_ai_prompt_and_output_have_independent_cleanliness_guards(self):
         self.assertIn("ممنوع عليك السب", self.ai)
         self.assertIn("sanitize_ai_reply(reply)", self.ai)
-        self.assertIn('"provider": {"sort": "price"}', self.ai)
+        self.assertIn('"provider": {"sort": "latency", "allow_fallbacks": True}', self.ai)
+        self.assertIn('"type": "openrouter:web_search"', self.ai)
+        self.assertIn('"max_total_results": 4', self.ai)
+        self.assertIn('payload["max_tool_calls"] = 1', self.ai)
+        self.assertIn("enable_web=True", self.ai)
         self.assertIn("AI_MAX_OUTPUT_TOKENS", self.ai)
         self.assertNotIn("server_memory.append", self.ai)
+
+    def test_ai_home_panel_explains_on_demand_live_web_knowledge(self):
+        self.assertIn("كيستعمل الإنترنت أوتوماتيكياً", self.private_ai)
 
     def test_old_random_insult_replies_are_not_in_message_handler(self):
         rendered = ast.unparse(find_function(self.events, "on_message")).lower()

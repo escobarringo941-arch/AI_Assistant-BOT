@@ -223,7 +223,9 @@ def visit_channel_name(display_name: str, user_id: int) -> str:
 # ══════ القوانين التلقائية ديال الـOwner ══════
 # كل قاعدة كترتابط بمخالفة من كتالوج السجن. العقوبة والزنزانة
 # كيجيو ديركت من ديك المخالفة، باش ما نكرروش نفس المنطق فبلايص مختلفة.
-AUTO_RULE_MAX = 25
+# 0 = بلا سقف. الـUI كتستعمل pagination حيث Discord كيسمح غير بـ25 اختيار
+# فكل Select، ولكن التخزين نفسه ما عندوش حد عددي.
+AUTO_RULE_MAX = 0
 AUTO_RULE_KINDS = ("word", "domain", "action")
 AUTO_ACTION_LABELS = {
     "discord_invite": "نشر دعوة Discord",
@@ -380,6 +382,7 @@ def _blank_guild() -> dict:
         "board_message_id": 0,
         "code_message_id": 0,
         "offenses": {},      # overrides ديال الاونر فوق DEFAULT_OFFENSES
+        "offense_seq": 0,    # IDs ديال الأحكام الجديدة اللي كيزيدها الاونر
         "auto_rules": {},    # قانون تلقائي → مخالفة سجنية
         "auto_rule_seq": 0,
         "inmates": {},       # user_id → record
@@ -462,6 +465,7 @@ class PrisonStore:
         record.setdefault("visit_seq", 0)
         record.setdefault("visits_message_id", 0)
         record.setdefault("visits_admin_message_id", 0)
+        record.setdefault("offense_seq", 0)
         record.setdefault("auto_rules", {})
         record.setdefault("auto_rule_seq", 0)
         return record
@@ -643,6 +647,7 @@ class PrisonStore:
         for key, base in DEFAULT_OFFENSES.items():
             entry = dict(base)
             entry.update(overrides.get(key, {}) or {})
+            entry["custom"] = False
             merged[key] = entry
         # مخالفات جديدة زادها الاونر
         for key, extra in overrides.items():
@@ -652,6 +657,8 @@ class PrisonStore:
                     "seconds": int(extra.get("seconds", HOUR)),
                     "cell": extra.get("cell", "holding"),
                     "severity": int(extra.get("severity", 1)),
+                    "custom": True,
+                    "created": int(extra.get("created", 0) or 0),
                 }
         return merged
 
@@ -660,6 +667,25 @@ class PrisonStore:
         return catalogue.get(key) or catalogue["manual"]
 
     def set_offense(self, guild_id: int, key: str, **changes) -> dict:
+        key = str(key or "").strip()
+        if not key or key not in self.offenses(guild_id):
+            raise ValueError("هاد الحكم ماكاينش.")
+        if changes.get("label") is not None:
+            label = " ".join(str(changes["label"]).strip().split())
+            if not label:
+                raise ValueError("اسم الحكم ما يقدرش يكون خاوي.")
+            changes["label"] = label[:80]
+        if changes.get("seconds") is not None:
+            seconds = int(changes["seconds"])
+            if seconds == 0 or seconds < -1 or seconds > MAX_SENTENCE_SECONDS:
+                raise ValueError("مدة الحكم ماشي صالحة.")
+            changes["seconds"] = seconds
+        if changes.get("cell") is not None:
+            cell = str(changes["cell"]).strip().lower()
+            if cell not in CELL_KEYS:
+                raise ValueError("الزنزانة ماشي صالحة.")
+            changes["cell"] = cell
+            changes["severity"] = CELL_RANK[cell] + 1
         record = self.guild(guild_id)
         overrides = record.setdefault("offenses", {})
         entry = overrides.setdefault(key, {})
@@ -668,6 +694,68 @@ class PrisonStore:
                 entry[field] = value
         self.save()
         return self.offense(guild_id, key)
+
+    def add_offense(
+        self,
+        guild_id: int,
+        *,
+        label: str,
+        seconds: int,
+        cell: str,
+    ) -> tuple[str, dict]:
+        """كيزيد حكم مخصص بـID ثابت، وكيخليه متاح للسجن وAuto Rules."""
+        label = " ".join(str(label or "").strip().split())
+        cell = str(cell or "").strip().lower()
+        seconds = int(seconds)
+        if not label:
+            raise ValueError("اسم الحكم ما يقدرش يكون خاوي.")
+        if seconds == 0 or seconds < -1 or seconds > MAX_SENTENCE_SECONDS:
+            raise ValueError("مدة الحكم ماشي صالحة.")
+        if cell not in CELL_KEYS:
+            raise ValueError("الزنزانة ماشي صالحة.")
+
+        guild_record = self.guild(guild_id)
+        catalogue = self.offenses(guild_id)
+        while True:
+            guild_record["offense_seq"] = int(guild_record.get("offense_seq", 0) or 0) + 1
+            key = f"custom_{guild_record['offense_seq']}"
+            if key not in catalogue:
+                break
+        guild_record.setdefault("offenses", {})[key] = {
+            "label": label[:80],
+            "seconds": seconds,
+            "cell": cell,
+            "severity": CELL_RANK[cell] + 1,
+            "custom": True,
+            "created": now_ts(),
+        }
+        self.save()
+        return key, self.offense(guild_id, key)
+
+    def reset_offense(self, guild_id: int, key: str) -> dict:
+        """كيرجع حكم أصلي للإعدادات الافتراضية ديالو."""
+        key = str(key or "").strip()
+        if key not in DEFAULT_OFFENSES:
+            raise ValueError("غير الأحكام الأصلية اللي كتقدر ترجعها للافتراضي.")
+        self.guild(guild_id).setdefault("offenses", {}).pop(key, None)
+        self.save()
+        return self.offense(guild_id, key)
+
+    def remove_offense(self, guild_id: int, key: str) -> dict:
+        """كيمسح حكم مخصص إلا ما كان مربوط بقانون ولا بسجين مازال معتاقل."""
+        key = str(key or "").strip()
+        if key in DEFAULT_OFFENSES:
+            raise ValueError("الحكم الأصلي ما كيتحيدش؛ تقدر غير ترجّعو للافتراضي.")
+        overrides = self.guild(guild_id).setdefault("offenses", {})
+        if key not in overrides:
+            raise ValueError("هاد الحكم ماكاينش.")
+        if any(rule.get("offense") == key for rule in self.auto_rules(guild_id).values()):
+            raise ValueError("هاد الحكم مربوط بـAuto Rule. حيّد القانون أو بدّل الحكم ديالو أولاً.")
+        if any(inmate.get("offense") == key for inmate in self.inmates(guild_id).values()):
+            raise ValueError("هاد الحكم مستعمل دابا عند سجين معتاقل، ما يمكنش يتحيد.")
+        removed = dict(overrides.pop(key))
+        self.save()
+        return removed
 
     # ───── قوانين تلقائية ديال الـOwner ─────
 
@@ -694,29 +782,75 @@ class PrisonStore:
         if str(offense_key) not in self.offenses(guild_id):
             raise ValueError("المخالفة السجنية ماكايناش.")
 
-        rules = self.auto_rules(guild_id)
-        if len(rules) >= AUTO_RULE_MAX:
-            raise ValueError(f"وصلتي للحد الأقصى ({AUTO_RULE_MAX} قانون).")
-        if any(
-            rule.get("kind") == kind and rule.get("pattern") == normalized
-            for rule in rules.values()
-        ):
+        result = self.add_auto_rules_bulk(
+            guild_id,
+            kind=kind,
+            patterns=[normalized],
+            offense_key=offense_key,
+        )
+        if not result["created"]:
             raise ValueError("هاد القانون مزاد من قبل.")
+        return result["created"][0]
 
-        guild_record = self.guild(guild_id)
-        guild_record["auto_rule_seq"] = int(guild_record.get("auto_rule_seq", 0) or 0) + 1
-        rule_id = str(guild_record["auto_rule_seq"])
-        record = {
-            "id": rule_id,
-            "kind": kind,
-            "pattern": normalized,
-            "offense": str(offense_key),
-            "enabled": True,
-            "created": now_ts(),
+    def add_auto_rules_bulk(
+        self,
+        guild_id: int,
+        *,
+        kind: str,
+        patterns,
+        offense_key: str,
+    ) -> dict[str, list]:
+        """كيزيد لائحة قوانين دفعة وحدة، بلا سقف، وبـsave وحدة."""
+        kind = str(kind or "").strip().lower()
+        if kind not in AUTO_RULE_KINDS:
+            raise ValueError("نوع القانون غير صالح.")
+        if str(offense_key) not in self.offenses(guild_id):
+            raise ValueError("المخالفة السجنية ماكايناش.")
+
+        normalized_patterns: list[str] = []
+        invalid: list[str] = []
+        seen_input: set[str] = set()
+        for raw in patterns or []:
+            normalized = normalize_auto_rule_pattern(kind, raw)
+            if not normalized:
+                invalid.append(str(raw or "")[:120])
+                continue
+            if normalized in seen_input:
+                continue
+            seen_input.add(normalized)
+            normalized_patterns.append(normalized)
+        if not normalized_patterns:
+            raise ValueError("ما لقيت حتى قيمة صالحة باش نزيدها.")
+
+        rules = self.auto_rules(guild_id)
+        existing = {
+            str(rule.get("pattern"))
+            for rule in rules.values()
+            if rule.get("kind") == kind
         }
-        rules[rule_id] = record
-        self.save()
-        return record
+        guild_record = self.guild(guild_id)
+        created: list[dict] = []
+        skipped: list[str] = []
+        for normalized in normalized_patterns:
+            if normalized in existing:
+                skipped.append(normalized)
+                continue
+            guild_record["auto_rule_seq"] = int(guild_record.get("auto_rule_seq", 0) or 0) + 1
+            rule_id = str(guild_record["auto_rule_seq"])
+            record = {
+                "id": rule_id,
+                "kind": kind,
+                "pattern": normalized,
+                "offense": str(offense_key),
+                "enabled": True,
+                "created": now_ts(),
+            }
+            rules[rule_id] = record
+            created.append(record)
+            existing.add(normalized)
+        if created:
+            self.save()
+        return {"created": created, "skipped": skipped, "invalid": invalid}
 
     def toggle_auto_rule(self, guild_id: int, rule_id) -> Optional[dict]:
         record = self.auto_rule(guild_id, rule_id)

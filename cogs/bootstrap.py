@@ -154,19 +154,19 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     # وحط هاد الرابط هنا (كيبدا بـ https://cdn.discordapp.com/attachments/...).
     # مواقع بحال animated-gif-creator.com عادة ماخدامينش كـ hotlink، البوت ما غاديش يقدر يبين الصورة بيهم.
     
-    # موديل احترافي ورخيص للمحادثة. OpenRouter كيوجّه الطلب لأرخص provider متاح.
-    AI_MODEL = "deepseek/deepseek-v4-flash"
+    # موديل قوي ومتوازن للمحادثة: ذكاء عالي، latency مزيانة، وثمن معقول.
+    AI_MODEL = "openai/gpt-5.6-terra"
     
-    # ⚠️ DeepSeek V4 Flash هو reasoning model: كيصرف جزء من max_tokens على "التفكير"
-    # قبل ما يكتب الجواب. علاش خاصنا نطفيو الـ reasoning فـ المهام القصيرة (بحال الترجمة)،
-    # وإلا كيرجع content فارغة وكيبان ليك بلي "الموديل ماخدامش". شوف AI_DISABLE_REASONING تحت.
+    # المهام القصيرة بحال الترجمة بلا reasoning؛ محادثة AI كتستعمل low reasoning
+    # بوحدها باش تبقى ذكية وسريعة بلا استهلاك زايد.
     AI_DISABLE_REASONING = True
+    AI_CHAT_REASONING_EFFORT = "low"
     
     # ═══════ سلسلة الاحتياط (Fallback) ═══════
-    # إلا الموديل الأساسي ماجاوبش، كنجرب بديل رخيص ثم المسار المجاني.
+    # إلا الموديل الأساسي ماجاوبش: Gemini قوي وسريع، ثم Luna اقتصادي، ثم المجاني.
     AI_MODEL_FALLBACKS = [
-        "qwen/qwen3.5-flash-02-23",
-        "nvidia/nemotron-3.5-lightning:free",
+        "google/gemini-3-flash-preview",
+        "openai/gpt-5.6-luna",
         "openrouter/free",
     ]
     
@@ -182,15 +182,15 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     
     TMDB_URL = "https://api.themoviedb.org/3"
     
-    # حدود محادثة اقتصادية: ذاكرة قصيرة، prompt محدود، وجواب مركز.
-    MEMORY_SIZE = 6
+    # حدود محادثة اقتصادية: ذاكرة مركزة، جواب مفيد، والويب غير عند الحاجة.
+    MEMORY_SIZE = 8
     CREATIVITY = 0.35
-    AI_MAX_OUTPUT_TOKENS = 320
+    AI_MAX_OUTPUT_TOKENS = 520
     AI_MAX_PROMPT_CHARS = 2500
-    AI_USER_COOLDOWN_SECONDS = 6
+    AI_USER_COOLDOWN_SECONDS = 2
     AI_PRIVATE_THREAD_IDLE_SECONDS = 15 * 60
-    MAX_REPLY_LENGTH = 1800
-    API_TIMEOUT = 25
+    MAX_REPLY_LENGTH = 1900
+    API_TIMEOUT = 35
     
     # ═══════════════════════════════════════════════════════
     # ║              CHANNELS ديال AUTO-INFO                 ║

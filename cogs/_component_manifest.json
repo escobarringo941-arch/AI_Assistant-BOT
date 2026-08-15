@@ -1,6 +1,6 @@
 {
   "description": "Hashes lock the reviewed component bytes and execution order; intentional feature revisions update this baseline.",
-  "joined_sha256": "cdc2b20fa53d16d76f0605f9008c849b100cddba86bfac545fa67c57ac293722",
+  "joined_sha256": "aab9c74ca6d1e4e5b9709bfbde02b1f22df1eb0e67565c60bac159e361b5ba93",
   "events_before_setup_hook": [
     "on_voice_state_update",
     "on_member_join",
@@ -30,7 +30,7 @@
       "path": "cogs/bootstrap.py",
       "original_start_line": 1,
       "original_end_line": 696,
-      "sha256": "286c0169ef5bc88fcad4ddb13b75271f60a53d6b127354894e2a196bdffb0122"
+      "sha256": "deddaf4a32c76ca1540b3a9b8a4594daff98d667add5bf2e41df27d68f4abcd3"
     },
     {
       "name": "persistent_state",
@@ -58,7 +58,7 @@
       "path": "cogs/ai_conversation.py",
       "original_start_line": 2433,
       "original_end_line": 2679,
-      "sha256": "4ab8bdf5c2db4caa3b201f02d0a6ff7b51f51b8ef0f49e785462b58a890122d8"
+      "sha256": "a0e7551dde0a0d4eab3e314ddf1f81156e3da500d933a8bb81547debe0de3a54"
     },
     {
       "name": "content_apis",
@@ -198,7 +198,7 @@
       "path": "cogs/general_commands.py",
       "original_start_line": 11674,
       "original_end_line": 12020,
-      "sha256": "8896636a2725dc8618d61fd972edf72a7b2756a70259ecdb4ab22e6634132bdb"
+      "sha256": "1aea5a5fb7fc438b9cbcb7fd593f42f31abaf6fc8ea2afc8d7fee4306eee684f"
     },
     {
       "name": "automation_tasks",

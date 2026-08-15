@@ -106,6 +106,59 @@ class AutoRuleStoreTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             store.add_auto_rule(1, kind="action", pattern="unknown", offense_key="spam")
 
+    def test_rules_are_unlimited_and_bulk_words_are_deduplicated(self):
+        store = self.make_store()
+        for index in range(60):
+            store.add_auto_rule(
+                1,
+                kind="word",
+                pattern=f"forbidden phrase {index}",
+                offense_key="insult",
+            )
+        result = store.add_auto_rules_bulk(
+            1,
+            kind="word",
+            patterns=["New Word", " new   word ", "Second Word", "forbidden phrase 3"],
+            offense_key="spam",
+        )
+        self.assertEqual(len(store.auto_rules(1)), 62)
+        self.assertEqual(
+            [rule["pattern"] for rule in result["created"]],
+            ["new word", "second word"],
+        )
+        self.assertEqual(result["skipped"], ["forbidden phrase 3"])
+
+    def test_owner_can_create_edit_reset_and_remove_offenses(self):
+        store = self.make_store()
+        key, entry = store.add_offense(
+            1,
+            label="حكم جديد",
+            seconds=45 * 60,
+            cell="block",
+        )
+        self.assertTrue(entry["custom"])
+        self.assertEqual(entry["severity"], 2)
+        edited = store.set_offense(1, key, label="حكم معدل", seconds=2 * 3600, cell="max")
+        self.assertEqual(edited["seconds"], 2 * 3600)
+        self.assertEqual(edited["cell"], "max")
+        self.assertEqual(edited["severity"], 3)
+
+        store.set_offense(1, "spam", seconds=9 * 60, cell="block")
+        self.assertEqual(store.offense(1, "spam")["seconds"], 9 * 60)
+        reset = store.reset_offense(1, "spam")
+        self.assertEqual(reset["seconds"], 30 * 60)
+        store.remove_offense(1, key)
+        self.assertNotIn(key, store.offenses(1))
+
+    def test_custom_offense_cannot_be_removed_while_auto_rule_uses_it(self):
+        store = self.make_store()
+        key, _entry = store.add_offense(
+            1, label="مرتبط بقانون", seconds=3600, cell="holding"
+        )
+        store.add_auto_rule(1, kind="word", pattern="blocked", offense_key=key)
+        with self.assertRaises(ValueError):
+            store.remove_offense(1, key)
+
 
 class AutoRuleSourceTests(unittest.TestCase):
     def test_voice_panel_shows_and_refreshes_every_inmate_timer(self):
@@ -153,6 +206,11 @@ class AutoRuleSourceTests(unittest.TestCase):
         self.assertIn("AutoActionView", home_names)
         self.assertIn("AutoRuleManageView", home_names)
         self.assertIn("AutoRuleSelectedView", home_names)
+        self.assertIn("BulkWordRulesModal", home_names)
+        self.assertIn("OffenseCreateModal", home_names)
+        self.assertIn("OffenseSelectedView", home_names)
+        self.assertIn("add_auto_rules_bulk", PANEL_SOURCE)
+        self.assertIn("DISCORD_SELECT_PAGE_SIZE", PANEL_SOURCE)
 
 
 if __name__ == "__main__":
