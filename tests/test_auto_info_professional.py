@@ -66,6 +66,23 @@ class AutoInfoProfessionalTests(unittest.TestCase):
         self.assertIn("NEWS_CHANNEL_IDS + GAMES_CHANNEL_IDS + MOVIES_CHANNEL_IDS", self.tasks)
         self.assertIn("+ ANIME_CHANNEL_IDS + MUSIC_CHANNEL_IDS", self.tasks)
 
+    def test_restart_keeps_the_real_hourly_deadline(self):
+        for marker in (
+            "next_dispatch_at",
+            "last_dispatch_at",
+            "get_auto_info_next_dispatch_at",
+            "seconds_until_auto_info_dispatch",
+            "reserve_auto_info_dispatch",
+        ):
+            self.assertIn(marker, self.settings)
+        self.assertIn("if not reserve_auto_info_dispatch():", self.tasks)
+        self.assertIn("remaining = seconds_until_auto_info_dispatch()", self.tasks)
+        self.assertLess(
+            self.tasks.index("if not reserve_auto_info_dispatch():"),
+            self.tasks.index('if bot_settings["auto_info_news"]:'),
+        )
+        self.assertIn("next_dispatch += AUTO_INFO_INTERVAL_SECONDS", self.settings)
+
     def test_history_is_permanent_and_music_never_resets(self):
         self.assertNotIn("MAX_HISTORY", self.settings)
         self.assertNotIn("lst[-limit:]", self.settings)

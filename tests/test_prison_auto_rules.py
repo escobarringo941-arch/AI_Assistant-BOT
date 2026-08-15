@@ -22,8 +22,10 @@ from cogs.prison_core import (  # noqa: E402
 ROOT = Path(__file__).resolve().parents[1]
 PRISON_PATH = ROOT / "cogs" / "prison.py"
 PANEL_PATH = ROOT / "cogs" / "prison_panel.py"
+ACCESS_PATH = ROOT / "cogs" / "access_panels.py"
 PRISON_SOURCE = PRISON_PATH.read_text(encoding="utf-8")
 PANEL_SOURCE = PANEL_PATH.read_text(encoding="utf-8")
+ACCESS_SOURCE = ACCESS_PATH.read_text(encoding="utf-8")
 PRISON_TREE = ast.parse(PRISON_SOURCE, filename=str(PRISON_PATH))
 PANEL_TREE = ast.parse(PANEL_SOURCE, filename=str(PANEL_PATH))
 
@@ -274,6 +276,9 @@ class AutoRuleSourceTests(unittest.TestCase):
         self.assertIn("AutoRuleSelectedView", home_names)
         self.assertIn("AutoRuleThresholdModal", home_names)
         self.assertIn("AutoRuleChangeOffenseView", home_names)
+        self.assertIn("AutoRulePenaltyView", home_names)
+        self.assertIn("AutoRulePenaltyDurationModal", home_names)
+        self.assertIn("AutoActionThresholdModal", home_names)
         self.assertIn("BulkWordRulesModal", home_names)
         self.assertIn("OffenseCreateModal", home_names)
         self.assertIn("OffenseSelectedView", home_names)
@@ -283,6 +288,29 @@ class AutoRuleSourceTests(unittest.TestCase):
         self.assertIn('label="الأحكام والمدد"', PANEL_SOURCE)
         self.assertIn('label="القوانين والتكرارات"', PANEL_SOURCE)
         self.assertIn("DISCORD_SELECT_PAGE_SIZE", PANEL_SOURCE)
+        self.assertIn("عدد الخروقات حتى العقوبة", PANEL_SOURCE)
+        self.assertIn('label="الحكم والمدة"', PANEL_SOURCE)
+
+    def test_owner_changes_refresh_every_public_rules_surface(self):
+        refresh = method_source(
+            PRISON_TREE, PRISON_SOURCE, "PrisonSystem", "refresh_rule_surfaces"
+        )
+        self.assertIn("publish_prison_code", refresh)
+        self.assertIn("setup_blacklist_message", refresh)
+        self.assertIn("setup_rules_message", refresh)
+        self.assertIn("_owner_prison_rules_blacklist_field", ACCESS_SOURCE)
+        self.assertIn("trigger_count", ACCESS_SOURCE)
+        self.assertIn("refresh_rule_surfaces", PANEL_SOURCE)
+
+    def test_owner_rules_are_the_only_automatic_punishment_source(self):
+        member_events = (ROOT / "cogs" / "member_events.py").read_text(encoding="utf-8")
+        catalog = method_source(
+            PRISON_TREE, PRISON_SOURCE, "PrisonSystem", "ensure_owner_rule_catalog"
+        )
+        self.assertIn('prison_cog = bot.get_cog("PrisonSystem")', member_events)
+        self.assertIn("if prison_cog is not None:", member_events)
+        self.assertIn("get_active_banned_words", catalog)
+        self.assertIn('("message_spam", "spam")', catalog)
 
 
 if __name__ == "__main__":

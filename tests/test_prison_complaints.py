@@ -211,6 +211,20 @@ class ComplaintSourceTests(unittest.TestCase):
         self.assertIn("_clear_solitary_member_blackout", release)
         self.assertIn("_restore_solitary_session", restore)
         self.assertIn("_punish_solitary_violation", message)
+        self.assertIn("sentence_expired", release)
+        self.assertIn("released_from_prison", release)
+
+    def test_owner_has_clear_manual_solitary_release_control(self):
+        panel_source = (ROOT / "cogs" / "prison_panel.py").read_text(encoding="utf-8")
+        panel_tree = ast.parse(panel_source)
+        cls = next(
+            node for node in panel_tree.body
+            if isinstance(node, ast.ClassDef) and node.name == "SolitaryReleaseSelect"
+        )
+        rendered = ast.get_source_segment(panel_source, cls)
+        self.assertIn("discord.ui.UserSelect", rendered)
+        self.assertIn("إخراج يدوي من الانفرادي", rendered)
+        self.assertIn("await cog.release_from_solitary", rendered)
 
 
 if __name__ == "__main__":
