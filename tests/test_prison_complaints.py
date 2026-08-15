@@ -18,6 +18,9 @@ from cogs.prison_core import (
     PrisonStore,
     complaint_route_for_cell,
     solitary_channel_name,
+    solitary_default_seconds,
+    solitary_max_seconds,
+    solitary_role_name,
 )
 
 
@@ -90,6 +93,41 @@ class ComplaintStoreTests(unittest.TestCase):
 
     def test_solitary_room_names_are_unique_for_duplicate_names(self):
         self.assertNotEqual(solitary_channel_name("same", 11), solitary_channel_name("same", 12))
+        self.assertIn("11", solitary_channel_name("same", 11))
+
+    def test_solitary_role_is_unique_to_id_case_and_cell(self):
+        role = solitary_role_name(123456789, 42, "max")
+        self.assertIn("123456789", role)
+        self.assertIn("Case 42", role)
+        self.assertIn("MAX", role)
+
+    def test_solitary_time_is_harsher_for_each_cell(self):
+        self.assertLess(
+            solitary_default_seconds("holding"), solitary_default_seconds("block")
+        )
+        self.assertLess(solitary_default_seconds("block"), solitary_default_seconds("max"))
+        self.assertLess(solitary_max_seconds("holding"), solitary_max_seconds("block"))
+        self.assertLess(solitary_max_seconds("block"), solitary_max_seconds("max"))
+
+    def test_solitary_record_remembers_unique_role_and_multiplies_repeat_noise(self):
+        store = self.make_store()
+        with patch("cogs.prison_core.now_ts", return_value=1_000):
+            record = store.add_solitary(
+                1,
+                10,
+                channel_id=100,
+                role_id=200,
+                seconds=600,
+                reason="fight",
+                by=1,
+                cell="holding",
+            )
+        self.assertEqual(record["role_id"], 200)
+        with patch("cogs.prison_core.now_ts", return_value=1_100):
+            punished = store.punish_solitary_violation(1, 10, reason="spam")
+        self.assertEqual(punished["violations"], 1)
+        self.assertEqual(punished["discipline"][-1]["multiplier"], 2)
+        self.assertGreater(punished["until"], record["since"] + 600)
 
     def test_each_cell_has_durable_help_panel_storage(self):
         store = self.make_store()
@@ -138,7 +176,7 @@ class ComplaintSourceTests(unittest.TestCase):
         self.assertIn("self.complaint_route(author_cell)", submit)
         self.assertIn("requested.intersection", submit)
 
-    def test_warden_authority_is_holding_only(self):
+    def test_warden_authority_is_holding_only_but_private_solitary_stays_hidden(self):
         authority = method_source("PrisonSystem", "can_handle_complaint")
         text_permissions = method_source("PrisonSystem", "_channel_overwrites")
         voice_permissions = method_source("PrisonSystem", "_cell_voice_overwrites")
@@ -146,7 +184,9 @@ class ComplaintSourceTests(unittest.TestCase):
         self.assertIn('complaint.get("cell") == "holding"', authority)
         self.assertIn('if key == "holding"', text_permissions)
         self.assertIn('if key == "holding"', voice_permissions)
-        self.assertIn('record.get("cell", "holding") == "holding"', solitary_permissions)
+        self.assertIn("overwrites[warden] = blocked", solitary_permissions)
+        self.assertIn("overwrites[access_role]", solitary_permissions)
+        self.assertIn("overwrites[member]", solitary_permissions)
 
     def test_group_approval_is_atomic_and_creates_one_room_per_target(self):
         approve = method_source("SolitaryDurationModal", "on_submit")
@@ -156,6 +196,21 @@ class ComplaintSourceTests(unittest.TestCase):
         self.assertIn("for created_member, _created_result in created", approve)
         self.assertIn("await cog.release_from_solitary", approve)
         self.assertIn("available < len(targets)", approve)
+
+    def test_solitary_uses_one_id_voice_role_and_deletes_both_on_release(self):
+        create = method_source("PrisonSystem", "send_to_solitary")
+        release = method_source("PrisonSystem", "release_from_solitary")
+        restore = method_source("PrisonSystem", "_restore_solitary_session")
+        message = method_source("PrisonSystem", "on_message")
+        self.assertIn("_create_solitary_role", create)
+        self.assertIn("create_voice_channel", create)
+        self.assertIn("user_limit=1", create)
+        self.assertIn("role_id=access_role.id", create)
+        self.assertIn("await role.delete", release)
+        self.assertIn("await channel.delete", release)
+        self.assertIn("_clear_solitary_member_blackout", release)
+        self.assertIn("_restore_solitary_session", restore)
+        self.assertIn("_punish_solitary_violation", message)
 
 
 if __name__ == "__main__":

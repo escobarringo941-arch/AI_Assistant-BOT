@@ -92,6 +92,7 @@ class AutoRuleStoreTests(unittest.TestCase):
         )
         self.assertEqual(rule["pattern"], "bad phrase")
         self.assertEqual(rule["offense"], "spam")
+        self.assertEqual(rule["trigger_count"], 1)
         self.assertTrue(rule["enabled"])
         self.assertFalse(store.toggle_auto_rule(1, rule["id"])["enabled"])
         self.assertEqual(store.remove_auto_rule(1, rule["id"])["id"], rule["id"])
@@ -159,6 +160,69 @@ class AutoRuleStoreTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             store.remove_offense(1, key)
 
+    def test_threshold_is_per_rule_per_member_persistent_and_repeats_forever(self):
+        store = self.make_store()
+        rule = store.add_auto_rule(
+            1,
+            kind="word",
+            pattern="forbidden insult",
+            offense_key="insult",
+            trigger_count=4,
+        )
+
+        first = store.record_auto_rule_match(1, rule["id"], 111)
+        second = store.record_auto_rule_match(1, rule["id"], 111)
+        self.assertEqual((first["count"], second["count"]), (1, 2))
+        self.assertFalse(second["triggered"])
+
+        # نفس الداتا كتبقى من بعد Restart، والعداد ديال عضو آخر مستقل.
+        restarted = PrisonStore.__new__(PrisonStore)
+        restarted._db = store._db
+        other_member = restarted.record_auto_rule_match(1, rule["id"], 222)
+        third = restarted.record_auto_rule_match(1, rule["id"], 111)
+        fourth = restarted.record_auto_rule_match(1, rule["id"], 111)
+        self.assertEqual(other_member["count"], 1)
+        self.assertEqual(third["count"], 3)
+        self.assertTrue(fourth["triggered"])
+
+        # الحكم كيعاود من الصفر لنفس العضو، ولكن القانون كيبقى شغال ديما.
+        self.assertIn(rule["id"], restarted.auto_rules(1))
+        again = restarted.record_auto_rule_match(1, rule["id"], 111)
+        self.assertEqual(again["count"], 1)
+        self.assertFalse(again["triggered"])
+
+    def test_owner_can_change_threshold_and_linked_judgment(self):
+        store = self.make_store()
+        rule = store.add_auto_rule(
+            1, kind="word", pattern="blocked", offense_key="spam"
+        )
+        store.record_auto_rule_match(1, rule["id"], 333)
+        edited = store.set_auto_rule_trigger_count(1, rule["id"], 10)
+        self.assertEqual(edited["trigger_count"], 10)
+        self.assertNotIn(rule["id"], store.guild(1)["auto_rule_strikes"])
+
+        changed = store.set_auto_rule_offense(1, rule["id"], "insult")
+        self.assertEqual(changed["offense"], "insult")
+        with self.assertRaises(ValueError):
+            store.set_auto_rule_trigger_count(1, rule["id"], 0)
+        with self.assertRaises(ValueError):
+            store.set_auto_rule_trigger_count(1, rule["id"], 101)
+
+    def test_removing_rule_removes_only_its_saved_member_counters(self):
+        store = self.make_store()
+        first = store.add_auto_rule(
+            1, kind="word", pattern="first", offense_key="spam", trigger_count=4
+        )
+        second = store.add_auto_rule(
+            1, kind="word", pattern="second", offense_key="spam", trigger_count=4
+        )
+        store.record_auto_rule_match(1, first["id"], 444)
+        store.record_auto_rule_match(1, second["id"], 444)
+        store.remove_auto_rule(1, first["id"])
+        strikes = store.guild(1)["auto_rule_strikes"]
+        self.assertNotIn(first["id"], strikes)
+        self.assertIn(second["id"], strikes)
+
 
 class AutoRuleSourceTests(unittest.TestCase):
     def test_voice_panel_shows_and_refreshes_every_inmate_timer(self):
@@ -189,6 +253,8 @@ class AutoRuleSourceTests(unittest.TestCase):
         self.assertIn('kind == "domain"', matching)
         self.assertIn('kind == "action"', matching)
         self.assertIn("await message.delete()", enforce)
+        self.assertIn("record_auto_rule_matches", enforce)
+        self.assertIn("if not triggered", enforce)
         self.assertIn("await self.imprison(", enforce)
         self.assertIn("await self._enforce_auto_message_rules(message)", on_message)
 
@@ -206,10 +272,14 @@ class AutoRuleSourceTests(unittest.TestCase):
         self.assertIn("AutoActionView", home_names)
         self.assertIn("AutoRuleManageView", home_names)
         self.assertIn("AutoRuleSelectedView", home_names)
+        self.assertIn("AutoRuleThresholdModal", home_names)
+        self.assertIn("AutoRuleChangeOffenseView", home_names)
         self.assertIn("BulkWordRulesModal", home_names)
         self.assertIn("OffenseCreateModal", home_names)
         self.assertIn("OffenseSelectedView", home_names)
         self.assertIn("add_auto_rules_bulk", PANEL_SOURCE)
+        self.assertIn("set_auto_rule_trigger_count", PANEL_SOURCE)
+        self.assertIn("set_auto_rule_offense", PANEL_SOURCE)
         self.assertIn("DISCORD_SELECT_PAGE_SIZE", PANEL_SOURCE)
 
 

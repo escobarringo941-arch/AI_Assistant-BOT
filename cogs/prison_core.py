@@ -48,8 +48,9 @@ CHANNEL_NAMES = {
 # اللوحة العامة — **برا** كاتيكوري السجن، كيشوفها كاع السيرفر (read-only).
 WANTED_BOARD_CHANNEL_NAME = "📢┃wanted-board"
 
-# سميات رومز الحبس الانفرادي
+# سميات رومز ورولات الحبس الانفرادي (واحد مستقل لكل Discord ID)
 SOLITARY_PREFIX = "🔗┃solitary-"
+SOLITARY_ROLE_PREFIX = "Solitary"
 
 PRISONER_ROLE_NAME = "Prisoner"
 WARDEN_ROLE_NAME = "Warden"
@@ -167,11 +168,28 @@ DEFAULT_OFFENSES: dict[str, dict[str, Any]] = {
 }
 
 # ═══════ الحبس الانفرادي (Solitary) ═══════
-SOLITARY_DEFAULT_SECONDS = 2 * HOUR
-SOLITARY_MAX_SECONDS = 24 * HOUR
+# كلما كانت الزنزانة الأصلية أقسح، كتكون مدة العزل الافتراضية والسقف أقسح.
+SOLITARY_DEFAULT_SECONDS_BY_CELL = {
+    "holding": 2 * HOUR,
+    "block": 6 * HOUR,
+    "max": 12 * HOUR,
+}
+SOLITARY_MAX_SECONDS_BY_CELL = {
+    "holding": 24 * HOUR,
+    "block": 3 * DAY,
+    "max": 7 * DAY,
+}
+SOLITARY_VIOLATION_BASE_MULTIPLIER = {
+    "holding": 2,
+    "block": 3,
+    "max": 4,
+}
+SOLITARY_DEFAULT_SECONDS = SOLITARY_DEFAULT_SECONDS_BY_CELL["holding"]
+SOLITARY_MAX_SECONDS = max(SOLITARY_MAX_SECONDS_BY_CELL.values())
 
-# Discord كيسمح بـ50 روم فالكاتيكوري. كنحسبو الثابتين أوتوماتيكيا والباقي للانفرادي.
-SOLITARY_MAX_ROOMS = 50 - len(CHANNEL_NAMES) - 1  # -1 هامش أمان
+# Discord كيسمح بـ50 روم فالكاتيكوري. كل سجين معزول عندو Voice واحدة بChat ديالها.
+# كنخليو هامش للرومز المؤقتة ديال الزيارات والإدارة.
+SOLITARY_MAX_ROOMS = max(1, 50 - len(CHANNEL_NAMES) - len(CELL_KEYS) - 5)
 
 # مدة الانتظار بين طلبَي تدخل ديال نفس السجين. خمس دقايق كتحبس السبام
 # بلا ما تخلي السجين عالق مدة طويلة إلا وقع مشكل جديد فعلاً.
@@ -190,12 +208,30 @@ def solitary_channel_name(display_name: str, user_id: int) -> str:
     كتصاوب سمية صالحة لروم Discord من اسم السجين.
     الحروف العربية/الرموز كيطيحو فسميات الرومز، لهذا كاين fallback على الـID.
     """
-    cleaned = re.sub(r"[^a-zA-Z0-9\-]+", "-", str(display_name or "")).strip("-").lower()
-    cleaned = re.sub(r"-{2,}", "-", cleaned)[:20].strip("-")
-    if not cleaned:
-        cleaned = f"inmate-{int(user_id) % 100000}"
-    # الـID القصير كيضمن أن كل سجين عندو روم مميزة حتى إلا تشابهات السميات.
-    return f"{SOLITARY_PREFIX}{cleaned}-{int(user_id) % 10000:04d}"
+    # الـDiscord ID كامل كيخلي الزنزانة محسوبة على الحساب بلا أي التباس.
+    return f"{SOLITARY_PREFIX}{int(user_id)}"
+
+
+def solitary_role_name(user_id: int, case_id: int = 0, cell: str = "") -> str:
+    """رول مؤقت وفريد للسجين؛ كيتحيد نهائياً مع نهاية العزل."""
+    level = str(cell or "").upper()
+    level_part = f" • {level}" if level in {"HOLDING", "BLOCK", "MAX"} else ""
+    suffix = f" • Case {int(case_id)}" if int(case_id) > 0 else ""
+    return f"{SOLITARY_ROLE_PREFIX}{level_part} • {int(user_id)}{suffix}"[:100]
+
+
+def solitary_default_seconds(cell: str) -> int:
+    return int(SOLITARY_DEFAULT_SECONDS_BY_CELL.get(str(cell), SOLITARY_DEFAULT_SECONDS))
+
+
+def solitary_max_seconds(cell: str) -> int:
+    return int(SOLITARY_MAX_SECONDS_BY_CELL.get(str(cell), SOLITARY_MAX_SECONDS_BY_CELL["holding"]))
+
+
+def solitary_violation_multiplier(cell: str, violations: int) -> int:
+    """التكرار كيزيد الضرب تدريجياً، مع سقف باش ما يفلتش الحساب بلا حدود."""
+    base = int(SOLITARY_VIOLATION_BASE_MULTIPLIER.get(str(cell), 2))
+    return base + min(2, max(0, int(violations) - 1))
 
 
 def complaint_route_for_cell(cell: str) -> str:
@@ -227,6 +263,8 @@ def visit_channel_name(display_name: str, user_id: int) -> str:
 # فكل Select، ولكن التخزين نفسه ما عندوش حد عددي.
 AUTO_RULE_MAX = 0
 AUTO_RULE_KINDS = ("word", "domain", "action")
+AUTO_RULE_TRIGGER_MIN = 1
+AUTO_RULE_TRIGGER_MAX = 100
 AUTO_ACTION_LABELS = {
     "discord_invite": "نشر دعوة Discord",
     "any_link": "نشر أي رابط",
@@ -385,11 +423,14 @@ def _blank_guild() -> dict:
         "offense_seq": 0,    # IDs ديال الأحكام الجديدة اللي كيزيدها الاونر
         "auto_rules": {},    # قانون تلقائي → مخالفة سجنية
         "auto_rule_seq": 0,
+        # rule_id → user_id → {count, updated}; مربوط بالـID وكيصفر بعد الحكم.
+        "auto_rule_strikes": {},
         "inmates": {},       # user_id → record
         "history": [],       # آخر 200 حكم
         "case_seq": 0,
         # ── الحبس الانفرادي ──
-        "solitary": {},      # user_id → {channel_id, until, reason, by, cell}
+        # user_id → {channel_id, role_id, until, reason, by, cell, violations}
+        "solitary": {},
         # ── الشكايات ──
         "complaints": {},    # complaint_id → {author, targets[], cell, reason, ...}
         "complaint_seq": 0,
@@ -468,6 +509,7 @@ class PrisonStore:
         record.setdefault("offense_seq", 0)
         record.setdefault("auto_rules", {})
         record.setdefault("auto_rule_seq", 0)
+        record.setdefault("auto_rule_strikes", {})
         return record
 
     @staticmethod
@@ -760,7 +802,17 @@ class PrisonStore:
     # ───── قوانين تلقائية ديال الـOwner ─────
 
     def auto_rules(self, guild_id: int) -> dict[str, dict]:
-        return self.guild(guild_id).setdefault("auto_rules", {})
+        rules = self.guild(guild_id).setdefault("auto_rules", {})
+        changed = False
+        for rule in rules.values():
+            raw = int(rule.get("trigger_count", 1) or 1)
+            normalized = max(AUTO_RULE_TRIGGER_MIN, min(raw, AUTO_RULE_TRIGGER_MAX))
+            if rule.get("trigger_count") != normalized:
+                rule["trigger_count"] = normalized
+                changed = True
+        if changed:
+            self.save()
+        return rules
 
     def auto_rule(self, guild_id: int, rule_id) -> Optional[dict]:
         return self.auto_rules(guild_id).get(str(rule_id))
@@ -772,6 +824,7 @@ class PrisonStore:
         kind: str,
         pattern: str,
         offense_key: str,
+        trigger_count: int = 1,
     ) -> dict:
         kind = str(kind or "").strip().lower()
         if kind not in AUTO_RULE_KINDS:
@@ -787,6 +840,7 @@ class PrisonStore:
             kind=kind,
             patterns=[normalized],
             offense_key=offense_key,
+            trigger_count=trigger_count,
         )
         if not result["created"]:
             raise ValueError("هاد القانون مزاد من قبل.")
@@ -799,6 +853,7 @@ class PrisonStore:
         kind: str,
         patterns,
         offense_key: str,
+        trigger_count: int = 1,
     ) -> dict[str, list]:
         """كيزيد لائحة قوانين دفعة وحدة، بلا سقف، وبـsave وحدة."""
         kind = str(kind or "").strip().lower()
@@ -806,6 +861,11 @@ class PrisonStore:
             raise ValueError("نوع القانون غير صالح.")
         if str(offense_key) not in self.offenses(guild_id):
             raise ValueError("المخالفة السجنية ماكايناش.")
+        trigger_count = int(trigger_count)
+        if not AUTO_RULE_TRIGGER_MIN <= trigger_count <= AUTO_RULE_TRIGGER_MAX:
+            raise ValueError(
+                f"عدد التكرارات خاصو يكون بين {AUTO_RULE_TRIGGER_MIN} و {AUTO_RULE_TRIGGER_MAX}."
+            )
 
         normalized_patterns: list[str] = []
         invalid: list[str] = []
@@ -842,6 +902,7 @@ class PrisonStore:
                 "kind": kind,
                 "pattern": normalized,
                 "offense": str(offense_key),
+                "trigger_count": trigger_count,
                 "enabled": True,
                 "created": now_ts(),
             }
@@ -860,9 +921,81 @@ class PrisonStore:
         self.save()
         return record
 
+    def set_auto_rule_trigger_count(
+        self, guild_id: int, rule_id, trigger_count: int
+    ) -> Optional[dict]:
+        record = self.auto_rule(guild_id, rule_id)
+        if record is None:
+            return None
+        trigger_count = int(trigger_count)
+        if not AUTO_RULE_TRIGGER_MIN <= trigger_count <= AUTO_RULE_TRIGGER_MAX:
+            raise ValueError(
+                f"عدد التكرارات خاصو يكون بين {AUTO_RULE_TRIGGER_MIN} و {AUTO_RULE_TRIGGER_MAX}."
+            )
+        record["trigger_count"] = trigger_count
+        # أي تغيير من الـOwner كيبدا عدّاد نظيف باش ما يطبقش حكم بمخزون قديم.
+        self.guild(guild_id).setdefault("auto_rule_strikes", {}).pop(str(rule_id), None)
+        self.save()
+        return record
+
+    def set_auto_rule_offense(
+        self, guild_id: int, rule_id, offense_key: str
+    ) -> Optional[dict]:
+        record = self.auto_rule(guild_id, rule_id)
+        if record is None:
+            return None
+        if str(offense_key) not in self.offenses(guild_id):
+            raise ValueError("المخالفة السجنية ماكايناش.")
+        record["offense"] = str(offense_key)
+        self.save()
+        return record
+
+    def record_auto_rule_match(
+        self, guild_id: int, rule_id, user_id: int
+    ) -> Optional[dict]:
+        return self.record_auto_rule_matches(guild_id, [rule_id], user_id).get(str(rule_id))
+
+    def record_auto_rule_matches(
+        self, guild_id: int, rule_ids, user_id: int
+    ) -> dict[str, dict]:
+        """Batch خفيف: كيحسب جميع القوانين المطابقة وكيكتب الداتا مرة وحدة."""
+        all_strikes = self.guild(guild_id).setdefault("auto_rule_strikes", {})
+        key = str(int(user_id))
+        current = now_ts()
+        result: dict[str, dict] = {}
+        for raw_rule_id in rule_ids:
+            rule_id = str(raw_rule_id)
+            rule = self.auto_rule(guild_id, rule_id)
+            if rule is None or not bool(rule.get("enabled", True)):
+                continue
+            threshold = max(
+                AUTO_RULE_TRIGGER_MIN,
+                min(int(rule.get("trigger_count", 1) or 1), AUTO_RULE_TRIGGER_MAX),
+            )
+            rule_strikes = all_strikes.setdefault(rule_id, {})
+            previous = rule_strikes.get(key, {})
+            count = max(0, int(previous.get("count", 0) or 0)) + 1
+            triggered = count >= threshold
+            if triggered:
+                rule_strikes.pop(key, None)
+                if not rule_strikes:
+                    all_strikes.pop(rule_id, None)
+            else:
+                rule_strikes[key] = {"count": count, "updated": current}
+            result[rule_id] = {
+                "count": count,
+                "threshold": threshold,
+                "remaining": max(0, threshold - count),
+                "triggered": triggered,
+            }
+        if result:
+            self.save()
+        return result
+
     def remove_auto_rule(self, guild_id: int, rule_id) -> Optional[dict]:
         record = self.auto_rules(guild_id).pop(str(rule_id), None)
         if record is not None:
+            self.guild(guild_id).setdefault("auto_rule_strikes", {}).pop(str(rule_id), None)
             self.save()
         return record
 
@@ -1022,7 +1155,16 @@ class PrisonStore:
         return self.guild(guild_id).setdefault("solitary", {})
 
     def in_solitary(self, guild_id: int, user_id: int) -> Optional[dict]:
-        return self.solitary(guild_id).get(str(int(user_id)))
+        record = self.solitary(guild_id).get(str(int(user_id)))
+        if record is not None:
+            record.setdefault("role_id", 0)
+            record.setdefault("violations", 0)
+            record.setdefault("discipline", [])
+            record.setdefault(
+                "initial_seconds",
+                max(0, int(record.get("until", 0) or 0) - int(record.get("since", 0) or 0)),
+            )
+        return record
 
     def add_solitary(
         self,
@@ -1030,6 +1172,7 @@ class PrisonStore:
         user_id: int,
         *,
         channel_id: int,
+        role_id: int,
         seconds: int,
         reason: str,
         by: int,
@@ -1039,14 +1182,52 @@ class PrisonStore:
         record = {
             "user_id": int(user_id),
             "channel_id": int(channel_id),
+            "role_id": int(role_id),
             "since": now_ts(),
             "until": now_ts() + int(seconds),
+            "initial_seconds": int(seconds),
             "reason": (reason or "—")[:400],
             "by": int(by),
             "cell": cell,
             "complaint": int(complaint_id),
+            "violations": 0,
+            "discipline": [],
         }
         self.solitary(guild_id)[str(int(user_id))] = record
+        self.save()
+        return record
+
+    def punish_solitary_violation(
+        self,
+        guild_id: int,
+        user_id: int,
+        *,
+        reason: str,
+    ) -> Optional[dict]:
+        """كيضاعف الوقت المتبقي حسب مستوى الزنزانة وعدد المخالفات داخل العزل."""
+        record = self.in_solitary(guild_id, user_id)
+        if record is None:
+            return None
+        current = now_ts()
+        cell = str(record.get("cell") or "holding")
+        violations = int(record.get("violations", 0) or 0) + 1
+        multiplier = solitary_violation_multiplier(cell, violations)
+        old_remaining = max(60, int(record.get("until", current) or current) - current)
+        maximum = solitary_max_seconds(cell)
+        new_remaining = min(maximum, max(60, old_remaining * multiplier))
+        record["until"] = current + new_remaining
+        record["violations"] = violations
+        record.setdefault("discipline", []).append(
+            {
+                "at": current,
+                "reason": (reason or "مخالفة داخل الانفرادي")[:400],
+                "multiplier": multiplier,
+                "old_remaining": old_remaining,
+                "new_remaining": new_remaining,
+                "added_seconds": max(0, new_remaining - old_remaining),
+            }
+        )
+        record["discipline"] = record["discipline"][-20:]
         self.save()
         return record
 

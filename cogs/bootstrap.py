@@ -22,6 +22,13 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     from discord import app_commands
     from collections import defaultdict
     import games_config as cfg
+    from cogs.xp_level_roles import (
+        LEGACY_LEVEL_ROLE_IDS,
+        LEVEL_THRESHOLDS,
+        consolidate_legacy_xp_roles,
+        named_level_roles,
+        safe_managed_level_role_ids,
+    )
     import sys as _sys, os as _os
     _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
     
@@ -398,23 +405,9 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     # ✅ العضو عندو غير Role وحدة من LEVEL_ROLES: أعلى threshold وصل ليها.
     # مثال: Level 10 → Role 10، منين يوصل Level 15 كتتحيد Role 10 وكتتعطى Role 15.
     # البوت كيدير Self-Healing حتى بعد Restart باش يصلح أي رول ناقصة/قديمة.
-    LEVEL_ROLES = {
-        5: 1532874771287507135,
-        10: 1532877605366268116,
-        15: 1532877729052233988,
-        20: 1532877833125232740,
-        25: 1532877955414360336,
-        30: 1532877995306651853,
-        35: 1532878086893207653,
-        40: 1532878137430380674,
-        45: 1532878260428341390,
-        50: 1532878348752261331,
-        60: 1532878501278125251,
-        70: 1532878632371138181,
-        80: 1532878710745596064,
-        90: 1532878803075076106,
-        100: 1532878888986738869,
-    }
+    # Backward compatibility فقط: هاد IDs كتستعمل للتعرف على الرولات القديمة
+    # وحذفها بأمان. الخدمة الجديدة كتختار حصرياً الرول اليدوية اللي فيها Level X.
+    LEVEL_ROLES = dict(LEGACY_LEVEL_ROLE_IDS)
     
     # ═══════ Discord permissions آمنة فقط ═══════
     # ما كنعطيوش View Audit Log / Manage Threads / Manage Events / Manage Emojis...
@@ -451,7 +444,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         70:  {"name": "🌟 Elite",       "shop_discount_percent": 12, "daily_bonus_percent": 24, "loan_base": 125000, "loan_interest": 7,  "loan_days": 5, "feature": "🌟 Elite Badge + XP Boost"},
         80:  {"name": "👑 Master",      "shop_discount_percent": 13, "daily_bonus_percent": 26, "loan_base": 150000, "loan_interest": 6,  "loan_days": 6, "feature": "💫 Master Economy Tier + XP Boost"},
         90:  {"name": "🔱 Mythic",      "shop_discount_percent": 14, "daily_bonus_percent": 28, "loan_base": 200000, "loan_interest": 5,  "loan_days": 6, "feature": "🔱 Mythic Economy Tier + XP Boost"},
-        100: {"name": "🏆 Legend",      "shop_discount_percent": 15, "daily_bonus_percent": 30, "loan_base": 300000, "loan_interest": 4,  "loan_days": 7, "feature": "👑 Legend Personal Role + أفضل شروط البنك"},
+        100: {"name": "🏆 Legend",      "shop_discount_percent": 15, "daily_bonus_percent": 30, "loan_base": 300000, "loan_interest": 4,  "loan_days": 7, "feature": "👑 Legend Profile Title + أفضل شروط البنك"},
     }
     
     
@@ -507,11 +500,23 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     
     
     async def sync_level_role_permissions(guild: discord.Guild):
-        """كتأكد بلي كل رول فـ LEVEL_ROLES عندو بالضبط الصلاحيات التراكمية المطلوبة —
-        self-healing، كتخدم فـ on_ready بلا ما يحتاج حد يتدخل يدوياً."""
-        for level, role_id in LEVEL_ROLES.items():
-            role = guild.get_role(role_id)
-            if not role:
+        """يوحّد XP فالرولات اليدوية Level X ويصلح صلاحياتها التراكمية."""
+        state = globals().get("milestone_roles_db", {"tier_roles": {}, "legend_roles": {}})
+        result = await consolidate_legacy_xp_roles(guild, state)
+        if result["deleted"] and "save_milestone_roles" in globals():
+            save_milestone_roles()
+        if result["missing"]:
+            print(
+                f"[LEVEL ROLES] ⚠️ {guild.name}: ما لقيتش الرولات اليدوية ديال "
+                + ", ".join(f"Level {level}" for level in result["missing"])
+            )
+        if result["failed"]:
+            print(
+                f"[LEVEL ROLES] ⚠️ {guild.name}: تعذر حذف {len(result['failed'])} رول XP قديمة؛ غادي نعاود نحاول."
+            )
+        for level in LEVEL_THRESHOLDS:
+            role = result["roles"].get(level)
+            if role is None:
                 continue
             desired = get_cumulative_level_permissions(level)
             if role.permissions.value != desired.value:
@@ -548,7 +553,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         90: {"name": "🔱 قريب من القمة", "color": 0xD65DB1, "hoist": True, "perk": "xp_boost",
              "desc": "بادج + بونيص XP"},
         100: {"name": "👑 أسطورة السيرفر", "color": 0xFFD700, "hoist": True, "perk": "legend+announce",
-              "desc": "رول شخصي فريد قابل للتسمية من 👑 Legend Title فـ #levels-info + إعلان كبير"},
+              "desc": "لقب شخصي فملف الـRank من 👑 Legend Title + إعلان كبير"},
     }
     LEVEL_MILESTONE_XP_BOOST_PERCENT = 15     # ← نسبة البونيص المؤقت ديال XP (15 = +15%)
     LEVEL_MILESTONE_XP_BOOST_DAYS = 7         # ← شحال ديال الأيام كيدوم البونيص كل مرة كيتكسب

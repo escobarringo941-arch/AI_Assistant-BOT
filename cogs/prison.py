@@ -34,16 +34,18 @@ from cogs.prison_core import (
     CHANNEL_NAMES,
     COMPLAINT_MAX_TARGETS,
     COMPLAINT_MAX_PENDING,
-    SOLITARY_DEFAULT_SECONDS,
     SOLITARY_MAX_ROOMS,
-    SOLITARY_MAX_SECONDS,
     SOLITARY_PREFIX,
+    SOLITARY_ROLE_PREFIX,
     VISIT_CHANNEL_PREFIX,
     VISIT_DEFAULT_SECONDS,
     VISIT_INVITE_TIMEOUT_SECONDS,
     WANTED_BOARD_CHANNEL_NAME,
     parse_duration,
     solitary_channel_name,
+    solitary_default_seconds,
+    solitary_max_seconds,
+    solitary_role_name,
     visit_channel_name,
     PRISON_CATEGORY_NAME,
     PRISONER_ROLE_COLOR,
@@ -114,6 +116,13 @@ COLOR_INFO = discord.Color.blurple()
 
 def _cell_display(key: str) -> str:
     return CHANNEL_NAMES.get(key, key)
+
+
+def _auto_rule_subject_for_notice(rule: dict) -> str:
+    pattern = str(rule.get("pattern", ""))
+    if rule.get("kind") == "action":
+        return AUTO_ACTION_LABELS.get(pattern, pattern)
+    return pattern[:80]
 
 
 async def _reply(interaction: discord.Interaction, message: str) -> None:
@@ -264,7 +273,7 @@ class CellHelpView(discord.ui.View):
         await _open_complaint_flow(interaction)
 
     @discord.ui.button(
-        label="ملفي الحالي",
+        label="سجلي الشخصي",
         emoji="📄",
         style=discord.ButtonStyle.primary,
         custom_id="ggmw9:prison:my-file",
@@ -288,8 +297,12 @@ class CellHelpView(discord.ui.View):
             )
             return
         await interaction.response.send_message(
-            embed=cog._cell_card_embed(interaction.user, record),
-            view=PrisonerCardView(),
+            embed=cog._registry_record_embed(
+                interaction.guild,
+                interaction.user.id,
+                current_cell,
+                detailed=True,
+            ),
             ephemeral=True,
         )
 
@@ -350,7 +363,7 @@ class PrisonRegistrySelect(discord.ui.Select):
         self,
         cog,
         guild: discord.Guild,
-        cell: str,
+        cell: Optional[str],
         requester_id: int,
         page: int,
         user_ids: list[int],
@@ -370,13 +383,20 @@ class PrisonRegistrySelect(discord.ui.Select):
                 else str(stats.get("last_name") or f"ID {int(user_id)}")
             )
             counts = stats.get("cells", {})
+            if cell in CELL_KEYS:
+                scope = f"هاد الزنزانة: {int(counts.get(cell, 0) or 0)}"
+            else:
+                visited = sum(
+                    1 for key in CELL_KEYS if int(counts.get(key, 0) or 0) > 0
+                )
+                scope = f"درجات: {visited}/3"
             options.append(
                 discord.SelectOption(
                     label=str(name)[:100],
                     value=str(int(user_id)),
                     description=(
                         f"{int(stats.get('cases', 0) or 0)} حكم • "
-                        f"هاد الزنزانة: {int(counts.get(cell, 0) or 0)}"
+                        f"{scope}"
                     )[:100],
                     emoji="⛓️" if stats.get("active") else "🕊️",
                 )
@@ -393,8 +413,18 @@ class PrisonRegistrySelect(discord.ui.Select):
             await interaction.response.send_message("❌ هادي ماشي الجلسة ديالك.", ephemeral=True)
             return
         user_id = int(self.values[0])
+        detailed = self.cog._can_view_private_registry(
+            interaction.guild,
+            interaction.user,
+            user_id,
+        )
         await interaction.response.edit_message(
-            embed=self.cog._registry_record_embed(interaction.guild, user_id, self.cell),
+            embed=self.cog._registry_record_embed(
+                interaction.guild,
+                user_id,
+                self.cell,
+                detailed=detailed,
+            ),
             view=PrisonRegistryView(
                 self.cog,
                 interaction.guild,
@@ -412,7 +442,7 @@ class PrisonRegistryView(discord.ui.View):
         self,
         cog,
         guild: discord.Guild,
-        cell: str,
+        cell: Optional[str],
         *,
         requester_id: int,
         page: int = 0,
@@ -486,6 +516,63 @@ class PrisonRegistryView(discord.ui.View):
                 requester_id=self.requester_id,
                 page=page,
             ),
+        )
+
+
+class PublicPrisonRegistryView(discord.ui.View):
+    """بانل عامة ثابتة؛ كل جواب كيبقى خاص بصاحب التفاعل."""
+
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="سجلي الشخصي",
+        emoji="📄",
+        style=discord.ButtonStyle.primary,
+        custom_id="ggmw9:prison:public-registry:self",
+    )
+    async def my_record(self, interaction: discord.Interaction, button: discord.ui.Button):
+        cog = interaction.client.get_cog("PrisonSystem")
+        if cog is None or interaction.guild is None:
+            await interaction.response.send_message("❌ النظام ماشي متاح.", ephemeral=True)
+            return
+        await interaction.response.send_message(
+            embed=cog._registry_record_embed(
+                interaction.guild,
+                interaction.user.id,
+                None,
+                detailed=True,
+            ),
+            ephemeral=True,
+        )
+
+    @discord.ui.button(
+        label="البحث عن سجين",
+        emoji="🔎",
+        style=discord.ButtonStyle.secondary,
+        custom_id="ggmw9:prison:public-registry:search",
+    )
+    async def search(self, interaction: discord.Interaction, button: discord.ui.Button):
+        cog = interaction.client.get_cog("PrisonSystem")
+        if cog is None or interaction.guild is None:
+            await interaction.response.send_message("❌ النظام ماشي متاح.", ephemeral=True)
+            return
+        user_ids = cog.store.registry_user_ids(interaction.guild.id, None)
+        if not user_ids:
+            await interaction.response.send_message(
+                "📭 سجل السجناء مازال خاوي.", ephemeral=True
+            )
+            return
+        await interaction.response.send_message(
+            embed=cog._registry_home_embed(interaction.guild, None, len(user_ids), 0),
+            view=PrisonRegistryView(
+                cog,
+                interaction.guild,
+                None,
+                requester_id=interaction.user.id,
+                page=0,
+            ),
+            ephemeral=True,
         )
 
 
@@ -662,8 +749,8 @@ class SolitaryDurationModal(discord.ui.Modal, title="🔗 مدة الحبس ال
         super().__init__()
         self.complaint_id = complaint_id
         self.duration = discord.ui.TextInput(
-            label=f"المدة (أقصى {SOLITARY_MAX_SECONDS // 3600} ساعة)",
-            placeholder="مثال: 2h — خليها خاوية للمدة الافتراضية",
+            label="المدة (السقف كيتحسب حسب الزنزانة)",
+            placeholder="مثال: 2h — خليها خاوية للمدة التلقائية",
             required=False,
             max_length=16,
         )
@@ -693,7 +780,9 @@ class SolitaryDurationModal(discord.ui.Modal, title="🔗 مدة الحبس ال
             )
             return
 
-        seconds = SOLITARY_DEFAULT_SECONDS
+        cell = str(complaint.get("cell") or "holding")
+        seconds = solitary_default_seconds(cell)
+        maximum = solitary_max_seconds(cell)
         raw = str(self.duration.value or "").strip()
         if raw:
             parsed = parse_duration(raw)
@@ -703,9 +792,10 @@ class SolitaryDurationModal(discord.ui.Modal, title="🔗 مدة الحبس ال
                 )
                 return
             seconds = parsed
-        if seconds > SOLITARY_MAX_SECONDS:
+        if seconds > maximum:
             await interaction.response.send_message(
-                f"❌ أقصى مدة عزل هي **{format_duration(SOLITARY_MAX_SECONDS)}**.",
+                f"❌ أقصى مدة عزل فـ **{_cell_display(cell)}** هي "
+                f"**{format_duration(maximum)}**.",
                 ephemeral=True,
             )
             return
@@ -1221,15 +1311,21 @@ class PrisonSystem(commands.Cog):
     def _registry_home_embed(
         self,
         guild: discord.Guild,
-        cell: str,
+        cell: Optional[str],
         total: int,
         page: int,
     ) -> discord.Embed:
         pages = max(1, (max(0, int(total)) + PrisonRegistryView.PAGE_SIZE - 1) // PrisonRegistryView.PAGE_SIZE)
+        if cell in CELL_KEYS:
+            title = f"🗂️ سجل نزلاء {_cell_display(cell)}"
+            scope = "غير الناس اللي دازو فعلياً من هاد الزنزانة"
+        else:
+            title = "📚 سجل السجناء العام"
+            scope = "غير الناس اللي عندهم حكم سجني حقيقي فالسيرفر"
         embed = discord.Embed(
-            title=f"🗂️ سجل نزلاء {_cell_display(cell)}",
+            title=title,
             description=(
-                "هاد اللائحة فيها **غير الناس اللي دازو فعلياً من هاد الزنزانة**.\n"
+                f"هاد اللائحة فيها **{scope}**.\n"
                 "اختار الاسم باش يطلع ليك السجل بشكل خاص بلا ما يتعمر الشانيل."
             ),
             color=discord.Color.dark_teal(),
@@ -1244,11 +1340,35 @@ class PrisonSystem(commands.Cog):
         embed.set_footer(text="GGMW9 Prison Registry • السجل مربوط بـDiscord ID")
         return embed
 
+    def _can_view_private_registry(
+        self,
+        guild: discord.Guild,
+        requester: discord.abc.User,
+        user_id: int,
+    ) -> bool:
+        """الذات والـOwner كامل؛ Warden كامل غير لسجين آخر درجة ديالو Holding."""
+        if int(requester.id) == int(user_id) or self.is_server_owner(requester, guild):
+            return True
+        if not isinstance(requester, discord.Member) or not self.is_warden(requester):
+            return False
+        summary = self.store.inmate_summary(guild.id, user_id)
+        latest = self.store.latest_case(guild.id, user_id) or {}
+        active = summary.get("active") or {}
+        target_cell = str(
+            active.get("cell")
+            or latest.get("cell")
+            or summary.get("last_cell")
+            or ""
+        )
+        return target_cell in WARDEN_ALLOWED_CELLS
+
     def _registry_record_embed(
         self,
         guild: discord.Guild,
         user_id: int,
-        cell_context: str,
+        cell_context: Optional[str],
+        *,
+        detailed: bool = False,
     ) -> discord.Embed:
         summary = self.store.inmate_summary(guild.id, user_id)
         active = summary.get("active")
@@ -1259,6 +1379,21 @@ class PrisonSystem(commands.Cog):
             if member is not None
             else str(summary.get("last_name") or f"ID {int(user_id)}")
         )
+        cases = int(summary.get("cases", 0) or 0)
+        if cases <= 0:
+            embed = discord.Embed(
+                title=f"🕊️ السجل السجني — {display_name}",
+                description=(
+                    f"<@{int(user_id)}>\n\n"
+                    "✅ **السجل نظيف:** ما تسجل حتى حكم سجني حقيقي على هاد الحساب."
+                ),
+                color=COLOR_FREE,
+                timestamp=datetime.now(),
+            )
+            if member is not None:
+                embed.set_thumbnail(url=member.display_avatar.url)
+            embed.set_footer(text="سجل دائم مربوط بالـDiscord ID • الجواب كيبان غير ليك")
+            return embed
         counts = summary.get("cells", {})
         visited = sum(1 for cell in CELL_KEYS if int(counts.get(cell, 0) or 0) > 0)
         status = (
@@ -1272,10 +1407,11 @@ class PrisonSystem(commands.Cog):
             color=COLOR_JAIL if active is not None else COLOR_FREE,
             timestamp=datetime.now(),
         )
-        embed.add_field(name="🆔 Discord ID", value=f"`{int(user_id)}`", inline=True)
+        if detailed:
+            embed.add_field(name="🆔 Discord ID", value=f"`{int(user_id)}`", inline=True)
         embed.add_field(
             name="📚 مجموع الأحكام",
-            value=f"**{int(summary.get('cases', 0) or 0)}** مرة",
+            value=f"**{cases}** مرة",
             inline=True,
         )
         embed.add_field(name="🏚️ درجات داز منها", value=f"**{visited}/3**", inline=True)
@@ -1288,11 +1424,12 @@ class PrisonSystem(commands.Cog):
             ),
             inline=True,
         )
-        embed.add_field(
-            name="🔁 مرات هاد الزنزانة",
-            value=f"**{int(counts.get(cell_context, 0) or 0)}** مرة",
-            inline=True,
-        )
+        if cell_context in CELL_KEYS:
+            embed.add_field(
+                name="🔁 مرات هاد الزنزانة",
+                value=f"**{int(counts.get(cell_context, 0) or 0)}** مرة",
+                inline=True,
+            )
         embed.add_field(
             name="⌛ الوقت المقضي فعلياً",
             value=f"**{format_duration(int(summary.get('total_served_seconds', 0) or 0))}**",
@@ -1312,15 +1449,20 @@ class PrisonSystem(commands.Cog):
         offense_key = str(latest.get("offense") or summary.get("last_offense") or "manual")
         offense = self.store.offense(guild.id, offense_key)
         embed.add_field(
-            name="📌 آخر مخالفة مسجلة",
-            value=f"**{offense['label']}** • Case #{int(latest.get('case', summary.get('last_case', 0)) or 0)}",
+            name="📌 آخر تصنيف مسجل" if not detailed else "📌 آخر مخالفة مسجلة",
+            value=(
+                f"**{offense['label']}**"
+                if not detailed
+                else f"**{offense['label']}** • Case #{int(latest.get('case', summary.get('last_case', 0)) or 0)}"
+            ),
             inline=False,
         )
-        embed.add_field(
-            name="📝 آخر سبب",
-            value=str(latest.get("reason") or summary.get("last_reason") or "ما تسجل حتى سبب")[:1000],
-            inline=False,
-        )
+        if detailed:
+            embed.add_field(
+                name="📝 آخر سبب",
+                value=str(latest.get("reason") or summary.get("last_reason") or "ما تسجل حتى سبب")[:1000],
+                inline=False,
+            )
         if active is not None:
             left = remaining_seconds(active)
             timing = "مؤبّد ♾️" if left < 0 else format_duration(left)
@@ -1341,7 +1483,12 @@ class PrisonSystem(commands.Cog):
             )
         if member is not None:
             embed.set_thumbnail(url=member.display_avatar.url)
-        embed.set_footer(text="سجل دائم مربوط بالـDiscord ID • العرض خاص بصاحب التفاعل")
+        footer = (
+            "نسخة خاصة مفصلة • سجل دائم مربوط بالـDiscord ID"
+            if detailed
+            else "نسخة عامة آمنة • التفاصيل الحساسة مخفية • الجواب كيبان غير ليك"
+        )
+        embed.set_footer(text=footer)
         return embed
 
     def visit_channel(self, guild: discord.Guild):
@@ -2845,13 +2992,52 @@ class PrisonSystem(commands.Cog):
         return f"قانون تلقائي #{rule.get('id', '?')} — {detail}"
 
     async def _enforce_auto_message_rules(self, message: discord.Message) -> bool:
-        """كيحذف المخالفة ويطبق أقوى عقوبة مطابقة مرة وحدة."""
+        """كيحذف الخرق، كيحسبه حسب Rule+User، وكيطبق الحكم غير عند بلوغ الحد."""
         member = message.author
         if member.id == message.guild.owner_id:
             return False
         matches = self._matching_auto_rules(message)
         if not matches:
             return False
+
+        progress = self.store.record_auto_rule_matches(
+            message.guild.id,
+            [str(rule.get("id")) for rule in matches],
+            member.id,
+        )
+        triggered = [
+            rule
+            for rule in matches
+            if bool(progress.get(str(rule.get("id")), {}).get("triggered"))
+        ]
+
+        try:
+            await message.delete()
+        except (discord.Forbidden, discord.HTTPException, discord.NotFound):
+            pass
+
+        if not triggered:
+            lines = []
+            for rule in matches[:5]:
+                state = progress.get(str(rule.get("id")), {})
+                lines.append(
+                    f"• **#{rule.get('id')}** {_auto_rule_subject_for_notice(rule)} — "
+                    f"{int(state.get('count', 0))}/{int(state.get('threshold', 1))}"
+                )
+            await self._dm(
+                member,
+                discord.Embed(
+                    title="⚠️ تحذير تلقائي — الحكم مازال ما تطبقش",
+                    description=(
+                        "الرسالة تحيدات وتزاد التكرار الخاص بهاد الحساب:\n"
+                        + "\n".join(lines)[:1400]
+                        + "\n\nإلا وصل العداد للحد اللي حدده الـOwner غادي يطبق الحكم أوتوماتيكياً."
+                    ),
+                    color=discord.Color.gold(),
+                    timestamp=datetime.now(),
+                ),
+            )
+            return True
 
         def punishment_rank(rule: dict) -> tuple[int, int, int]:
             offense = self.store.offense(message.guild.id, rule.get("offense", "manual"))
@@ -2862,16 +3048,17 @@ class PrisonSystem(commands.Cog):
                 max(0, seconds),
             )
 
-        chosen = max(matches, key=punishment_rank)
-        reasons = [self._auto_rule_reason(rule) for rule in matches[:3]]
-        if len(matches) > 3:
-            reasons.append(f"+{len(matches) - 3} قوانين أخرى")
+        chosen = max(triggered, key=punishment_rank)
+        reasons = []
+        for rule in triggered[:3]:
+            state = progress.get(str(rule.get("id")), {})
+            reasons.append(
+                f"{self._auto_rule_reason(rule)} "
+                f"({int(state.get('count', 1))}/{int(state.get('threshold', 1))})"
+            )
+        if len(triggered) > 3:
+            reasons.append(f"+{len(triggered) - 3} قوانين أخرى وصلات للحد")
         reason = " | ".join(reasons)[:400]
-
-        try:
-            await message.delete()
-        except (discord.Forbidden, discord.HTTPException, discord.NotFound):
-            pass
 
         await self.imprison(
             member,
@@ -2969,16 +3156,32 @@ class PrisonSystem(commands.Cog):
             if not self.is_prison_area(message.channel):
                 self._last_non_prison_message_channel[(guild.id, member.id)] = message.channel.id
 
+        record = self.store.inmate(guild.id, member.id)
+        solitary = self.store.in_solitary(guild.id, member.id) if record else None
+        if solitary is not None:
+            if message.channel.id != int(solitary.get("channel_id", 0) or 0):
+                return
+            violation = self._detect_cell_violation(message)
+            if violation:
+                try:
+                    await message.delete()
+                except (discord.Forbidden, discord.HTTPException, discord.NotFound):
+                    pass
+                await self._punish_solitary_violation(member, reason=violation)
+                return
+            if await self._enforce_auto_message_rules(message):
+                await self._punish_solitary_violation(
+                    member, reason="خرق قانون تلقائي داخل الانفرادي"
+                )
+            return
+
         # قوانين الـOwner كتخدم فالسيرفر كامل. إلا تطبقات قاعدة هنا، كنوقفو
         # باش نفس الرسالة ما تزيدش عقوبة ثانية من مراقبة Chat ديال الزنزانة.
         if await self._enforce_auto_message_rules(message):
             return
 
-        record = self.store.inmate(guild.id, member.id)
         if not record:
             return
-        if self.store.in_solitary(guild.id, member.id):
-            return  # الحبس الانفرادي عندو منطق ديالو الخاص
 
         cell_key = record.get("cell", "holding")
         cell_channel = self.prison_channel(guild, cell_key)
@@ -3013,6 +3216,14 @@ class PrisonSystem(commands.Cog):
         record = self.store.inmate(guild.id, user_id)
         if not record:
             return {"ok": False, "error": "هاد العضو ماشي فالسجن."}
+
+        if self.store.in_solitary(guild.id, user_id):
+            await self.release_from_solitary(
+                guild,
+                user_id,
+                reason=f"توقف العزل بسبب الإفراج من السجن — {reason}",
+                restore_cell=False,
+            )
 
         member = guild.get_member(int(user_id))
         restored: list[str] = []
@@ -3826,15 +4037,36 @@ class PrisonSystem(commands.Cog):
 
     # ───── الحبس الانفرادي ─────
 
-    def solitary_overwrites(self, guild: discord.Guild, member: discord.Member) -> dict:
-        """روم مستقلة: السجين + Owner؛ Warden غير إلا كان أصلها Holding."""
-        overwrites = dict(self._category_overwrites(guild))
+    def solitary_overwrites(
+        self,
+        guild: discord.Guild,
+        member: discord.Member,
+        access_role: discord.Role,
+    ) -> dict:
+        """Voice+Chat مخفية كلياً؛ الدخول غير بالرول المؤقت الفريد ديال هاد الـID."""
         blocked = discord.PermissionOverwrite(
             view_channel=False,
             read_messages=False,
             read_message_history=False,
             send_messages=False,
+            connect=False,
+            speak=False,
+            stream=False,
         )
+        overwrites = {guild.default_role: blocked}
+        if guild.me:
+            overwrites[guild.me] = discord.PermissionOverwrite(
+                view_channel=True,
+                read_messages=True,
+                read_message_history=True,
+                send_messages=True,
+                manage_messages=True,
+                manage_channels=True,
+                manage_permissions=True,
+                connect=True,
+                speak=True,
+                move_members=True,
+            )
         prisoner = self.prisoner_role(guild)
         if prisoner:
             overwrites[prisoner] = blocked
@@ -3842,20 +4074,10 @@ class PrisonSystem(commands.Cog):
             role = guild.get_role(role_id) if role_id else None
             if role:
                 overwrites[role] = blocked
-        record = self.store.inmate(guild.id, member.id) or {}
         warden = self.warden_role(guild)
         if warden:
-            if record.get("cell", "holding") == "holding":
-                overwrites[warden] = discord.PermissionOverwrite(
-                    view_channel=True,
-                    read_messages=True,
-                    read_message_history=True,
-                    send_messages=True,
-                    manage_messages=False,
-                )
-            else:
-                overwrites[warden] = blocked
-        overwrites[member] = discord.PermissionOverwrite(
+            overwrites[warden] = blocked
+        allowed = discord.PermissionOverwrite(
             view_channel=True,
             read_messages=True,
             read_message_history=True,
@@ -3863,8 +4085,115 @@ class PrisonSystem(commands.Cog):
             attach_files=False,
             embed_links=False,
             add_reactions=False,
+            mention_everyone=False,
+            create_public_threads=False,
+            create_private_threads=False,
+            send_messages_in_threads=False,
+            connect=True,
+            speak=True,
+            use_voice_activation=True,
+            stream=False,
         )
+        overwrites[access_role] = allowed
+        # Member overwrite كيربح أي تعارض ديال الرولات فـDiscord، وكيضمن
+        # أن غير صاحب هاد Discord ID هو اللي يقدر يشوف ويدخل الروم.
+        overwrites[member] = allowed
         return overwrites
+
+    async def _create_solitary_role(
+        self, guild: discord.Guild, member: discord.Member, record: dict
+    ) -> Optional[discord.Role]:
+        try:
+            return await guild.create_role(
+                name=solitary_role_name(
+                    member.id,
+                    int(record.get("case", 0) or 0),
+                    str(record.get("cell") or "holding"),
+                ),
+                colour=discord.Colour(0x4B0082),
+                permissions=discord.Permissions.none(),
+                hoist=False,
+                mentionable=False,
+                reason=f"{REASON_TAG}: unique solitary role for {member.id}",
+            )
+        except (discord.Forbidden, discord.HTTPException):
+            return None
+
+    async def _apply_solitary_role_blackout(
+        self,
+        guild: discord.Guild,
+        member: discord.Member,
+        role: discord.Role,
+        *,
+        allowed_channel_id: int,
+    ) -> bool:
+        """الرول الفريد كينفي الوصول لأي جزء من السجن غير الروم ديالو."""
+        await self.hide_everywhere(guild)
+        targets = [
+            channel
+            for channel in guild.channels
+            if channel.id != int(allowed_channel_id) and self.is_prison_area(channel)
+        ]
+
+        async def deny(channel) -> bool:
+            try:
+                await channel.set_permissions(
+                    role,
+                    overwrite=HIDE_OVERWRITE,
+                    reason=f"{REASON_TAG}: solitary ID blackout",
+                )
+                # الـmember deny هو الحاسم حتى إلا شي Prison role أخرى عندها Allow.
+                await channel.set_permissions(
+                    member,
+                    overwrite=HIDE_OVERWRITE,
+                    reason=f"{REASON_TAG}: solitary member blackout",
+                )
+                return True
+            except (discord.Forbidden, discord.HTTPException, discord.NotFound):
+                return False
+
+        results = await asyncio.gather(*(deny(channel) for channel in targets))
+        return all(results)
+
+    async def _clear_solitary_member_blackout(
+        self, guild: discord.Guild, member: discord.Member
+    ) -> None:
+        """كيحيد deny الفردي ديال العزل قبل إرجاع وصول الزنزانة العادية."""
+        for channel in list(guild.channels):
+            if not self.is_prison_area(channel):
+                continue
+            try:
+                await channel.set_permissions(
+                    member,
+                    overwrite=None,
+                    reason=f"{REASON_TAG}: clear solitary member blackout",
+                )
+            except (discord.Forbidden, discord.HTTPException, discord.NotFound):
+                pass
+
+    async def _cleanup_orphan_solitary_assets(self, guild: discord.Guild) -> None:
+        """كيحيد أي رول/روم بقات من Crash قديم وما مربوطة حتى بـDiscord ID نشط."""
+        active = list(self.store.solitary(guild.id).values())
+        active_channel_ids = {int(item.get("channel_id", 0) or 0) for item in active}
+        active_role_ids = {int(item.get("role_id", 0) or 0) for item in active}
+
+        for channel in list(guild.channels):
+            if (
+                str(getattr(channel, "name", "")).startswith(SOLITARY_PREFIX)
+                and channel.id not in active_channel_ids
+            ):
+                try:
+                    await channel.delete(reason=f"{REASON_TAG}: orphan solitary cleanup")
+                except (discord.Forbidden, discord.HTTPException, discord.NotFound):
+                    pass
+
+        reserved_prefix = f"{SOLITARY_ROLE_PREFIX} •"
+        for role in list(guild.roles):
+            if role.name.startswith(reserved_prefix) and role.id not in active_role_ids:
+                try:
+                    await role.delete(reason=f"{REASON_TAG}: orphan solitary role cleanup")
+                except (discord.Forbidden, discord.HTTPException, discord.NotFound):
+                    pass
 
     async def send_to_solitary(
         self,
@@ -3896,19 +4225,79 @@ class PrisonSystem(commands.Cog):
                 ),
             }
 
-        seconds = max(60, min(int(seconds), SOLITARY_MAX_SECONDS))
+        cell = str(record.get("cell") or "holding")
+        seconds = max(60, min(int(seconds), solitary_max_seconds(cell)))
         name = solitary_channel_name(member.display_name, member.id)
 
+        # الانفرادي كيلغي أي زيارة معلقة/جارية باش ما يبقى حتى منفذ لروم أخرى.
+        for visit_id, visit in list(self.store.visits(guild.id).items()):
+            if int(visit.get("prisoner_id", 0) or 0) != member.id:
+                continue
+            if visit.get("status") == "active":
+                await self.end_visit(guild, visit_id, reason="السجين تنقل للحبس الانفرادي")
+            else:
+                await self.decline_visit(guild, visit_id, reason="السجين تنقل للحبس الانفرادي")
+
+        access_role = await self._create_solitary_role(guild, member, record)
+        if access_role is None:
+            return {"ok": False, "error": "ما قدرتش نصاوب رول الانفرادي الخاص بهاد الـID."}
+
         try:
-            channel = await guild.create_text_channel(
+            channel = await guild.create_voice_channel(
                 name,
                 category=category,
-                overwrites=self.solitary_overwrites(guild, member),
-                topic=f"Solitary • {member} • {member.id}",
+                overwrites=self.solitary_overwrites(guild, member, access_role),
+                user_limit=1,
                 reason=f"{REASON_TAG}: solitary confinement",
             )
         except (discord.Forbidden, discord.HTTPException) as exc:
+            try:
+                await access_role.delete(reason=f"{REASON_TAG}: solitary channel failed")
+            except (discord.Forbidden, discord.HTTPException, discord.NotFound):
+                pass
             return {"ok": False, "error": f"ما قدرتش نصاوب الروم: {exc}"}
+
+        blackout_ok = await self._apply_solitary_role_blackout(
+            guild, member, access_role, allowed_channel_id=channel.id
+        )
+        if not blackout_ok:
+            await self._clear_solitary_member_blackout(guild, member)
+            await self._grant_cell_access(member, move_voice=False)
+            try:
+                await channel.delete(reason=f"{REASON_TAG}: incomplete solitary blackout")
+                await access_role.delete(reason=f"{REASON_TAG}: incomplete solitary blackout")
+            except (discord.Forbidden, discord.HTTPException, discord.NotFound):
+                pass
+            return {
+                "ok": False,
+                "error": "ما قدرتش نضمن العزل الكامل فجميع الرومز؛ العملية تلغات بأمان.",
+            }
+
+        solitary = self.store.add_solitary(
+            guild.id,
+            member.id,
+            channel_id=channel.id,
+            role_id=access_role.id,
+            seconds=seconds,
+            reason=reason,
+            by=int(getattr(actor, "id", 0) or 0),
+            cell=cell,
+            complaint_id=complaint_id,
+        )
+
+        self._suppress_role_guard.add(member.id)
+        try:
+            await member.add_roles(access_role, reason=f"{REASON_TAG}: enter solitary")
+        except (discord.Forbidden, discord.HTTPException) as exc:
+            self.store.remove_solitary(guild.id, member.id)
+            try:
+                await channel.delete(reason=f"{REASON_TAG}: solitary role assign failed")
+                await access_role.delete(reason=f"{REASON_TAG}: solitary role assign failed")
+            except (discord.Forbidden, discord.HTTPException, discord.NotFound):
+                pass
+            return {"ok": False, "error": f"ما قدرتش نعطي رول الانفرادي: {exc}"}
+        finally:
+            self._suppress_role_guard.discard(member.id)
 
         # نحيدو ليه الوصول للزنزانة العامة
         await self._revoke_cell_access(guild, member)
@@ -3923,18 +4312,15 @@ class PrisonSystem(commands.Cog):
             member=member,
         )
 
-        solitary = self.store.add_solitary(
-            guild.id,
-            member.id,
-            channel_id=channel.id,
-            seconds=seconds,
-            reason=reason,
-            by=int(getattr(actor, "id", 0) or 0),
-            cell=record.get("cell", "holding"),
-            complaint_id=complaint_id,
-        )
         await self._cleanup_cell_after_departure(guild, communal_cell, member.id)
         await self.publish_cell_help_panels(guild, voice_only=True)
+
+        # Discord ما يقدرش يربط عضو ماشي داخل Voice، ولكن إلا كان متصل كننقلوه فوراً.
+        try:
+            if member.voice and member.voice.channel and member.voice.channel.id != channel.id:
+                await member.move_to(channel, reason=f"{REASON_TAG}: move to solitary voice")
+        except (discord.Forbidden, discord.HTTPException):
+            pass
 
         # بطاقة السجين كتتعاود فالروم الانفرادية
         await self._post_solitary_card(member, record, solitary, channel)
@@ -3952,7 +4338,10 @@ class PrisonSystem(commands.Cog):
         embed.add_field(name="📝 السبب", value=str(reason)[:1000], inline=False)
         embed.add_field(
             name="ℹ️ ملاحظة",
-            value="الحكم الأصلي باقي كيمشي عادي — هادا عزل ماشي عقوبة زايدة.",
+            value=(
+                "الحكم الأصلي باقي كيمشي عادي. أي Spam/رابط/مخالفة داخل "
+                "الانفرادي كتضاعف الوقت المتبقي حسب درجة الزنزانة."
+            ),
             inline=False,
         )
         await self._log(guild, embed)
@@ -3963,8 +4352,9 @@ class PrisonSystem(commands.Cog):
                 f"**السبب:** {reason}\n"
                 f"**مدة العزل:** {format_duration(seconds)}\n"
                 f"**تسالي:** <t:{solitary['until']}:R>\n\n"
-                "⚠️ الحكم الأصلي ديالك باقي كيمشي عادي — العزل ما كيزيدش فيه.\n"
-                "ملي يسالي العزل كترجع للزنزانة العادية."
+                "⚠️ كتشوف غير هاد الـVoice والـChat ديالها، والحد هو عضو واحد.\n"
+                "أي صداع داخلها كيضاعف الوقت المتبقي، وملي يسالي العزل "
+                "كيتحيد الرول والروم وكترجع للزنزانة العادية."
             ),
             color=discord.Color.dark_purple(),
         )
@@ -3976,7 +4366,7 @@ class PrisonSystem(commands.Cog):
         member: discord.Member,
         record: dict,
         solitary: dict,
-        channel: discord.TextChannel,
+        channel: discord.VoiceChannel,
     ) -> None:
         embed = self._cell_card_embed(member, record)
         embed.title = f"🔗 حبس انفرادي — {member.display_name}"
@@ -3993,9 +4383,28 @@ class PrisonSystem(commands.Cog):
             value=f"```{str(solitary.get('reason'))[:900]}```",
             inline=False,
         )
+        violations = int(solitary.get("violations", 0) or 0)
+        embed.insert_field_at(
+            2,
+            name="🚨 مخالفات داخل الانفرادي",
+            value=f"**{violations}** — كل تكرار كيزيد المضاعفة حسب مستوى الزنزانة.",
+            inline=False,
+        )
         try:
-            message = await channel.send(content=member.mention, embed=embed, view=PrisonerCardView())
-            record["solitary_message_id"] = message.id
+            message_id = int(solitary.get("message_id", 0) or 0)
+            message = None
+            if message_id:
+                try:
+                    message = await channel.fetch_message(message_id)
+                    await message.edit(content=member.mention, embed=embed, view=PrisonerCardView())
+                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                    message = None
+            if message is None:
+                message = await channel.send(
+                    content=member.mention, embed=embed, view=PrisonerCardView()
+                )
+            solitary["message_id"] = message.id
+            record.pop("solitary_message_id", None)
             self.store.save()
             try:
                 await message.pin(reason=f"{REASON_TAG}: solitary file")
@@ -4004,25 +4413,157 @@ class PrisonSystem(commands.Cog):
         except (discord.Forbidden, discord.HTTPException):
             pass
 
+    async def _restore_solitary_session(
+        self, member: discord.Member, record: dict, solitary: dict
+    ) -> bool:
+        """كيصلح الرول والروم والصلاحيات من بعد Restart بلا ما يخلط السجناء."""
+        guild = member.guild
+        if now_ts() >= int(solitary.get("until", 0) or 0):
+            await self.release_from_solitary(guild, member.id)
+            return True
+
+        role = guild.get_role(int(solitary.get("role_id", 0) or 0))
+        if role is None:
+            role = await self._create_solitary_role(guild, member, record)
+            if role is None:
+                return False
+            solitary["role_id"] = role.id
+
+        old_channel = guild.get_channel(int(solitary.get("channel_id", 0) or 0))
+        channel = old_channel if isinstance(old_channel, discord.VoiceChannel) else None
+        if channel is None:
+            category = self.prison_category(guild)
+            if category is None:
+                return False
+            try:
+                channel = await guild.create_voice_channel(
+                    solitary_channel_name(member.display_name, member.id),
+                    category=category,
+                    overwrites=self.solitary_overwrites(guild, member, role),
+                    user_limit=1,
+                    reason=f"{REASON_TAG}: restore solitary voice",
+                )
+            except (discord.Forbidden, discord.HTTPException):
+                return False
+            solitary["channel_id"] = channel.id
+            solitary["message_id"] = 0
+            if old_channel is not None:
+                try:
+                    await old_channel.delete(reason=f"{REASON_TAG}: migrate old solitary text")
+                except (discord.Forbidden, discord.HTTPException, discord.NotFound):
+                    pass
+        else:
+            try:
+                await channel.edit(
+                    overwrites=self.solitary_overwrites(guild, member, role),
+                    user_limit=1,
+                    reason=f"{REASON_TAG}: repair solitary voice",
+                )
+            except (discord.Forbidden, discord.HTTPException):
+                return False
+
+        if not await self._apply_solitary_role_blackout(
+            guild, member, role, allowed_channel_id=channel.id
+        ):
+            return False
+        prisoner = self.prisoner_role(guild)
+        self._suppress_role_guard.add(member.id)
+        try:
+            required_roles = [item for item in (prisoner, role) if item and item not in member.roles]
+            if required_roles:
+                await member.add_roles(*required_roles, reason=f"{REASON_TAG}: restore solitary roles")
+        except (discord.Forbidden, discord.HTTPException):
+            return False
+        finally:
+            self._suppress_role_guard.discard(member.id)
+
+        await self._revoke_cell_access(guild, member)
+        try:
+            if member.voice and member.voice.channel and member.voice.channel.id != channel.id:
+                await member.move_to(channel, reason=f"{REASON_TAG}: restore solitary voice")
+        except (discord.Forbidden, discord.HTTPException):
+            pass
+        self.store.save()
+        await self._post_solitary_card(member, record, solitary, channel)
+        return True
+
+    async def _punish_solitary_violation(
+        self, member: discord.Member, *, reason: str
+    ) -> dict:
+        solitary = self.store.punish_solitary_violation(
+            member.guild.id, member.id, reason=reason
+        )
+        if solitary is None:
+            return {"ok": False, "error": "ماشي فالانفرادي."}
+        event = (solitary.get("discipline") or [{}])[-1]
+        added = int(event.get("added_seconds", 0) or 0)
+        multiplier = int(event.get("multiplier", 1) or 1)
+        record = self.store.inmate(member.guild.id, member.id) or {}
+        self._add_discipline_event(
+            record,
+            reason=f"انفرادي: {reason}",
+            seconds=added,
+            offense="solitary_violation",
+            actor_id=0,
+        )
+        self.store.save()
+        channel = member.guild.get_channel(int(solitary.get("channel_id", 0) or 0))
+        if isinstance(channel, discord.VoiceChannel):
+            await self._post_solitary_card(member, record, solitary, channel)
+            notice = discord.Embed(
+                title="🚨 تضاعفات مدة الانفرادي",
+                description=(
+                    f"**السبب:** {reason}\n"
+                    f"**المضاعفة:** ×{multiplier}\n"
+                    f"**الزيادة:** {format_duration(added)}\n"
+                    f"**الباقي الجديد:** <t:{int(solitary['until'])}:R>"
+                ),
+                color=discord.Color.dark_red(),
+                timestamp=datetime.now(),
+            )
+            try:
+                await channel.send(embed=notice)
+            except (discord.Forbidden, discord.HTTPException):
+                pass
+        await self._log(
+            member.guild,
+            discord.Embed(
+                title="🚨 مخالفة داخل الانفرادي",
+                description=(
+                    f"{member.mention} • {reason}\n"
+                    f"المضاعفة ×{multiplier} • الباقي <t:{int(solitary['until'])}:R>"
+                ),
+                color=discord.Color.dark_red(),
+                timestamp=datetime.now(),
+            ),
+        )
+        return {"ok": True, "record": solitary, "added_seconds": added}
+
     async def release_from_solitary(
-        self, guild: discord.Guild, user_id: int, *, reason: str = "سالات مدة العزل"
+        self,
+        guild: discord.Guild,
+        user_id: int,
+        *,
+        reason: str = "سالات مدة العزل",
+        restore_cell: bool = True,
     ) -> dict:
         solitary = self.store.in_solitary(guild.id, user_id)
         if not solitary:
             return {"ok": False, "error": "ماشي فالانفرادي."}
 
         channel = guild.get_channel(int(solitary.get("channel_id") or 0))
-        if channel is not None:
-            try:
-                await channel.delete(reason=f"{REASON_TAG}: solitary ended")
-            except (discord.Forbidden, discord.HTTPException, discord.NotFound):
-                pass
-
+        role = guild.get_role(int(solitary.get("role_id", 0) or 0))
         self.store.remove_solitary(guild.id, user_id)
 
         member = guild.get_member(int(user_id))
         record = self.store.inmate(guild.id, user_id)
-        if member is not None and record is not None:
+        if member is not None:
+            await self._clear_solitary_member_blackout(guild, member)
+        # إلا سالا الحكم الأصلي فنفس اللحظة، ما نرجعوش السجين ولو لثانية
+        # للزنزانة العادية قبل مسار الإفراج الكامل.
+        if restore_cell and record is not None and remaining_seconds(record) == 0:
+            restore_cell = False
+        if restore_cell and member is not None and record is not None:
             record.pop("solitary_message_id", None)
             pending_cell = record.get("pending_cell")
             self.store.save()
@@ -4053,6 +4594,27 @@ class PrisonSystem(commands.Cog):
                     color=COLOR_FREE,
                 ),
             )
+
+        # الرول فريد ومؤقت: كيتحيد من العضو ومن السيرفر مع نهاية العزل.
+        if role is not None:
+            if member is not None and role in member.roles:
+                self._suppress_role_guard.add(member.id)
+                try:
+                    await member.remove_roles(role, reason=f"{REASON_TAG}: solitary ended")
+                except (discord.Forbidden, discord.HTTPException):
+                    pass
+                finally:
+                    self._suppress_role_guard.discard(member.id)
+            try:
+                await role.delete(reason=f"{REASON_TAG}: solitary ended")
+            except (discord.Forbidden, discord.HTTPException, discord.NotFound):
+                pass
+
+        if channel is not None:
+            try:
+                await channel.delete(reason=f"{REASON_TAG}: solitary ended")
+            except (discord.Forbidden, discord.HTTPException, discord.NotFound):
+                pass
 
         embed = discord.Embed(
             title="🔓 نهاية الحبس الانفرادي",
@@ -4804,6 +5366,15 @@ class PrisonSystem(commands.Cog):
             color=discord.Color.dark_red(),
             timestamp=datetime.now(),
         )
+        embed.add_field(
+            name="📚 سجل السجناء",
+            value=(
+                "استعمل **سجلي الشخصي** باش تشوف ملفك الكامل، أو "
+                "**البحث عن سجين** باش تشوف النسخة العامة الآمنة.\n"
+                "🔐 كاع النتائج خاصة بصاحب الضغط وما كتعمرش الشانيل."
+            ),
+            inline=False,
+        )
         if not inmates:
             embed.description = "🕊️ **السجن خاوي.** كلشي حر — خليها هكا."
             embed.set_footer(text="كيتحدث كل دقيقة • اللائحة الكاملة ديال المخالفات فـ prison-code")
@@ -4864,12 +5435,12 @@ class PrisonSystem(commands.Cog):
         if message_id:
             try:
                 message = await channel.fetch_message(message_id)
-                await message.edit(embed=embed)
+                await message.edit(embed=embed, view=PublicPrisonRegistryView())
                 return
             except (discord.NotFound, discord.Forbidden, discord.HTTPException):
                 pass
         try:
-            message = await channel.send(embed=embed)
+            message = await channel.send(embed=embed, view=PublicPrisonRegistryView())
             record["wanted_message_id"] = message.id
             self.store.save()
         except (discord.Forbidden, discord.HTTPException):
@@ -4891,7 +5462,10 @@ class PrisonSystem(commands.Cog):
                     # إلا كان فالانفرادي وسالا حكمو، كنمسحو الروم الأول
                     if self.store.in_solitary(guild.id, user_id):
                         await self.release_from_solitary(
-                            guild, user_id, reason="سالا الحكم الأصلي"
+                            guild,
+                            user_id,
+                            reason="سالا الحكم الأصلي",
+                            restore_cell=False,
                         )
                     await self.release(
                         guild, user_id, reason="سالات المدة ديال الحكم", outcome="expired"
@@ -4984,12 +5558,15 @@ class PrisonSystem(commands.Cog):
                         continue
                     await self._enforce_pre_prison_locks(member, record)
                     required_cell = self._required_cell(record, record.get("cell", "holding"))
-                    if self.store.in_solitary(guild.id, member.id):
+                    solitary = self.store.in_solitary(guild.id, member.id)
+                    if solitary:
                         if CELL_RANK.get(required_cell, 0) > CELL_RANK.get(
                             record.get("cell", "holding"), 0
                         ):
                             record["pending_cell"] = required_cell
                             self.store.save()
+                        if not await self._restore_solitary_session(member, record, solitary):
+                            print(f"[PRISON] ⚠️ فشل إصلاح الانفرادي ديال {member.id}")
                         continue
                     active_visit = bool(self.store.active_visit_for_inmate(guild.id, member.id))
                     if CELL_RANK.get(required_cell, 0) > CELL_RANK.get(
@@ -5004,6 +5581,7 @@ class PrisonSystem(commands.Cog):
                         )
                     else:
                         await self._grant_cell_access(member, move_voice=not active_visit)
+                await self._cleanup_orphan_solitary_assets(guild)
                 await self.refresh_cell_cards(guild)
             except Exception as exc:
                 print(f"[PRISON] ❌ on_ready {guild.id}: {type(exc).__name__}: {exc}")
@@ -5031,8 +5609,24 @@ class PrisonSystem(commands.Cog):
         before: discord.VoiceState,
         after: discord.VoiceState,
     ):
-        """Voice Chat ديال كل زنزانة كيبقى نقي ملي عضو يخرج أو الروم تخوى."""
-        if member.bot or before.channel is None or before.channel == after.channel:
+        """تنظيف Voice Chat وفرض بقاء المعزول داخل الـVoice الخاصة بالـID ديالو."""
+        if member.bot:
+            return
+        solitary = self.store.in_solitary(member.guild.id, member.id)
+        if solitary is not None and after.channel is not None:
+            target = member.guild.get_channel(int(solitary.get("channel_id", 0) or 0))
+            if isinstance(target, discord.VoiceChannel) and after.channel.id != target.id:
+                try:
+                    await member.move_to(
+                        target, reason=f"{REASON_TAG}: solitary voice enforcement"
+                    )
+                except (discord.Forbidden, discord.HTTPException):
+                    try:
+                        await member.move_to(None, reason=f"{REASON_TAG}: solitary isolation")
+                    except (discord.Forbidden, discord.HTTPException):
+                        pass
+                return
+        if before.channel is None or before.channel == after.channel:
             return
         for cell in CELL_KEYS:
             voice_channel = self.cell_voice_channel(member.guild, cell)
@@ -5099,6 +5693,10 @@ class PrisonSystem(commands.Cog):
         finally:
             self._suppress_role_guard.discard(member.id)
         await self._enforce_pre_prison_locks(member, record)
+        solitary = self.store.in_solitary(member.guild.id, member.id)
+        if solitary is not None:
+            await self._restore_solitary_session(member, record, solitary)
+            return
         await self._grant_cell_access(member)
         await self._post_cell_card(member, record)
 
@@ -5120,6 +5718,12 @@ class PrisonSystem(commands.Cog):
         prisoner = self.prisoner_role(after.guild)
         if prisoner is None:
             return
+        solitary_record = self.store.in_solitary(after.guild.id, after.id)
+        solitary_role = (
+            after.guild.get_role(int(solitary_record.get("role_id", 0) or 0))
+            if solitary_record
+            else None
+        )
 
         prisoner_removed = prisoner in before.roles and prisoner not in after.roles
         if prisoner_removed:
@@ -5145,17 +5749,23 @@ class PrisonSystem(commands.Cog):
 
         me = after.guild.me
         top = me.top_role.position if me else 0
+        confinement_role_ids = {prisoner.id}
+        if solitary_role is not None:
+            confinement_role_ids.add(solitary_role.id)
         extra = [
             role
             for role in after.roles
             if role != after.guild.default_role
-            and role.id != prisoner.id
+            and role.id not in confinement_role_ids
             and not role.managed
             and role.position < top
         ]
-        has_prisoner = prisoner in after.roles
+        has_required_roles = prisoner in after.roles and (
+            solitary_record is None
+            or (solitary_role is not None and solitary_role in after.roles)
+        )
 
-        if not extra and has_prisoner:
+        if not extra and has_required_roles:
             return
 
         # خزّن أي رول جديد تعطى ليه باش يرجع ليه ملي يخرج
@@ -5167,11 +5777,16 @@ class PrisonSystem(commands.Cog):
 
         self._suppress_role_guard.add(after.id)
         try:
-            await after.edit(roles=[prisoner], reason=f"{REASON_TAG}: enforce sentence")
+            enforced = [prisoner]
+            if solitary_role is not None:
+                enforced.append(solitary_role)
+            await after.edit(roles=enforced, reason=f"{REASON_TAG}: enforce sentence")
         except (discord.Forbidden, discord.HTTPException) as exc:
             print(f"[PRISON] ⚠️ ما قدرتش نفرض الحكم على {after}: {exc}")
         finally:
             self._suppress_role_guard.discard(after.id)
+        if solitary_record is not None and solitary_role is None:
+            await self._restore_solitary_session(after, record, solitary_record)
 
     async def cog_unload(self):
         self.release_loop.cancel()
@@ -5228,5 +5843,6 @@ async def setup(bot: commands.Bot):
     bot.add_view(ComplaintReviewView())   # persistent: أزرار قبول/رفض الشكايات
     bot.add_view(VisitPanelView())        # persistent: بانل غرفة الزيارات
     bot.add_view(VisitManagementPanelView())  # persistent: Warden/Owner فقط
+    bot.add_view(PublicPrisonRegistryView())  # persistent: السجل العام والملف الشخصي
     await bot.add_cog(PrisonSystem(bot))
     print("✅ Prison System: السجن واجد — الرولات، الزنازن الصوتية، الزيارات، العدادات الحية")

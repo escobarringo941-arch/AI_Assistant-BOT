@@ -429,14 +429,17 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         return total
     
     
-    def get_target_level_role(new_level: int):
-        """كترجع (target_level, role_id) ديال أعلى threshold فـ LEVEL_ROLES اللي
-        new_level وصل ليه ولا فاقو، وإلا (None, None) إلا مازال ماوصلش لحتى واحد."""
-        eligible = [lvl for lvl in LEVEL_ROLES if lvl <= new_level]
+    def get_target_level_role(new_level: int, guild: Optional[discord.Guild] = None):
+        """أعلى رول يدوية Level X وصل ليها العضو، بلا إنشاء رول بديلة."""
+        roles = named_level_roles(guild) if guild is not None else {
+            level: None for level in LEVEL_THRESHOLDS
+        }
+        eligible = [lvl for lvl in roles if lvl <= new_level]
         if not eligible:
             return None, None
         target_level = max(eligible)
-        return target_level, LEVEL_ROLES[target_level]
+        role = roles[target_level]
+        return target_level, (role.id if role is not None else LEVEL_ROLES[target_level])
     
     
     async def sync_level_roles(member: discord.Member, guild: discord.Guild, new_level: int):
@@ -444,8 +447,8 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         وكيحيد أي رولات ديال levels تحتانية/فوقانية كانت عندو من قبل — يعني رول
         واحد بوحدو ديال الـ level فأي وقت (سواء صعد ولا هبط المستوى). كترجع
         (roles_added, roles_removed) — لائحتين ديال mentions."""
-        all_level_role_ids = {rid for rid in LEVEL_ROLES.values()}
-        _, target_role_id = get_target_level_role(new_level)
+        all_level_role_ids = safe_managed_level_role_ids(guild, milestone_roles_db)
+        _, target_role_id = get_target_level_role(new_level, guild)
     
         roles_added, roles_removed = [], []
     
@@ -485,7 +488,6 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                 continue
             data = guild_levels.get(str(member.id), {"level": 0})
             level = max(0, int(data.get("level", 0) or 0))
-            before_ids = {r.id for r in member.roles if r.id in set(LEVEL_ROLES.values())}
             try:
                 added, removed = await sync_level_roles(member, guild, level)
                 if added or removed:
@@ -531,64 +533,13 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     
     
     async def get_or_create_tier_role(guild: discord.Guild, level: int) -> Optional[discord.Role]:
-        """كترجع الرول المشترك ديال هاد الـ tier (level 10, 15, 20...) — كتصاوبو أوتوماتيكياً
-        أول مرة، وكتحطو مباشرة فوق الرول الأساسي ديال LEVEL_ROLES بنفس المستوى (إلا كاين) باش
-        يبقاو مجموعين بجانب بعضياتهم فترتيب الرولات. (بادج/cosmetic بوحدها — الصلاحيات الحقيقية
-        دابا كلها فرولات LEVEL_ROLES نفسها، شوف LEVEL_PERK_ADDITIONS)."""
-        info = LEVEL_MILESTONES.get(level)
-        if not info:
-            return None
-        stored_id = milestone_roles_db["tier_roles"].get(str(level))
-        if stored_id:
-            role = guild.get_role(stored_id)
-            if role:
-                return role
-    
-        try:
-            role = await guild.create_role(
-                name=info["name"][:100], color=discord.Color(info["color"]),
-                hoist=info["hoist"], mentionable=False,
-                reason=f"Milestone Level {level} — تصاوبات أوتوماتيكياً"
-            )
-            milestone_roles_db["tier_roles"][str(level)] = role.id
-            save_milestone_roles()
-            # نحاولو نحطوها جنب الرول الأساسي ديال نفس الـ level (تنظيم بصري، ماشي إجباري)
-            base_role_id = LEVEL_ROLES.get(level)
-            if base_role_id:
-                base_role = guild.get_role(base_role_id)
-                if base_role:
-                    try:
-                        await role.edit(position=base_role.position)
-                    except (discord.Forbidden, discord.HTTPException):
-                        pass
-            return role
-        except (discord.Forbidden, discord.HTTPException) as e:
-            print(f"[MILESTONES] ما قدرتش نصاوب رول Level {level}: {e}")
-            return None
+        """Compatibility: كترد نفس الرول اليدوية Level X وما كتصاوب والو."""
+        return named_level_roles(guild).get(int(level))
     
     
     async def get_or_create_legend_role(guild: discord.Guild, member: discord.Member) -> Optional[discord.Role]:
-        """رول شخصي فريد (ماشي مشترك) لكل عضو يوصل لـ Level 100 — كل واحد رول ديالو بوحدو
-        باش يقدر يسميه كيفما بغى بـ /legendtitle بلا ما يأثر على حتى واحد آخر."""
-        stored_id = milestone_roles_db["legend_roles"].get(str(member.id))
-        if stored_id:
-            role = guild.get_role(stored_id)
-            if role:
-                return role
-    
-        info = LEVEL_MILESTONES[100]
-        try:
-            role = await guild.create_role(
-                name=f"{info['name']} — {member.display_name}"[:100],
-                color=discord.Color(info["color"]), hoist=True, mentionable=False,
-                reason=f"Milestone Level 100 (شخصي) — {member}"
-            )
-            milestone_roles_db["legend_roles"][str(member.id)] = role.id
-            save_milestone_roles()
-            return role
-        except (discord.Forbidden, discord.HTTPException) as e:
-            print(f"[MILESTONES] ما قدرتش نصاوب رول Legend لـ {member}: {e}")
-            return None
+        """Compatibility: Level 100 المشتركة هي رول XP الوحيدة؛ بلا رول شخصية."""
+        return named_level_roles(guild).get(100)
     
     
     def apply_xp_boost(data: dict):
@@ -624,16 +575,6 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                 continue
             perk = info.get("perk") or ""
     
-            if level == 100:
-                role = await get_or_create_legend_role(guild, member)
-            else:
-                role = await get_or_create_tier_role(guild, level)
-            if role:
-                try:
-                    await member.add_roles(role, reason=f"Milestone Level {level}")
-                except (discord.Forbidden, discord.HTTPException):
-                    pass
-    
             line = f"{info['name']} (Level {level})"
     
             if "xp_boost" in perk:
@@ -647,7 +588,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                 line += " — 📝 Bio تفتحات ليك فـ #levels-info"
     
             if "legend" in perk:
-                line += " — 👑 رول شخصي فريد! سميه من Legend Title فـ #levels-info"
+                line += " — 👑 لقب شخصي فملف Rank من Legend Title"
     
             perk_lines.append(line)
     

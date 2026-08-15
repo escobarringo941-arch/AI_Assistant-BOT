@@ -44,6 +44,14 @@ def class_method_source(class_name: str, method_name: str) -> str:
     return ast.get_source_segment(SOURCE, node)
 
 
+def function_source(name: str) -> str:
+    node = next(
+        item for item in TREE.body
+        if isinstance(item, (ast.AsyncFunctionDef, ast.FunctionDef)) and item.name == name
+    )
+    return ast.get_source_segment(SOURCE, node)
+
+
 class FakeDB:
     def __init__(self, data=None):
         self.data = data or {"guilds": {}}
@@ -115,12 +123,28 @@ class DurableCellStatsTests(unittest.TestCase):
         self.assertGreater(summary["last_release"], 0)
         self.assertEqual(store.registry_user_ids(1, "holding"), [10])
 
+    def test_public_registry_lists_every_real_inmate_across_cells(self):
+        store = self.make_store()
+        self.add(store, "holding")
+        store.add_inmate(
+            1,
+            11,
+            seconds=600,
+            offense_key="manual",
+            reason="test two",
+            cell="max",
+            actor_id=20,
+            roles=[],
+        )
+        self.assertEqual(set(store.registry_user_ids(1, None)), {10, 11})
+
 
 class CellRecordSourceTests(unittest.TestCase):
     def test_live_file_is_ephemeral_from_text_cell_panel_only(self):
         my_file = class_method_source("CellHelpView", "my_file")
         post = method_source("_post_cell_card")
-        self.assertIn("_cell_card_embed", my_file)
+        self.assertIn("_registry_record_embed", my_file)
+        self.assertIn("detailed=True", my_file)
         self.assertIn("ephemeral=True", my_file)
         self.assertIn("prison_channel", my_file)
         self.assertNotIn(".send(", post)
@@ -133,6 +157,31 @@ class CellRecordSourceTests(unittest.TestCase):
         self.assertIn("ephemeral=True", registry)
         self.assertIn("inmate_summary", detail)
         self.assertIn("total_served_seconds", detail)
+
+    def test_public_registry_panel_is_persistent_and_private_per_click(self):
+        self_record = class_method_source("PublicPrisonRegistryView", "my_record")
+        search = class_method_source("PublicPrisonRegistryView", "search")
+        setup = function_source("setup")
+        refresh = method_source("refresh_wanted_board")
+        self.assertIn("detailed=True", self_record)
+        self.assertIn("ephemeral=True", self_record)
+        self.assertIn("registry_user_ids(interaction.guild.id, None)", search)
+        self.assertIn("ephemeral=True", search)
+        self.assertIn("bot.add_view(PublicPrisonRegistryView())", setup)
+        self.assertIn("view=PublicPrisonRegistryView()", refresh)
+
+    def test_public_search_hides_sensitive_reason_and_staff_scope_is_limited(self):
+        callback = class_method_source("PrisonRegistrySelect", "callback")
+        permissions = method_source("_can_view_private_registry")
+        detail = method_source("_registry_record_embed")
+        self.assertIn("_can_view_private_registry", callback)
+        self.assertIn("requester.id", permissions)
+        self.assertIn("is_server_owner", permissions)
+        self.assertIn("is_warden", permissions)
+        self.assertIn("WARDEN_ALLOWED_CELLS", permissions)
+        self.assertIn("if detailed:", detail)
+        self.assertIn('name="📝 آخر سبب"', detail)
+        self.assertIn("التفاصيل الحساسة مخفية", detail)
 
     def test_release_removes_active_record_before_permission_restore(self):
         release = method_source("release")

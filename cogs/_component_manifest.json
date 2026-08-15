@@ -1,6 +1,6 @@
 {
   "description": "Hashes lock the reviewed component bytes and execution order; intentional feature revisions update this baseline.",
-  "joined_sha256": "c04a6546e556907abffe9e83920c124aa83a598af23c839b1db04739e84533c6",
+  "joined_sha256": "d564e1a941b0bc8b2b05960bc92e1c9735139e10f6ef1f3e50b19e51bb0727e8",
   "events_before_setup_hook": [
     "on_voice_state_update",
     "on_member_join",
@@ -30,14 +30,14 @@
       "path": "cogs/bootstrap.py",
       "original_start_line": 1,
       "original_end_line": 696,
-      "sha256": "da328704a919dcc506e972632cc47e8337bbb3d7e6973d1994ac9cdf38523374"
+      "sha256": "1d90c7e3265b390a63a0703b964080dd8a2b709e0d46015f7aa37872f4a24577"
     },
     {
       "name": "persistent_state",
       "path": "cogs/persistent_state.py",
       "original_start_line": 697,
       "original_end_line": 1449,
-      "sha256": "7454c101562ff4df07c20aed8c879b3ce140ec0ef28840c3b187222562009b46"
+      "sha256": "8b3cc3fd911ed52562947d5b385bfcafb34424260e397ad456f20c08add49d66"
     },
     {
       "name": "xp_runtime",
@@ -142,7 +142,7 @@
       "path": "cogs/server_setup.py",
       "original_start_line": 8414,
       "original_end_line": 8842,
-      "sha256": "f143db7114f893ab1a89d67522a3e43e1400f300e6dfe9033b50df6418c7642a"
+      "sha256": "d4ce213ceb293fcdf3f274304d9e3aa7f477feaf70d3160c72fec6c143be4a28"
     },
     {
       "name": "member_events",
@@ -177,14 +177,14 @@
       "path": "cogs/leveling_commands.py",
       "original_start_line": 10687,
       "original_end_line": 10872,
-      "sha256": "1face0e5bcd8591e32c6be329ac6a7a73259a2cfd4042c57a12c633f8a522d67"
+      "sha256": "f2a4ab591e49a2a429a3a22cc562b4f52e070eaf16a7c75967ba989132488827"
     },
     {
       "name": "levels_center",
       "path": "cogs/levels_center.py",
       "original_start_line": 10873,
       "original_end_line": 11444,
-      "sha256": "cf4081542ef4dbbba73fab7d22c12d1f6d2ce2be7a269a2f6f14a4e825ec654b"
+      "sha256": "5640ad56eb640241edf96ecbaed772a380105a0690ee833ac037c2e420722d58"
     },
     {
       "name": "verification_commands",

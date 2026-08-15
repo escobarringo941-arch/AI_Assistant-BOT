@@ -42,7 +42,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     
     class XPLegendTitleModal(discord.ui.Modal, title="👑 Legend Title"):
         title_text = discord.ui.TextInput(
-            label="سمية الرول الشخصية",
+            label="اللقب اللي يبان فملف Rank",
             placeholder="مثال: GGMW9 King",
             required=True,
             max_length=90,
@@ -57,29 +57,17 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                 )
                 return
     
-            role = await get_or_create_legend_role(interaction.guild, interaction.user)
-            if not role:
-                await interaction.response.send_message(
-                    "❌ ما قدرتش نصاوب/نلقى Legend Role ديالك. شيك صلاحيات البوت.",
-                    ephemeral=True,
-                )
+            new_title = str(self.title_text.value).strip()[:90]
+            if not new_title:
+                await interaction.response.send_message("❌ كتب لقب صالح.", ephemeral=True)
                 return
-    
-            new_name = f"👑 {str(self.title_text.value).strip()}"[:100]
-            try:
-                await role.edit(
-                    name=new_name,
-                    reason=f"Levels Info Panel — Legend title — {interaction.user}",
-                )
-                await interaction.response.send_message(
-                    f"✅ Legend Role ديالك ولات: **{new_name}**",
-                    ephemeral=True,
-                )
-            except (discord.Forbidden, discord.HTTPException) as e:
-                await interaction.response.send_message(
-                    f"❌ ما قدرتش نبدل السمية: {e}",
-                    ephemeral=True,
-                )
+            data["legend_title"] = new_title
+            save_levels()
+            await interaction.response.send_message(
+                f"✅ اللقب الأسطوري ديالك فملف Rank ولى: **👑 {new_title}**\n"
+                "رول `Level 100` المشتركة بقات باسمها وما تصاوبات حتى رول زايدة.",
+                ephemeral=True,
+            )
     
     
     class XPCreatePollModal(discord.ui.Modal, title="🗳️ صاوب Poll"):
@@ -416,21 +404,21 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     
     @bot.command(name="legendtitle", hidden=True)
     async def legendtitle_cmd(ctx, *, title: str):
-        """بدل سمية الرول الشخصي الفريد ديالك — متاحة غير لمن وصل Level 100"""
+        """بدل اللقب اللي كيبان فملف Rank — بلا إنشاء رول XP إضافية."""
         data = get_user_level_data(ctx.guild.id, ctx.author.id)
         if data["level"] < 100:
             await ctx.send("🔒 هاد الميزة كتفتح فـ **Level 100**، الحد الأقصى. باقي بزاف الطريق!", ephemeral=True, delete_after=8)
             return
-        role = await get_or_create_legend_role(ctx.guild, ctx.author)
-        if not role:
-            await ctx.send("❌ ما قدرتش نلقى/نصاوب الرول ديالك (يمكن صلاحيات ناقصة عند البوت).", ephemeral=True)
+        new_title = title.strip()[:90]
+        if not new_title:
+            await ctx.send("❌ كتب لقب صالح.", ephemeral=True)
             return
-        new_name = f"👑 {title.strip()}"[:100]
-        try:
-            await role.edit(name=new_name, reason=f"/legendtitle — {ctx.author}")
-            await ctx.send(f"✅ الرول ديالك دابا سميتو: **{new_name}**", ephemeral=True)
-        except (discord.Forbidden, discord.HTTPException) as e:
-            await ctx.send(f"❌ ما قدرتش نبدل السمية: {e}", ephemeral=True)
+        data["legend_title"] = new_title
+        save_levels()
+        await ctx.send(
+            f"✅ لقب Rank ديالك دابا: **👑 {new_title}** — بلا رول زايدة.",
+            ephemeral=True,
+        )
     
     
     def build_levelroadmap_embed() -> discord.Embed:

@@ -55,8 +55,9 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     
         embed = discord.Embed(title=title, description=desc, color=discord.Color.gold(), timestamp=datetime.now())
         lines = []
-        for lvl, role_id in sorted(LEVEL_ROLES.items()):
-            role = guild.get_role(role_id) if role_id else None
+        current_level_roles = named_level_roles(guild)
+        for lvl in LEVEL_THRESHOLDS:
+            role = current_level_roles.get(lvl)
             role_display = role.mention if role else f"`Level {lvl}`"
             p = LEVEL_ROLE_BENEFITS.get(lvl, {})
             if lang == "en":

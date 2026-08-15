@@ -127,6 +127,13 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     
         if data.get("bio"):
             embed.add_field(name="📝 بيو", value=data["bio"][:200], inline=False)
+
+        if data.get("legend_title") and data["level"] >= 100:
+            embed.add_field(
+                name="👑 اللقب الأسطوري",
+                value=str(data["legend_title"])[:90],
+                inline=False,
+            )
     
         embed.set_footer(text=f"{SERVER_NAME} | Leveling System")
         return embed
