@@ -152,6 +152,8 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         temperature: float,
         *,
         enable_web: bool = False,
+        primary_model: Optional[str] = None,
+        fallback_models: Optional[list] = None,
     ) -> tuple:
         """
         كيبعث طلب لـ OpenRouter، وإلا وقف الموديل الأساسي بـ 429 (rate limit)
@@ -164,7 +166,11 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             "HTTP-Referer": "https://discord.com",
             "X-Title": "AI Assistant BOT"
         }
-        models_to_try = [AI_MODEL] + [m for m in AI_MODEL_FALLBACKS if m != AI_MODEL]
+        selected_primary = primary_model or AI_MODEL
+        selected_fallbacks = AI_MODEL_FALLBACKS if fallback_models is None else fallback_models
+        models_to_try = [selected_primary] + [
+            model for model in selected_fallbacks if model != selected_primary
+        ]
         last_error = "ماكاين حتى موديل جرب"
     
         for model in models_to_try:
@@ -220,7 +226,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                                 last_error = "content فارغة من الموديل"
                                 continue
     
-                            if model != AI_MODEL:
+                            if model != selected_primary:
                                 print(f"[OPENROUTER] ⚠️ الموديل الأساسي فشل، خدام بـ fallback: {model}")
                             return content, None
                         elif resp.status in (429, 402):

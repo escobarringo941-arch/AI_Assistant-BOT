@@ -1,6 +1,6 @@
 {
   "description": "Hashes lock the reviewed component bytes and execution order; intentional feature revisions update this baseline.",
-  "joined_sha256": "aab9c74ca6d1e4e5b9709bfbde02b1f22df1eb0e67565c60bac159e361b5ba93",
+  "joined_sha256": "c04a6546e556907abffe9e83920c124aa83a598af23c839b1db04739e84533c6",
   "events_before_setup_hook": [
     "on_voice_state_update",
     "on_member_join",
@@ -30,7 +30,7 @@
       "path": "cogs/bootstrap.py",
       "original_start_line": 1,
       "original_end_line": 696,
-      "sha256": "deddaf4a32c76ca1540b3a9b8a4594daff98d667add5bf2e41df27d68f4abcd3"
+      "sha256": "da328704a919dcc506e972632cc47e8337bbb3d7e6973d1994ac9cdf38523374"
     },
     {
       "name": "persistent_state",
@@ -51,21 +51,21 @@
       "path": "cogs/settings_storage.py",
       "original_start_line": 2057,
       "original_end_line": 2432,
-      "sha256": "519c472cbb35d22aa324e939a83fbce2f4961ea15ecab87356cc869387326dbd"
+      "sha256": "c61e718ea3e58c36e1c0c2f8e1d05832f4eacc30a702708a29aad7b0e8e5d240"
     },
     {
       "name": "ai_conversation",
       "path": "cogs/ai_conversation.py",
       "original_start_line": 2433,
       "original_end_line": 2679,
-      "sha256": "a0e7551dde0a0d4eab3e314ddf1f81156e3da500d933a8bb81547debe0de3a54"
+      "sha256": "95e1d5ceaa991353f843401179970681dfa46ff4f06a80a2aa4a61bc257efe55"
     },
     {
       "name": "content_apis",
       "path": "cogs/content_apis.py",
       "original_start_line": 2680,
       "original_end_line": 3230,
-      "sha256": "a8e8e9a154a64325200e631dc1805f623fd8dacb700ee8c76db7c70bd390a657"
+      "sha256": "5642f4e13471235380b0cedc023fa241c7a3d0a4a3f2998f9401abe85553229b"
     },
     {
       "name": "moderation_core",
@@ -205,7 +205,7 @@
       "path": "cogs/automation_tasks.py",
       "original_start_line": 12021,
       "original_end_line": 12455,
-      "sha256": "b33e31f6a27d4626ad5112e727e1f78554a780915bf4b1f0365bd888cc7f83c7"
+      "sha256": "4c3ae6cad1cdce4aa1325a8209b0ef1dc069ad7253ab77c15e45b863947c42b4"
     },
     {
       "name": "owner_control",

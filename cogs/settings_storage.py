@@ -25,6 +25,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         "auto_info_movies": AUTO_INFO_MOVIES_ENABLED,
         "auto_info_anime": AUTO_INFO_ANIME_ENABLED,
         "auto_info_music": AUTO_INFO_MUSIC_ENABLED,
+        "auto_info_setup_version": "",
         "anti_raid_enabled": ANTI_RAID_ENABLED,
         "raid_join_threshold": RAID_JOIN_THRESHOLD,
         "raid_join_interval_seconds": RAID_JOIN_INTERVAL_SECONDS,
@@ -56,9 +57,28 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                 json.dump(bot_settings, f, ensure_ascii=False)
         except Exception as e:
             print(f"[BOT-SETTINGS] خطأ فـ الحفظ: {e}")
+
+
+    def apply_auto_info_setup_migration():
+        """يشعل الفئات الخمسة مرة وحدة عند تركيب هاد النسخة.
+
+        Version كتخلي الـOwner يقدر يطفّي شي فئة من البانل من بعد بلا ما
+        نرجعو نشعلوها قسراً مع كل restart.
+        """
+        if bot_settings.get("auto_info_setup_version") == AUTO_INFO_SETUP_VERSION:
+            return
+        for key in (
+            "auto_info_news", "auto_info_games", "auto_info_movies",
+            "auto_info_anime", "auto_info_music",
+        ):
+            bot_settings[key] = True
+        bot_settings["auto_info_setup_version"] = AUTO_INFO_SETUP_VERSION
+        save_bot_settings()
+        print("[AUTO-INFO] ✅ تفعلات القنوات الخمسة تلقائياً لأول تشغيل بهاد النسخة")
     
     
     load_bot_settings()
+    apply_auto_info_setup_migration()
     
     # ═══════════════════════════════════════════════════════
     # ║   سجل المحتوى المنشور (باش ما يتعاودش تا شي حاجة)      ║
@@ -72,15 +92,6 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         "anime": [],    # mal_id ديال الأنميات اللي تبعثات
         "music": [],    # "artist|track" اللي تبعثات
     }
-    
-    MAX_HISTORY = {
-        "news": 500,
-        "games": 250,
-        "movies": 250,
-        "anime": 250,
-        "music": 500,
-    }
-    
     
     def load_posted_history():
         """يقرا السجل ديال المحتوى المنشور من ملف JSON (إلا كان موجود)"""
@@ -112,24 +123,100 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     
     
     def mark_posted(category: str, item_id: str):
-        """يسجل حاجة كـ 'تبعثات' باش ما تتعاودش، ويقلّم السجل إلا كبر بزاف"""
+        """يسجل المحتوى بشكل دائم: ما كاين لا تقليم لا إعادة تدوير للسجل."""
         lst = posted_history.setdefault(category, [])
         if item_id not in lst:
             lst.append(item_id)
-        limit = MAX_HISTORY.get(category, 300)
-        if len(lst) > limit:
-            posted_history[category] = lst[-limit:]
         save_posted_history()
+
+
+    def mark_posted_many(category: str, item_ids):
+        """يسجل عدة مفاتيح فكتابة وحدة (مثلاً رابط الخبر + بصمة العنوان)."""
+        lst = posted_history.setdefault(category, [])
+        changed = False
+        for item_id in item_ids or []:
+            item_id = str(item_id or "").strip()
+            if item_id and item_id not in lst:
+                lst.append(item_id)
+                changed = True
+        if changed:
+            save_posted_history()
     
     
     def reset_category_history(category: str):
-        """كي تسالا كاع الاختيارات ديال شي category، كنبداو من جديد"""
+        """Reset يدوي فقط؛ Auto-Info ما كيستعملوش باش ما يعاود حتى محتوى."""
         posted_history[category] = []
         save_posted_history()
-        print(f"[HISTORY] {category}: سالات كاع الاختيارات، بدينا من جديد")
+        print(f"[HISTORY] {category}: تصفر السجل يدوياً")
+
+
+    def clear_all_posted_history():
+        """كيصفر سجل الفئات الخمسة فـ migration ديال البداية الجديدة فقط."""
+        for category in posted_history:
+            posted_history[category] = []
+        save_posted_history()
+        print("[HISTORY] ✅ تصفر سجل Auto-Info كامل")
     
     
     load_posted_history()
+
+    # حالة migration ديال تصفير قنوات Auto-Info. كل channel كتتسجل بوحدها
+    # باش restart ما يعاودش يمسح القنوات اللي تصفرو بنجاح.
+    AUTO_INFO_STATE_FILE = os.path.join(DATA_DIR, "auto_info_state.json")
+    auto_info_state = {}
+
+
+    def save_auto_info_state():
+        try:
+            with open(AUTO_INFO_STATE_FILE, "w", encoding="utf-8") as f:
+                json.dump(auto_info_state, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"[AUTO-INFO-STATE] خطأ فـ الحفظ: {e}")
+
+
+    def load_auto_info_state():
+        global auto_info_state
+        try:
+            with open(AUTO_INFO_STATE_FILE, "r", encoding="utf-8") as f:
+                loaded = json.load(f)
+            if isinstance(loaded, dict):
+                auto_info_state = loaded
+        except FileNotFoundError:
+            auto_info_state = {}
+        except Exception as e:
+            auto_info_state = {}
+            print(f"[AUTO-INFO-STATE] خطأ فـ التحميل: {e}")
+
+        if auto_info_state.get("version") != AUTO_INFO_SETUP_VERSION:
+            auto_info_state = {
+                "version": AUTO_INFO_SETUP_VERSION,
+                "history_cleared": False,
+                "channels_cleared": [],
+            }
+            save_auto_info_state()
+
+
+    def mark_auto_info_history_cleared():
+        auto_info_state["history_cleared"] = True
+        save_auto_info_state()
+
+
+    def is_auto_info_channel_cleared(channel_id: int) -> bool:
+        return str(int(channel_id)) in {
+            str(value) for value in auto_info_state.get("channels_cleared", [])
+        }
+
+
+    def mark_auto_info_channel_cleared(channel_id: int):
+        cleared = [str(value) for value in auto_info_state.setdefault("channels_cleared", [])]
+        channel_key = str(int(channel_id))
+        if channel_key not in cleared:
+            cleared.append(channel_key)
+            auto_info_state["channels_cleared"] = cleared
+            save_auto_info_state()
+
+
+    load_auto_info_state()
     
     # ملاحظة: نظام Dropdown ماعادش محتاج يحفظ IDs ديال الرسائل فـ JSON،
     # لأن الـ View كتشتغل بـ custom_id ثابت (persistent view) — كتخدم

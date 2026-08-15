@@ -47,7 +47,8 @@ class AIChannelCleanlinessTests(unittest.TestCase):
 
     def test_chat_channel_and_economy_limits_are_fixed(self):
         self.assertIn(f"TARGET_CHANNEL_ID = {TARGET_CHANNEL_ID}", self.bootstrap)
-        self.assertIn('AI_MODEL = "openai/gpt-5.6-terra"', self.bootstrap)
+        self.assertIn('AI_MODEL = "openai/gpt-5.6-luna"', self.bootstrap)
+        self.assertIn('"google/gemini-2.5-flash-lite"', self.bootstrap)
         self.assertIn('AI_CHAT_REASONING_EFFORT = "low"', self.bootstrap)
         self.assertIn("AI_MAX_OUTPUT_TOKENS = 520", self.bootstrap)
         self.assertIn("AI_MAX_PROMPT_CHARS = 2500", self.bootstrap)

@@ -10,39 +10,56 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     # ═══════════════════════════════════════════════════════
     
     async def fetch_json(url: str, params: dict = None, headers: dict = None) -> dict:
-        """جيب JSON من أي API (مع logging باش نعرفو شنو وقع بالضبط)"""
-        try:
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as session:
-                async with session.get(url, params=params, headers=headers) as resp:
-                    if resp.status == 200:
-                        try:
-                            return await resp.json()
-                        except Exception as e:
-                            print(f"[FETCH_JSON] JSON decode error من {url}: {e}")
-                            return {}
-                    else:
+        """جيب JSON مع retry قصير للـrate-limit والأعطال المؤقتة."""
+        retryable = {429, 500, 502, 503, 504}
+        for attempt in range(3):
+            try:
+                async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as session:
+                    async with session.get(url, params=params, headers=headers) as resp:
+                        if resp.status == 200:
+                            try:
+                                return await resp.json()
+                            except Exception as exc:
+                                print(f"[FETCH_JSON] JSON decode error من {url}: {exc}")
+                                return {}
                         body = await resp.text()
+                        if resp.status in retryable and attempt < 2:
+                            retry_after = _safe_float(resp.headers.get("Retry-After"), attempt + 1)
+                            await asyncio.sleep(max(0.5, min(retry_after, 4.0)))
+                            continue
                         print(f"[FETCH_JSON] {url} رجع status {resp.status}: {body[:200]}")
                         return {}
-        except asyncio.TimeoutError:
-            print(f"[FETCH_JSON] Timeout فـ {url}")
-            return {}
-        except Exception as e:
-            print(f"[FETCH_JSON] Exception فـ {url}: {e}")
-            return {}
+            except asyncio.TimeoutError:
+                if attempt < 2:
+                    await asyncio.sleep(attempt + 1)
+                    continue
+                print(f"[FETCH_JSON] Timeout فـ {url}")
+            except Exception as exc:
+                if attempt < 2:
+                    await asyncio.sleep(attempt + 1)
+                    continue
+                print(f"[FETCH_JSON] Exception فـ {url}: {exc}")
+        return {}
     
     
     async def fetch_html(url: str, headers: dict = None) -> str:
-        """جيب HTML خام من أي رابط (باش نقدرو نقرأو og:image مثلا)"""
-        try:
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
-                async with session.get(url, headers=headers) as resp:
-                    if resp.status == 200:
-                        return await resp.text(errors="ignore")
-                    return ""
-        except Exception as e:
-            print(f"[FETCH_HTML] Exception فـ {url}: {e}")
-            return ""
+        """جيب HTML خام مع محاولة احتياطية للصورة ديال الخبر."""
+        for attempt in range(2):
+            try:
+                async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
+                    async with session.get(url, headers=headers) as resp:
+                        if resp.status == 200:
+                            return await resp.text(errors="ignore")
+                        if resp.status in {429, 500, 502, 503, 504} and attempt == 0:
+                            await asyncio.sleep(1)
+                            continue
+                        return ""
+            except Exception as exc:
+                if attempt == 0:
+                    await asyncio.sleep(1)
+                    continue
+                print(f"[FETCH_HTML] Exception فـ {url}: {exc}")
+        return ""
     
     
     async def get_wikipedia_image(title: str) -> str:
@@ -123,7 +140,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     
     
     async def translate_to_darija(text: str) -> str:
-        """يترجم نص من الانجليزية للدارجة المغربية عبر AI (مع fallback أوتوماتيك للموديل)"""
+        """ترجمة Auto-Info بموديل اقتصادي مخصص وLuna كاحتياط مدفوع."""
         if not text:
             return text
         if not OPENROUTER_API_KEY:
@@ -135,14 +152,20 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                 "role": "system",
                 "content": (
                     "نتا مترجم محترف. ترجم النص التالي من الانجليزية للدارجة المغربية "
-                    "بطريقة طبيعية وسلسة ومفهومة. غير الترجمة، بلا مقدمات، بلا تعليقات، "
-                    "بلا علامات تنصيص."
+                    "بطريقة طبيعية وسلسة ومفهومة، وحافظ بدقة على الأسماء والأرقام والتواريخ "
+                    "والمعنى الأصلي. غير الترجمة، بلا مقدمات، بلا تعليقات، بلا علامات تنصيص."
                 )
             },
             {"role": "user", "content": text}
         ]
     
-        translated, error = await call_openrouter_chat(messages, 700, 0.3)
+        translated, error = await call_openrouter_chat(
+            messages,
+            AUTO_INFO_TRANSLATION_MAX_TOKENS,
+            0.2,
+            primary_model=AUTO_INFO_AI_MODEL,
+            fallback_models=AUTO_INFO_AI_FALLBACKS,
+        )
     
         if error:
             print(f"[TRANSLATE] ❌ فشلو كاع الموديلات: {error}")
@@ -151,6 +174,64 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         translated = translated.strip()
         print(f"[TRANSLATE] ✅ قبل: '{text[:50]}' | بعد: '{translated[:50]}'")
         return translated if translated else text
+
+
+    def normalize_content_key(text: str) -> str:
+        """بصمة مستقرة للعناوين باش نفس المحتوى ما يرجعش برابط آخر."""
+        cleaned = html.unescape(str(text or "")).casefold()
+        cleaned = re.sub(r"[^\w\s]", " ", cleaned, flags=re.UNICODE)
+        return re.sub(r"\s+", " ", cleaned).strip()[:300]
+
+
+    _NEWS_TITLE_STOPWORDS = {
+        "a", "an", "and", "are", "as", "at", "be", "by", "for", "from",
+        "has", "have", "in", "is", "it", "of", "on", "or", "that", "the",
+        "this", "to", "was", "were", "will", "with", "after", "new", "says",
+    }
+
+
+    def news_story_was_posted(title: str) -> bool:
+        """كيمنع نفس القصة حتى إلا تبدل الناشر والصياغة شوية."""
+        normalized = normalize_content_key(title)
+        exact_key = f"title:{normalized}"
+        if not normalized or is_posted("news", exact_key):
+            return True
+        candidate = {
+            word for word in normalized.split()
+            if len(word) > 2 and word not in _NEWS_TITLE_STOPWORDS
+        }
+        if len(candidate) < 3:
+            return False
+        for stored in posted_history.get("news", []):
+            if not str(stored).startswith("title:"):
+                continue
+            previous = {
+                word for word in str(stored)[6:].split()
+                if len(word) > 2 and word not in _NEWS_TITLE_STOPWORDS
+            }
+            if len(previous) < 3:
+                continue
+            overlap = len(candidate & previous)
+            union = len(candidate | previous)
+            if union and overlap / union >= 0.62:
+                return True
+            if overlap / min(len(candidate), len(previous)) >= 0.80:
+                return True
+        return False
+
+
+    def _safe_int(value, default=0) -> int:
+        try:
+            return int(str(value or "0").replace(",", ""))
+        except (TypeError, ValueError):
+            return default
+
+
+    def _safe_float(value, default=0.0) -> float:
+        try:
+            return float(value or 0)
+        except (TypeError, ValueError):
+            return default
     
     
     async def translate_text(text: str, target_language_en: str) -> Optional[str]:
@@ -197,14 +278,15 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         discover_url = f"{TMDB_URL}/discover/movie"
         omdb_url = "https://www.omdbapi.com/"
     
-        for page_attempt in range(5):  # يجرب حتى 5 صفحات عشوائية ديال TMDb قبل ما يستسلم
+        for page_attempt in range(6):
             params = {
                 "api_key": TMDB_API_KEY,
                 "language": "en-US",
                 "sort_by": random.choice(["vote_average.desc", "popularity.desc"]),
-                "vote_count.gte": 300,   # نتفاداو الأفلام المغمورة اللي عندها صوت ولا صوتين
+                "vote_count.gte": AUTO_INFO_MOVIE_MIN_VOTES,
                 "include_adult": "false",
-                "page": random.randint(1, 40),
+                # أول الصفحات ديال الأعلى تقييماً/الأكثر شعبية: قديم وجديد بلا الرديء.
+                "page": random.randint(1, 35),
             }
             data = await fetch_json(discover_url, params)
             results = data.get("results", []) if data else []
@@ -213,9 +295,11 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     
             random.shuffle(results)
     
-            for movie in results[:12]:  # يجرب حتى 12 فيلم من نفس الصفحة
+            for movie in results[:15]:
                 tmdb_id = movie.get("id")
                 if not tmdb_id:
+                    continue
+                if _safe_float(movie.get("vote_average")) < AUTO_INFO_MOVIE_MIN_RATING:
                     continue
     
                 ext_data = await fetch_json(
@@ -235,20 +319,24 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                     continue
     
                 rating = omdb_data.get("imdbRating", "0")
-                try:
-                    if rating in ("N/A", None) or float(rating) < 6.0:
-                        continue
-                except ValueError:
+                if _safe_float(rating) < AUTO_INFO_MOVIE_MIN_RATING:
+                    continue
+
+                imdb_votes = _safe_int(omdb_data.get("imdbVotes"))
+                if imdb_votes < AUTO_INFO_MOVIE_MIN_VOTES:
                     continue
     
                 plot = omdb_data.get("Plot", "No plot available.")
                 plot_ar = await translate_to_darija(plot)
     
-                mark_posted("movies", imdb_id)
-    
                 poster = omdb_data.get("Poster", "")
                 if not poster or poster == "N/A":
+                    poster_path = movie.get("poster_path")
+                    poster = f"https://image.tmdb.org/t/p/original{poster_path}" if poster_path else ""
+                if not poster:
                     poster = await get_wikipedia_image(f"{omdb_data.get('Title', '')} (film)")
+                if not poster:
+                    continue
     
                 return {
                     "title": omdb_data.get("Title", "Unknown"),
@@ -256,8 +344,11 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                     "genre": await translate_genres(omdb_data.get("Genre", "N/A")),
                     "plot": plot_ar,
                     "rating": rating,
+                    "votes": imdb_votes,
+                    "metascore": omdb_data.get("Metascore", "N/A"),
                     "poster": poster,
-                    "imdb": f"https://www.imdb.com/title/{imdb_id}/"
+                    "imdb": f"https://www.imdb.com/title/{imdb_id}/",
+                    "history_keys": [imdb_id],
                 }
     
         return {}
@@ -274,11 +365,12 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         jikan_headers = {"User-Agent": "Mozilla/5.0 (compatible; GGMW9Bot/1.0)"}
         list_url = "https://api.jikan.moe/v4/top/anime"
     
-        for page_attempt in range(6):  # يجرب حتى 6 صفحات عشوائية قبل ما يستسلم
+        for page_attempt in range(6):
             if page_attempt > 0:
                 await asyncio.sleep(1.5)  # نحترمو rate-limit ديال Jikan
     
-            params = {"page": random.randint(1, 50), "limit": 25}  # top 1250 أنمي تقريبا
+            # Top 750 تقريباً، مع اختيار عشوائي باش القديم والجديد يبقاو مخلوطين.
+            params = {"page": random.randint(1, 30), "limit": 25}
             data = await fetch_json(list_url, params, headers=jikan_headers)
             results = data.get("data", []) if data else []
     
@@ -294,9 +386,16 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                     continue
                 if not anime.get("synopsis"):
                     continue
+                if _safe_float(anime.get("score")) < AUTO_INFO_ANIME_MIN_SCORE:
+                    continue
+                # السيرفر احترافي ونظيف: محتوى Hentai/Rx ما كيدخلش للقناة.
+                if str(anime.get("rating") or "").lower().startswith("rx"):
+                    continue
     
                 print(f"[JIKAN] ✅ اختار: {anime.get('title')} (score={anime.get('score')})")
-                return await _build_anime_embed_data(anime)
+                built = await _build_anime_embed_data(anime)
+                if built:
+                    return built
     
             print(f"[JIKAN] محاولة {page_attempt+1}: كاع نتائج الصفحة مبعوتين من قبل ولا بلا synopsis")
     
@@ -307,14 +406,14 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     async def _build_anime_embed_data(anime: dict) -> dict:
         """يبني الـ dict الجاهز للـ embed انطلاقا من داتا أنمي جاية من Jikan"""
         mal_id = anime.get("mal_id")
-        synopsis = anime.get("synopsis") or "No synopsis available."
-        synopsis_ar = await translate_to_darija(synopsis)
-    
-        mark_posted("anime", str(mal_id))
-    
         poster = anime.get("images", {}).get("jpg", {}).get("large_image_url", "")
         if not poster:
             poster = await get_wikipedia_image(f"{anime.get('title', '')} (anime)")
+        if not poster:
+            return {}
+
+        synopsis = anime.get("synopsis") or "No synopsis available."
+        synopsis_ar = await translate_to_darija(synopsis)
     
         return {
             "title": anime.get("title", "Unknown"),
@@ -324,8 +423,11 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             "genres": await translate_genres(", ".join([g["name"] for g in anime.get("genres", [])])),
             "synopsis": synopsis_ar,
             "score": anime.get("score", 0),
+            "rank": anime.get("rank") or "N/A",
+            "scored_by": _safe_int(anime.get("scored_by")),
             "poster": poster,
-            "url": anime.get("url", "")
+            "url": anime.get("url", ""),
+            "history_keys": [str(mal_id)],
         }
     
     
@@ -341,12 +443,13 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     
         list_url = "https://api.rawg.io/api/games"
     
-        for page_attempt in range(5):  # يجرب حتى 5 صفحات عشوائية قبل ما يستسلم
+        for page_attempt in range(6):
             params = {
                 "key": RAWG_API_KEY,
                 "ordering": random.choice(["-rating", "-metacritic", "-added"]),
+                "metacritic": "70,100",
                 "page_size": 40,
-                "page": random.randint(1, 150),  # كنبقاو فـ نطاق الألعاب المعروفة بزاف
+                "page": random.randint(1, 50),
             }
             data = await fetch_json(list_url, params)
             results = data.get("results", []) if data else []
@@ -355,10 +458,16 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     
             random.shuffle(results)
     
-            for game in results[:10]:  # يجرب حتى 10 ألعاب من نفس الصفحة
+            for game in results[:15]:
                 slug = game.get("slug")
-                rating = game.get("rating", 0)
-                if not slug or is_posted("games", slug) or rating < 3.2:
+                rating = _safe_float(game.get("rating"))
+                ratings_count = _safe_int(game.get("ratings_count"))
+                if (
+                    not slug
+                    or is_posted("games", slug)
+                    or rating < AUTO_INFO_GAME_MIN_RATING
+                    or ratings_count < AUTO_INFO_GAME_MIN_RATINGS_COUNT
+                ):
                     continue
     
                 detail = await fetch_json(f"{list_url}/{slug}", {"key": RAWG_API_KEY})
@@ -368,20 +477,26 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                 description = detail.get("description_raw", "No description available.")[:500]
                 description_ar = await translate_to_darija(description)
     
-                mark_posted("games", slug)
-    
                 poster = detail.get("background_image", "")
                 if not poster:
                     poster = await get_wikipedia_image(f"{detail.get('name', '')} (video game)")
+                if not poster:
+                    continue
+
+                detail_rating = _safe_float(detail.get("rating"), rating)
+                detail_ratings_count = _safe_int(detail.get("ratings_count"), ratings_count)
     
                 return {
                     "name": detail.get("name", "Unknown"),
                     "released": detail.get("released", "N/A"),
                     "genres": await translate_genres(", ".join([g["name"] for g in detail.get("genres", [])])),
                     "description": description_ar,
-                    "rating": f"{rating}/5",
+                    "rating": detail_rating,
+                    "ratings_count": detail_ratings_count,
+                    "metacritic": detail.get("metacritic") or game.get("metacritic") or "N/A",
                     "poster": poster,
-                    "url": f"https://rawg.io/games/{slug}"
+                    "url": f"https://rawg.io/games/{slug}",
+                    "history_keys": [slug],
                 }
     
         return {}
@@ -438,7 +553,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         if not LASTFM_API_KEY:
             return {}
     
-        url = "http://ws.audioscrobbler.com/2.0/"
+        url = "https://ws.audioscrobbler.com/2.0/"
     
         chart_data = await fetch_json(url, {
             "method": "chart.getTopArtists",
@@ -474,7 +589,10 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                 tracks = data["toptracks"]["track"]
                 fresh_tracks = [
                     t for t in tracks
-                    if not is_posted("music", f"{artist}|{t.get('name', '')}")
+                    if not is_posted(
+                        "music",
+                        f"track:{normalize_content_key(artist + ' ' + str(t.get('name', '')))}",
+                    )
                 ]
                 if not fresh_tracks:
                     continue  # كاع الأغاني ديال هاد الفنان تبعثاو، نجربو فنان آخر
@@ -486,20 +604,28 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                 except (ValueError, TypeError):
                     listeners = 0
     
-                mark_posted("music", f"{artist}|{track.get('name', '')}")
-    
                 poster = await get_track_artwork(artist, track.get("name", ""))
+                if not poster:
+                    poster = await get_wikipedia_image(artist)
+                if not poster:
+                    continue
+
+                playcount = _safe_int(track.get("playcount"))
+                rank = _safe_int(track.get("@attr", {}).get("rank"))
+                history_key = f"track:{normalize_content_key(artist + ' ' + str(track.get('name', '')))}"
     
                 return {
                     "name": track.get("name", "Unknown"),
                     "artist": artist,
                     "listeners": listeners,
+                    "playcount": playcount,
+                    "rank": rank or "N/A",
                     "url": track.get("url", ""),
-                    "poster": poster
+                    "poster": poster,
+                    "history_keys": [history_key],
                 }
     
-        # إلا كاع الفنانين تسالاو، نبداو من جديد
-        reset_category_history("music")
+        # إلا سالاو الاختيارات الحالية كنستناو chart يتجدد؛ ما نعاودو حتى أغنية.
         return {}
     
     
@@ -524,33 +650,40 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             if not data or "articles" not in data or not data["articles"]:
                 continue
     
-            # يفلتر المقالات اللي عندها عنوان ووصف حقيقيين (NewsAPI كترجع بزاف [Removed])
-            # وما تبعثاتش من قبل، باش يكون دايما خبر جديد 100%
+            # URL + بصمة العنوان كيمنعو نفس القصة ترجع من رابط/ناشر آخر.
             valid_articles = [
                 a for a in data["articles"]
                 if a.get("title") and a.get("title") != "[Removed]"
                 and a.get("url") and not is_posted("news", a["url"])
+                and not news_story_was_posted(a.get("title", ""))
             ]
             if not valid_articles:
                 continue
-    
-            article = random.choice(valid_articles)
-            title_ar = await translate_to_darija(article.get("title", "Unknown"))
-            desc_ar = await translate_to_darija(article.get("description", "No description."))
-    
-            mark_posted("news", article["url"])
-    
-            image = article.get("urlToImage", "")
-            if not image:
-                image = await get_og_image(article.get("url", ""))
-    
-            return {
-                "title": title_ar,
-                "description": desc_ar,
-                "url": article.get("url", ""),
-                "source": article.get("source", {}).get("name", "Unknown"),
-                "image": image
-            }
+
+            random.shuffle(valid_articles)
+            for article in valid_articles[:8]:
+                image = article.get("urlToImage", "")
+                if not image:
+                    image = await get_og_image(article.get("url", ""))
+                # القناة احترافية وبالصور: المقال بلا صورة كيتفوت وما كيتنشرش ناقص.
+                if not image:
+                    continue
+
+                original_title = article.get("title", "Unknown")
+                original_desc = article.get("description") or article.get("content") or original_title
+                title_ar = await translate_to_darija(original_title)
+                desc_ar = await translate_to_darija(original_desc)
+                title_key = f"title:{normalize_content_key(original_title)}"
+
+                return {
+                    "title": title_ar,
+                    "description": desc_ar,
+                    "url": article.get("url", ""),
+                    "source": article.get("source", {}).get("name", "Unknown"),
+                    "published_at": article.get("publishedAt", ""),
+                    "image": image,
+                    "history_keys": [article["url"], title_key],
+                }
     
         # ماكاينش خبر جديد دابا فـ كاع الفئات، غادي نعاودو نجربو فـ الدورة الجاية
         return {}

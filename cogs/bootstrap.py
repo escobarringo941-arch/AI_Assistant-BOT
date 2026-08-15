@@ -154,8 +154,8 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     # وحط هاد الرابط هنا (كيبدا بـ https://cdn.discordapp.com/attachments/...).
     # مواقع بحال animated-gif-creator.com عادة ماخدامينش كـ hotlink، البوت ما غاديش يقدر يبين الصورة بيهم.
     
-    # موديل قوي ومتوازن للمحادثة: ذكاء عالي، latency مزيانة، وثمن معقول.
-    AI_MODEL = "openai/gpt-5.6-terra"
+    # موديل المحادثة: مدفوع، سريع واقتصادي باش الخدمة تبقى مستقرة بلا تكلفة Terra.
+    AI_MODEL = "openai/gpt-5.6-luna"
     
     # المهام القصيرة بحال الترجمة بلا reasoning؛ محادثة AI كتستعمل low reasoning
     # بوحدها باش تبقى ذكية وسريعة بلا استهلاك زايد.
@@ -163,12 +163,16 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     AI_CHAT_REASONING_EFFORT = "low"
     
     # ═══════ سلسلة الاحتياط (Fallback) ═══════
-    # إلا الموديل الأساسي ماجاوبش: Gemini قوي وسريع، ثم Luna اقتصادي، ثم المجاني.
+    # إلا الموديل الأساسي ماجاوبش: Gemini اقتصادي ومدفوع، ثم المجاني كحل أخير.
     AI_MODEL_FALLBACKS = [
-        "google/gemini-3-flash-preview",
-        "openai/gpt-5.6-luna",
+        "google/gemini-2.5-flash-lite",
         "openrouter/free",
     ]
+
+    # Auto-Info عندو موديل منفصل ورخيص للترجمة، وLuna احتياط مدفوع وموثوق.
+    AUTO_INFO_AI_MODEL = "google/gemini-2.5-flash-lite"
+    AUTO_INFO_AI_FALLBACKS = ["openai/gpt-5.6-luna"]
+    AUTO_INFO_TRANSLATION_MAX_TOKENS = 450
     
     OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
     OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -201,15 +205,28 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     MOVIES_CHANNEL_IDS = [1526721884434206820]     # ← زيد IDs آخرين هنا بـ , إلا بغيتي عدة channels ديال الأفلام
     ANIME_CHANNEL_IDS = [1526726257012772985]      # ← زيد IDs آخرين هنا بـ , إلا بغيتي عدة channels ديال الأنمي
     MUSIC_CHANNEL_IDS = [1524957892925456547]      # ← زيد IDs آخرين هنا بـ , إلا بغيتي عدة channels ديال الموسيقى
+
+    # دورة واحدة مباشرة بعد التشغيل، ومن بعدها مرة كل ساعة.
+    AUTO_INFO_INTERVAL_HOURS = 1
+
+    # Version ديال الإطلاق: كتفعّل القنوات وكتصفرها مرة وحدة فقط عند تركيب هاد النسخة.
+    # ما كتعاودش تمسح القنوات فكل restart، وتبديلات الـOwner كتبقى محفوظة من بعد.
+    AUTO_INFO_SETUP_VERSION = "2026-08-15-best-content-v1"
+
+    # عتبات الجودة: قديم وجديد مخلوط، ولكن غير المحتوى المعروف والمقيّم مزيان.
+    AUTO_INFO_MOVIE_MIN_RATING = 7.0       # IMDb /10
+    AUTO_INFO_MOVIE_MIN_VOTES = 1000
+    AUTO_INFO_ANIME_MIN_SCORE = 7.5        # MyAnimeList /10
+    AUTO_INFO_GAME_MIN_RATING = 4.0        # RAWG /5
+    AUTO_INFO_GAME_MIN_RATINGS_COUNT = 100
     
     # ═══════ تفعيل/تعطيل كل فئة ديال Auto-Info بوحدها ═══════
-    # (كل فئة كتستعمل translate_to_darija → طلب OpenRouter. عطلها مؤقتا باش توفر
-    # الحصة اليومية المجانية للترجمة بالعلم، وشعلها ملي تزيد رصيد ولا تبغي)
-    AUTO_INFO_NEWS_ENABLED = False
-    AUTO_INFO_GAMES_ENABLED = False
-    AUTO_INFO_MOVIES_ENABLED = False
-    AUTO_INFO_ANIME_ENABLED = False
-    AUTO_INFO_MUSIC_ENABLED = False
+    # خدامين مباشرة من أول تشغيل؛ الـOwner يقدر يعطل أي فئة من البانل من بعد.
+    AUTO_INFO_NEWS_ENABLED = True
+    AUTO_INFO_GAMES_ENABLED = True
+    AUTO_INFO_MOVIES_ENABLED = True
+    AUTO_INFO_ANIME_ENABLED = True
+    AUTO_INFO_MUSIC_ENABLED = True
     
     
     # ═══════════════════════════════════════════════════════
