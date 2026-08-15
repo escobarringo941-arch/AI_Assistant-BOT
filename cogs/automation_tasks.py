@@ -123,7 +123,16 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
 
     @tasks.loop(hours=AUTO_INFO_INTERVAL_HOURS)
     async def auto_info():
-        """منشور ممتاز لكل فئة مباشرة عند التشغيل، ومن بعدها مرة كل ساعة."""
+        """دورة مربوطة بموعد محفوظ؛ restart ما كيخلقش دورة إضافية."""
+
+        # الحجز كيتدار قبل أي API call. إلا طاح البوت وسط الدورة، restart ما
+        # يعاودش نفس الخمسة وكيبقى الموعد الجاي هو ساعة من الموعد المحجوز.
+        if not reserve_auto_info_dispatch():
+            print(
+                "[AUTO-INFO] ⏳ الدورة تفوتات حيث الساعة ما كملاتش؛ "
+                f"باقي {seconds_until_auto_info_dispatch()} ثانية."
+            )
+            return
 
         if bot_settings["auto_info_news"]:
             try:
@@ -262,6 +271,15 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                 break
             print("[AUTO_INFO-RESET] ⏳ غادي نعاود القنوات الناقصة من بعد 30 ثانية.")
             await asyncio.sleep(30)
+
+        # tasks.loop كيشغل أول دورة مباشرة افتراضياً. كنحبسوها حتى الموعد
+        # المحفوظ فـauto_info_state.json، وبالتالي restart ما كيبدلش الساعة.
+        while not bot.is_closed():
+            remaining = seconds_until_auto_info_dispatch()
+            if remaining <= 0:
+                break
+            print(f"[AUTO-INFO] 🕐 باقي {remaining} ثانية للدورة الجاية المحفوظة.")
+            await asyncio.sleep(min(60, remaining))
     
     
     # ═══════════════════════════════════════════════════════

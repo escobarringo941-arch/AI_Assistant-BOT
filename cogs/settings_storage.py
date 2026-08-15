@@ -216,7 +216,56 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             save_auto_info_state()
 
 
+    # الموعد كيتحفظ فـVolume باش restart/redeploy ما يعتبرش راسو دورة جديدة
+    # وما يبعثش خمسة منشورات قبل ما تكمل الساعة الحقيقية.
+    AUTO_INFO_INTERVAL_SECONDS = max(60, int(float(AUTO_INFO_INTERVAL_HOURS) * 3600))
+
+
+    def _auto_info_clock(now_ts_value=None) -> int:
+        if now_ts_value is not None:
+            return max(0, int(now_ts_value))
+        return max(0, int(datetime.now().timestamp()))
+
+
+    def get_auto_info_next_dispatch_at(now_ts_value=None) -> int:
+        """الموعد الدائم للدورة الجاية؛ أول تركيب كيتسنى ساعة كاملة."""
+        current = _auto_info_clock(now_ts_value)
+        try:
+            scheduled = int(auto_info_state.get("next_dispatch_at", 0) or 0)
+        except (TypeError, ValueError):
+            scheduled = 0
+        if scheduled <= 0:
+            scheduled = current + AUTO_INFO_INTERVAL_SECONDS
+            auto_info_state["next_dispatch_at"] = scheduled
+            save_auto_info_state()
+        return scheduled
+
+
+    def seconds_until_auto_info_dispatch(now_ts_value=None) -> int:
+        current = _auto_info_clock(now_ts_value)
+        return max(0, get_auto_info_next_dispatch_at(current) - current)
+
+
+    def reserve_auto_info_dispatch(now_ts_value=None) -> bool:
+        """كيحجز الموعد قبل طلبات الشبكة باش crash/restart ما يعاودش نفس الدورة."""
+        current = _auto_info_clock(now_ts_value)
+        scheduled = get_auto_info_next_dispatch_at(current)
+        if current < scheduled:
+            return False
+
+        next_dispatch = scheduled
+        while next_dispatch <= current:
+            next_dispatch += AUTO_INFO_INTERVAL_SECONDS
+        auto_info_state["last_dispatch_at"] = current
+        auto_info_state["last_scheduled_at"] = scheduled
+        auto_info_state["next_dispatch_at"] = next_dispatch
+        save_auto_info_state()
+        return True
+
+
     load_auto_info_state()
+    # أول موعد كيتولد مرة وحدة. من بعد، كل restart كيقرا نفس القيمة.
+    get_auto_info_next_dispatch_at()
     
     # ملاحظة: نظام Dropdown ماعادش محتاج يحفظ IDs ديال الرسائل فـ JSON،
     # لأن الـ View كتشتغل بـ custom_id ثابت (persistent view) — كتخدم

@@ -423,6 +423,14 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         # (bot.process_commands ماعادش كيتصاوب، حيت الأوامر ديال ! معطلة نهائياً)
         await process_message_xp(message)
         msg_lower = message.content.lower()
+
+        # ملي الـOwner يكون رابط هاد الرسالة بقانون من Prison Panel، داك
+        # القانون هو المصدر الوحيد للعداد والحكم. هكذا Auto-Mod القديم ما
+        # يسبقش مثلاً Threshold=3 بحكم ثابت من أول مرة.
+        prison_cog = bot.get_cog("PrisonSystem")
+        if prison_cog is not None:
+            await maybe_auto_react_translate(message)
+            return
     
         if not is_exempt(message.author):
             for word in get_active_banned_words() + BANNED_ACTIONS:

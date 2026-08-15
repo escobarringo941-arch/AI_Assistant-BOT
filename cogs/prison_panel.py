@@ -613,40 +613,37 @@ class SolitarySendSelect(discord.ui.Select):
         )
 
 
-class SolitaryReleaseSelect(discord.ui.Select):
+class SolitaryReleaseSelect(discord.ui.UserSelect):
     def __init__(self, cog, guild: discord.Guild):
-        options = []
-        for uid, record in list(cog.store.solitary(guild.id).items())[:25]:
-            member = guild.get_member(int(uid))
-            left = max(0, int(record.get("until", 0)) - now_ts())
-            options.append(
-                discord.SelectOption(
-                    label=(member.display_name if member else f"ID {uid}")[:100],
-                    value=str(uid),
-                    description=f"باقي: {format_duration(left)}"[:100],
-                )
-            )
         super().__init__(
-            placeholder="اخرج شي واحد من الانفرادي…",
-            options=options or [discord.SelectOption(label="الانفرادي خاوي", value="none")],
-            disabled=not options,
+            placeholder="🔓 إخراج يدوي من الانفرادي…",
+            min_values=1,
+            max_values=1,
         )
 
     async def callback(self, interaction: discord.Interaction):
-        if self.values[0] == "none":
-            await _deny(interaction, "🕊️ الانفرادي خاوي.")
-            return
         cog = _cog(interaction)
+        user_id = int(self.values[0].id)
+        if not cog.store.in_solitary(interaction.guild.id, user_id):
+            await _deny(interaction, "❌ هاد العضو ماشي فالحبس الانفرادي دابا.")
+            return
         await interaction.response.defer(ephemeral=True, thinking=True)
         result = await cog.release_from_solitary(
-            interaction.guild, int(self.values[0]), reason="عفو من طرف الاونر"
+            interaction.guild, user_id, reason="إخراج يدوي من طرف الـOwner"
         )
         if not result.get("ok"):
             await interaction.followup.send(f"❌ {result['error']}", ephemeral=True)
             return
-        await interaction.followup.send(
-            "🔓 خرج من الانفرادي والروم تمسحات. رجع لزنزانتو.", ephemeral=True
-        )
+        if result.get("released_from_prison"):
+            message = "🕊️ خرج من الانفرادي ومن السجن حيت الحكم الأصلي كان سالا. الروم والرول تمسحو."
+        elif result.get("prison_release_error"):
+            message = (
+                "⚠️ خرج من الانفرادي والروم والرول تمسحو، ولكن الإفراج الكامل "
+                f"تعطل: {result['prison_release_error']}"
+            )
+        else:
+            message = "🔓 خرج يدوياً من الانفرادي، الروم والرول تمسحو، ورجع لزنزانتو."
+        await interaction.followup.send(message, ephemeral=True)
 
 
 class SolitaryView(OwnerOnlyPrisonView):
@@ -789,7 +786,7 @@ class OffenseEditModal(discord.ui.Modal, title="⚖️ تعديل مخالفة")
             await _deny(interaction, f"❌ {exc}")
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
-        await cog.publish_prison_code(interaction.guild)
+        await cog.refresh_rule_surfaces(interaction.guild)
         await interaction.followup.send(
             content="✅ تعدّل الحكم وتحدثات لوحة `prison-code`.",
             embed=offense_control_embed(self.key, entry),
@@ -874,7 +871,7 @@ class OffenseCreateModal(discord.ui.Modal, title="➕ إضافة حكم جديد
             await _deny(interaction, f"❌ {exc}")
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
-        await cog.publish_prison_code(interaction.guild)
+        await cog.refresh_rule_surfaces(interaction.guild)
         await interaction.followup.send(
             content="✅ تزاد الحكم الجديد وولا متاح فالسجن وAuto Rules.",
             embed=offense_control_embed(key, entry),
@@ -950,7 +947,7 @@ class OffenseSelectedView(OwnerOnlyPrisonView):
             embed=None,
             view=OffenseEditView(self.cog, interaction.guild, self.page),
         )
-        await self.cog.publish_prison_code(interaction.guild)
+        await self.cog.refresh_rule_surfaces(interaction.guild)
 
     @discord.ui.button(label="رجوع للأحكام", emoji="↩️", style=discord.ButtonStyle.secondary)
     async def back_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -1004,6 +1001,18 @@ AUTO_RULE_KIND_LABELS = {
 }
 
 
+def _trigger_count_value(raw) -> int:
+    try:
+        count = int(str(raw).strip())
+    except (TypeError, ValueError):
+        raise ValueError("كتب عدد صحيح بحال 2 ولا 4 ولا 10.")
+    if not AUTO_RULE_TRIGGER_MIN <= count <= AUTO_RULE_TRIGGER_MAX:
+        raise ValueError(
+            f"عدد التكرارات خاصو يكون بين {AUTO_RULE_TRIGGER_MIN} و {AUTO_RULE_TRIGGER_MAX}."
+        )
+    return count
+
+
 def _auto_rule_subject(rule: dict) -> str:
     kind = rule.get("kind")
     pattern = str(rule.get("pattern", ""))
@@ -1051,7 +1060,8 @@ def auto_rules_embed(cog, guild: discord.Guild, page: int = 0) -> discord.Embed:
                     f"`{subject}`\n↳ **{offense['label']}** • "
                     f"{format_duration(int(offense['seconds']))} • "
                     f"`{offense.get('cell', 'holding')}` • "
-                    f"🎯 من المرة **{int(rule.get('trigger_count', 1) or 1)}**"
+                    f"🎯 العقوبة فالخرق **{int(rule.get('trigger_count', 1) or 1)}** "
+                    f"(قبلها {max(0, int(rule.get('trigger_count', 1) or 1) - 1)} تحذيرات)"
                 ),
                 inline=False,
             )
@@ -1071,10 +1081,12 @@ class AutoRuleOffenseSelect(discord.ui.Select):
         guild: discord.Guild,
         kind: str,
         patterns: list[str],
+        trigger_count: int,
         page: int = 0,
     ):
         self.kind = kind
         self.patterns = patterns
+        self.trigger_count = _trigger_count_value(trigger_count)
         items = _sorted_offense_items(cog, guild)
         page, pages = _clamp_page(page, len(items), DISCORD_SELECT_PAGE_SIZE)
         start = page * DISCORD_SELECT_PAGE_SIZE
@@ -1101,6 +1113,7 @@ class AutoRuleOffenseSelect(discord.ui.Select):
                 kind=self.kind,
                 patterns=self.patterns,
                 offense_key=self.values[0],
+                trigger_count=self.trigger_count,
             )
         except ValueError as exc:
             await _deny(interaction, f"❌ {exc}")
@@ -1112,7 +1125,10 @@ class AutoRuleOffenseSelect(discord.ui.Select):
         home_page, _pages = _clamp_page(
             max(0, total - 1), total, AUTO_RULE_EMBED_PAGE_SIZE
         )
-        details = [f"✅ تزادو **{created}** قانون تلقائي وتفعّلو دابا."]
+        details = [
+            f"✅ تزادو **{created}** قانون تلقائي؛ الحكم كيتطبق من المرة "
+            f"**{self.trigger_count}** لكل Discord ID."
+        ]
         if skipped:
             details.append(f"↪️ {skipped} كانو مزادين من قبل وتفوتو.")
         if invalid:
@@ -1122,6 +1138,7 @@ class AutoRuleOffenseSelect(discord.ui.Select):
             embed=auto_rules_embed(cog, interaction.guild, home_page),
             view=AutoRulesHomeView(cog, interaction.guild, home_page),
         )
+        await cog.refresh_rule_surfaces(interaction.guild)
 
 
 class AutoRuleOffenseView(OwnerOnlyPrisonView):
@@ -1131,6 +1148,7 @@ class AutoRuleOffenseView(OwnerOnlyPrisonView):
         guild: discord.Guild,
         kind: str,
         patterns,
+        trigger_count: int,
         page: int = 0,
     ):
         super().__init__()
@@ -1138,10 +1156,13 @@ class AutoRuleOffenseView(OwnerOnlyPrisonView):
         self.guild = guild
         self.kind = kind
         self.patterns = [str(item) for item in patterns] if isinstance(patterns, list) else [str(patterns)]
+        self.trigger_count = _trigger_count_value(trigger_count)
         items = _sorted_offense_items(cog, guild)
         self.page, self.pages = _clamp_page(page, len(items), DISCORD_SELECT_PAGE_SIZE)
         self.add_item(
-            AutoRuleOffenseSelect(cog, guild, kind, self.patterns, self.page)
+            AutoRuleOffenseSelect(
+                cog, guild, kind, self.patterns, self.trigger_count, self.page
+            )
         )
         self.previous_btn.disabled = self.page <= 0
         self.next_btn.disabled = self.page >= self.pages - 1
@@ -1150,7 +1171,8 @@ class AutoRuleOffenseView(OwnerOnlyPrisonView):
     async def previous_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.edit_message(
             view=AutoRuleOffenseView(
-                self.cog, self.guild, self.kind, self.patterns, self.page - 1
+                self.cog, self.guild, self.kind, self.patterns,
+                self.trigger_count, self.page - 1
             )
         )
 
@@ -1158,7 +1180,8 @@ class AutoRuleOffenseView(OwnerOnlyPrisonView):
     async def next_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.edit_message(
             view=AutoRuleOffenseView(
-                self.cog, self.guild, self.kind, self.patterns, self.page + 1
+                self.cog, self.guild, self.kind, self.patterns,
+                self.trigger_count, self.page + 1
             )
         )
 
@@ -1178,7 +1201,15 @@ class AutoRulePatternModal(discord.ui.Modal):
             required=True,
             max_length=120 if kind == "word" else 253,
         )
+        self.count_input = discord.ui.TextInput(
+            label=f"عدد الخروقات حتى العقوبة ({AUTO_RULE_TRIGGER_MIN}-{AUTO_RULE_TRIGGER_MAX})",
+            placeholder="مثال: 4 = 3 تحذيرات والعقوبة فالرابعة",
+            default="1",
+            required=True,
+            max_length=3,
+        )
         self.add_item(self.pattern_input)
+        self.add_item(self.count_input)
 
     async def on_submit(self, interaction: discord.Interaction):
         if not _is_owner(interaction):
@@ -1189,9 +1220,16 @@ class AutoRulePatternModal(discord.ui.Modal):
         if not pattern:
             await _deny(interaction, "❌ القيمة ماشي صالحة. راجعها وعاود جرّب.")
             return
+        try:
+            trigger_count = _trigger_count_value(self.count_input.value)
+        except ValueError as exc:
+            await _deny(interaction, f"❌ {exc}")
+            return
         await interaction.response.send_message(
-            f"⚖️ دابا اختار العقوبة ديال **{pattern}**:",
-            view=AutoRuleOffenseView(cog, interaction.guild, self.kind, [pattern]),
+            f"⚖️ دابا اختار العقوبة ديال **{pattern}** من المرة **{trigger_count}**:",
+            view=AutoRuleOffenseView(
+                cog, interaction.guild, self.kind, [pattern], trigger_count
+            ),
             ephemeral=True,
         )
 
@@ -1206,7 +1244,15 @@ class BulkWordRulesModal(discord.ui.Modal, title="📝 إضافة كلمات و�
             max_length=4000,
             style=discord.TextStyle.paragraph,
         )
+        self.count_input = discord.ui.TextInput(
+            label=f"عدد الخروقات حتى العقوبة ({AUTO_RULE_TRIGGER_MIN}-{AUTO_RULE_TRIGGER_MAX})",
+            placeholder="مثال: 4 — نفس العدد للكلمات كاملة",
+            default="1",
+            required=True,
+            max_length=3,
+        )
         self.add_item(self.words_input)
+        self.add_item(self.count_input)
 
     async def on_submit(self, interaction: discord.Interaction):
         if not _is_owner(interaction):
@@ -1223,11 +1269,54 @@ class BulkWordRulesModal(discord.ui.Modal, title="📝 إضافة كلمات و�
         if not patterns:
             await _deny(interaction, "❌ ما لقيت حتى كلمة ولا عبارة صالحة.")
             return
+        try:
+            trigger_count = _trigger_count_value(self.count_input.value)
+        except ValueError as exc:
+            await _deny(interaction, f"❌ {exc}")
+            return
         cog = _cog(interaction)
         await interaction.response.send_message(
-            f"✅ تقراو **{len(patterns)}** كلمات/عبارات. دابا اختار الحكم اللي غادي يطبق عليهم كاملين:",
-            view=AutoRuleOffenseView(cog, interaction.guild, "word", patterns),
+            f"✅ تقراو **{len(patterns)}** كلمات/عبارات. اختار الحكم اللي غادي "
+            f"يطبق عليهم من المرة **{trigger_count}**:",
+            view=AutoRuleOffenseView(
+                cog, interaction.guild, "word", patterns, trigger_count
+            ),
             ephemeral=True,
+        )
+
+
+class AutoActionThresholdModal(discord.ui.Modal, title="🔢 تحذيرات الفعل الممنوع"):
+    def __init__(self, action: str):
+        super().__init__()
+        self.action = action
+        self.count_input = discord.ui.TextInput(
+            label=f"عدد الخروقات حتى العقوبة ({AUTO_RULE_TRIGGER_MIN}-{AUTO_RULE_TRIGGER_MAX})",
+            placeholder="مثال: 4 = 3 تحذيرات والعقوبة فالرابعة",
+            default="1",
+            required=True,
+            max_length=3,
+        )
+        self.add_item(self.count_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if not _is_owner(interaction):
+            await _deny(interaction, "❌ هاد الإعدادات ديال Owner بوحدو.")
+            return
+        try:
+            trigger_count = _trigger_count_value(self.count_input.value)
+        except ValueError as exc:
+            await _deny(interaction, f"❌ {exc}")
+            return
+        cog = _cog(interaction)
+        await interaction.response.edit_message(
+            content=(
+                f"⚖️ اختار العقوبة ديال **{AUTO_ACTION_LABELS[self.action]}**؛ "
+                f"غتطبق فالخرق **{trigger_count}**."
+            ),
+            embed=None,
+            view=AutoRuleOffenseView(
+                cog, interaction.guild, "action", [self.action], trigger_count
+            ),
         )
 
 
@@ -1242,13 +1331,8 @@ class AutoActionSelect(discord.ui.Select):
         )
 
     async def callback(self, interaction: discord.Interaction):
-        cog = _cog(interaction)
         action = self.values[0]
-        await interaction.response.edit_message(
-            content=f"⚖️ اختار العقوبة ديال **{AUTO_ACTION_LABELS[action]}**:",
-            embed=None,
-            view=AutoRuleOffenseView(cog, interaction.guild, "action", [action]),
-        )
+        await interaction.response.send_modal(AutoActionThresholdModal(action))
 
 
 class AutoActionView(OwnerOnlyPrisonView):
@@ -1294,7 +1378,8 @@ class AutoRuleManageSelect(discord.ui.Select):
                 f"**النوع:** {AUTO_RULE_KIND_LABELS.get(rule.get('kind'), 'قاعدة')}\n"
                 f"**القيمة:** `{_auto_rule_subject(rule)}`\n"
                 f"**الحالة:** {'🟢 مفعّل' if rule.get('enabled', True) else '⚫ موقوف'}\n"
-                f"**تنفيذ الحكم:** من المرة **{int(rule.get('trigger_count', 1) or 1)}** لكل عضو\n"
+                f"**تنفيذ الحكم:** فالخرق **{int(rule.get('trigger_count', 1) or 1)}** لكل عضو "
+                f"(قبلها {max(0, int(rule.get('trigger_count', 1) or 1) - 1)} تحذيرات)\n"
                 f"**العقوبة:** {offense['label']} — {format_duration(int(offense['seconds']))} "
                 f"فـ `{offense.get('cell', 'holding')}`"
             ),
@@ -1352,8 +1437,8 @@ class AutoRuleThresholdModal(discord.ui.Modal, title="🔢 عدد التكرار
         self.rule_id = str(rule_id)
         self.page = int(page)
         self.count_input = discord.ui.TextInput(
-            label=f"من أي مرة يطبق الحكم؟ ({AUTO_RULE_TRIGGER_MIN}-{AUTO_RULE_TRIGGER_MAX})",
-            placeholder="مثال: 2 أو 4 أو 6 أو 10",
+            label=f"عدد الخروقات حتى العقوبة ({AUTO_RULE_TRIGGER_MIN}-{AUTO_RULE_TRIGGER_MAX})",
+            placeholder="مثال: 4 = 3 تحذيرات والعقوبة فالرابعة",
             default=str(int(current)),
             required=True,
             min_length=1,
@@ -1384,11 +1469,13 @@ class AutoRuleThresholdModal(discord.ui.Modal, title="🔢 عدد التكرار
         await interaction.response.edit_message(
             content=(
                 f"✅ القانون **#{self.rule_id}** غادي يطبق الحكم من المرة "
-                f"**{count}** لكل Discord ID. العداد القديم ديالو تصفر."
+                f"**{count}** لكل Discord ID؛ قبلها كيوصلو **{max(0, count - 1)}** "
+                "تحذيرات. العداد القديم ديالو تصفر."
             ),
             embed=None,
             view=AutoRuleManageView(cog, interaction.guild, self.page),
         )
+        await cog.refresh_rule_surfaces(interaction.guild)
 
 
 class AutoRuleChangeOffenseSelect(discord.ui.Select):
@@ -1432,6 +1519,7 @@ class AutoRuleChangeOffenseSelect(discord.ui.Select):
             embed=None,
             view=AutoRuleManageView(cog, interaction.guild),
         )
+        await cog.refresh_rule_surfaces(interaction.guild)
 
 
 class AutoRuleChangeOffenseView(OwnerOnlyPrisonView):
@@ -1473,6 +1561,106 @@ class AutoRuleChangeOffenseView(OwnerOnlyPrisonView):
         )
 
 
+class AutoRulePenaltyDurationModal(discord.ui.Modal, title="⚖️ الحكم والمدة والزنزانة"):
+    def __init__(self, rule_id: str, page: int, offense_key: str, entry: dict):
+        super().__init__()
+        self.rule_id = str(rule_id)
+        self.page = int(page)
+        self.offense_key = str(offense_key)
+        self.label_input = discord.ui.TextInput(
+            label="اسم الحكم", default=str(entry.get("label", "")), max_length=80
+        )
+        self.duration_input = discord.ui.TextInput(
+            label="مدة السجن (30m / 12h / 7d / perm)",
+            default=_seconds_to_text(int(entry.get("seconds", 3600))),
+            max_length=32,
+        )
+        self.cell_input = discord.ui.TextInput(
+            label="الزنزانة (holding / block / max)",
+            default=str(entry.get("cell", "holding")),
+            max_length=16,
+        )
+        self.add_item(self.label_input)
+        self.add_item(self.duration_input)
+        self.add_item(self.cell_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if not _is_owner(interaction):
+            await _deny(interaction, "❌ هاد الإعدادات ديال Owner بوحدو.")
+            return
+        seconds = parse_duration(str(self.duration_input.value))
+        cell = str(self.cell_input.value).strip().lower()
+        if seconds is None:
+            await _deny(interaction, "❌ المدة ماشي صالحة.")
+            return
+        if cell not in CELL_KEYS:
+            await _deny(interaction, f"❌ الزنزانة خاصها تكون: {', '.join(CELL_KEYS)}")
+            return
+        cog = _cog(interaction)
+        try:
+            entry = cog.store.set_offense(
+                interaction.guild.id,
+                self.offense_key,
+                label=str(self.label_input.value).strip(),
+                seconds=seconds,
+                cell=cell,
+            )
+        except ValueError as exc:
+            await _deny(interaction, f"❌ {exc}")
+            return
+        await interaction.response.edit_message(
+            content=(
+                f"✅ الحكم المرتبط بالقانون **#{self.rule_id}** تحدث: "
+                f"**{entry['label']}** — {format_duration(int(entry['seconds']))} "
+                f"فـ `{entry.get('cell', 'holding')}`."
+            ),
+            embed=None,
+            view=AutoRuleManageView(cog, interaction.guild, self.page),
+        )
+        await cog.refresh_rule_surfaces(interaction.guild)
+
+
+class AutoRulePenaltyView(OwnerOnlyPrisonView):
+    def __init__(self, cog, guild: discord.Guild, rule_id: str, page: int = 0):
+        super().__init__()
+        self.cog = cog
+        self.guild = guild
+        self.rule_id = str(rule_id)
+        self.page = int(page)
+
+    @discord.ui.button(label="تعديل المدة والزنزانة", emoji="⏳", style=discord.ButtonStyle.primary)
+    async def duration_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        rule = self.cog.store.auto_rule(interaction.guild.id, self.rule_id)
+        if rule is None:
+            await _deny(interaction, "❌ هاد القانون تمسح من قبل.")
+            return
+        offense_key = str(rule.get("offense", "manual"))
+        entry = self.cog.store.offense(interaction.guild.id, offense_key)
+        await interaction.response.send_modal(
+            AutoRulePenaltyDurationModal(
+                self.rule_id, self.page, offense_key, entry
+            )
+        )
+
+    @discord.ui.button(label="بدل الحكم", emoji="⚖️", style=discord.ButtonStyle.secondary)
+    async def change_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            content=f"⚖️ اختار الحكم الجديد للقانون **#{self.rule_id}**:",
+            embed=None,
+            view=AutoRuleChangeOffenseView(
+                self.cog, interaction.guild, self.rule_id
+            ),
+        )
+
+    @discord.ui.button(label="رجوع للقانون", emoji="↩️", style=discord.ButtonStyle.secondary)
+    async def back_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            content="🧰 اختار القانون:",
+            embed=None,
+            view=AutoRuleManageView(self.cog, interaction.guild, self.page),
+        )
+
+
 class AutoRuleSelectedView(OwnerOnlyPrisonView):
     def __init__(self, cog, guild: discord.Guild, rule_id: str, page: int = 0):
         super().__init__()
@@ -1481,7 +1669,7 @@ class AutoRuleSelectedView(OwnerOnlyPrisonView):
         self.rule_id = str(rule_id)
         self.page = page
 
-    @discord.ui.button(label="عدد التكرارات", emoji="🔢", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="عدد التحذيرات", emoji="🔢", style=discord.ButtonStyle.primary)
     async def threshold_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         rule = self.cog.store.auto_rule(interaction.guild.id, self.rule_id)
         if rule is None:
@@ -1495,13 +1683,25 @@ class AutoRuleSelectedView(OwnerOnlyPrisonView):
             )
         )
 
-    @discord.ui.button(label="بدل الحكم", emoji="⚖️", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="الحكم والمدة", emoji="⚖️", style=discord.ButtonStyle.primary)
     async def offense_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        rule = self.cog.store.auto_rule(interaction.guild.id, self.rule_id)
+        if rule is None:
+            await _deny(interaction, "❌ هاد القانون تمسح من قبل.")
+            return
+        offense = self.cog.store.offense(
+            interaction.guild.id, str(rule.get("offense", "manual"))
+        )
         await interaction.response.edit_message(
-            content=f"⚖️ اختار الحكم الجديد للقانون **#{self.rule_id}**:",
+            content=(
+                f"⚖️ **{offense['label']}** — {format_duration(int(offense['seconds']))} "
+                f"فـ `{offense.get('cell', 'holding')}`\n"
+                "تقدر تبدل الحكم كامل، أو تعدل مدتو وزنزانتو من هنا. "
+                "إلا كان نفس الحكم مربوط بقوانين أخرى غيتحدث عندهم كاملين."
+            ),
             embed=None,
-            view=AutoRuleChangeOffenseView(
-                self.cog, interaction.guild, self.rule_id
+            view=AutoRulePenaltyView(
+                self.cog, interaction.guild, self.rule_id, self.page
             ),
         )
 
@@ -1516,6 +1716,7 @@ class AutoRuleSelectedView(OwnerOnlyPrisonView):
             embed=None,
             view=AutoRuleManageView(self.cog, interaction.guild, self.page),
         )
+        await self.cog.refresh_rule_surfaces(interaction.guild)
 
     @discord.ui.button(label="مسح نهائي", emoji="🗑️", style=discord.ButtonStyle.danger)
     async def delete_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -1533,6 +1734,7 @@ class AutoRuleSelectedView(OwnerOnlyPrisonView):
                 else AutoRulesHomeView(self.cog, interaction.guild)
             ),
         )
+        await self.cog.refresh_rule_surfaces(interaction.guild)
 
     @discord.ui.button(label="رجوع", emoji="↩️", style=discord.ButtonStyle.secondary)
     async def back_btn(self, interaction: discord.Interaction, button: discord.ui.Button):

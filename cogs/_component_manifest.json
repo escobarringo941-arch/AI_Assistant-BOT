@@ -1,6 +1,6 @@
 {
   "description": "Hashes lock the reviewed component bytes and execution order; intentional feature revisions update this baseline.",
-  "joined_sha256": "b5301973b1c88cf64f70c0b63886fbd29691a66f3039e5b7ce317cc7291d5441",
+  "joined_sha256": "251b2fffe21337523d8215b55176184cb907285f47c325a547f097defc5adb7f",
   "events_before_setup_hook": [
     "on_voice_state_update",
     "on_member_join",
@@ -51,7 +51,7 @@
       "path": "cogs/settings_storage.py",
       "original_start_line": 2057,
       "original_end_line": 2432,
-      "sha256": "c61e718ea3e58c36e1c0c2f8e1d05832f4eacc30a702708a29aad7b0e8e5d240"
+      "sha256": "c7540ca9a91f1b3a91ff83025344c4fbf2056843f7ee8e501f7491797ecfe3fb"
     },
     {
       "name": "ai_conversation",
@@ -79,7 +79,7 @@
       "path": "cogs/access_panels.py",
       "original_start_line": 3522,
       "original_end_line": 4289,
-      "sha256": "45107fd0256e47a51575e9a7e5b3b6113450325eb2196083eeaa762c17771f29"
+      "sha256": "40e3d5e4bb8d61aa1b223b91fad99768a0731a600cfaf2f7ab61907b69bda1a7"
     },
     {
       "name": "support_system",
@@ -149,7 +149,7 @@
       "path": "cogs/member_events.py",
       "original_start_line": 8843,
       "original_end_line": 9431,
-      "sha256": "bce5a9cf68186522e8a53d7ca685433cd7b91ff5611789d852e47a97b657c477"
+      "sha256": "97b11005d83c8ed1b745d7ccaef20e1d76dba19bec415864ea0c7d04875f8740"
     },
     {
       "name": "moderation_commands",
@@ -205,7 +205,7 @@
       "path": "cogs/automation_tasks.py",
       "original_start_line": 12021,
       "original_end_line": 12455,
-      "sha256": "e2663c0616d6a100c18562f7b04caae2b7508b1b570fa42e391a7408a32ce062"
+      "sha256": "62193c330087ce104159b621225bb2b56748a7bb84df427fca198e460564d552"
     },
     {
       "name": "owner_control",

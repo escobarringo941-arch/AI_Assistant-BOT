@@ -68,6 +68,7 @@ from cogs.prison_core import (
 # ═══════════════════════════════════════════════════════
 
 REASON_TAG = "GGMW9 Prison System"
+OWNER_RULE_CATALOG_VERSION = "2026-08-owner-rules-v1"
 
 # ═══════ التصعيد الأوتوماتيكي للزنازن (Auto-Escalation) ═══════
 # إلا سبام السجين ولا كتب حوايج ممنوعة وهو دايما فزنزانتو، البوت كيديه
@@ -1279,6 +1280,65 @@ class PrisonSystem(commands.Cog):
             lock = asyncio.Lock()
             self._complaint_locks[key] = lock
         return lock
+
+    def ensure_owner_rule_catalog(self, guild: discord.Guild) -> bool:
+        """Migration مرة وحدة: Auto-Mod القديم كيدخل للوحة الـOwner كمصدر واحد."""
+        guild_record = self.store.guild(guild.id)
+        if guild_record.get("owner_rule_catalog_version") == OWNER_RULE_CATALOG_VERSION:
+            return False
+
+        bridge = getattr(self.bot, "gg", {}) or {}
+        get_words = bridge.get("get_active_banned_words")
+        legacy_words = list(get_words() if callable(get_words) else [])
+        legacy_words.extend(list(bridge.get("BANNED_ACTIONS") or []))
+
+        grouped = {"spam": [], "links": [], "nsfw": [], "insult": []}
+        for raw in legacy_words:
+            pattern = normalize_auto_rule_pattern("word", raw)
+            if not pattern:
+                continue
+            lowered = pattern.casefold()
+            if "discord.gg" in lowered or "discord.com/invite" in lowered:
+                grouped["links"].append(pattern)
+            elif any(token in lowered for token in ("porn", "xxx", "nude", "naked", "sex")):
+                grouped["nsfw"].append(pattern)
+            elif lowered in {"spam", "سبام"}:
+                grouped["spam"].append(pattern)
+            else:
+                grouped["insult"].append(pattern)
+
+        changed = False
+        for offense_key, patterns in grouped.items():
+            if not patterns:
+                continue
+            result = self.store.add_auto_rules_bulk(
+                guild.id,
+                kind="word",
+                patterns=patterns,
+                offense_key=offense_key,
+                trigger_count=1,
+            )
+            changed = bool(result.get("created")) or changed
+
+        for action, offense_key in (
+            ("message_spam", "spam"),
+            ("discord_invite", "links"),
+            ("mass_mentions", "spam"),
+            ("caps_spam", "spam"),
+            ("emoji_spam", "spam"),
+        ):
+            result = self.store.add_auto_rules_bulk(
+                guild.id,
+                kind="action",
+                patterns=[action],
+                offense_key=offense_key,
+                trigger_count=1,
+            )
+            changed = bool(result.get("created")) or changed
+
+        guild_record["owner_rule_catalog_version"] = OWNER_RULE_CATALOG_VERSION
+        self.store.save()
+        return changed
 
     @staticmethod
     def is_server_owner(user: Optional[discord.abc.User], guild: Optional[discord.Guild]) -> bool:
@@ -2979,6 +3039,47 @@ class PrisonSystem(commands.Cog):
                 matches.append(rule)
         return matches
 
+    def message_is_governed_by_owner_rules(self, message: discord.Message) -> bool:
+        """كيمنع Auto-Mod القديم يطبق حكم ثاني فوق قانون الـOwner.
+
+        هاد الفحص ما كيبدل حتى عداد. Rule ديال message_spam كيتعتبر هو
+        المسؤول على قياس السبام كامل، وباقي الأنواع كيتفحصو على نفس الرسالة.
+        """
+        rules = [
+            rule
+            for rule in self.store.auto_rules(message.guild.id).values()
+            if bool(rule.get("enabled", True))
+        ]
+        if not rules:
+            return False
+
+        content = message.content or ""
+        domains: Optional[set[str]] = None
+        requested_actions = {
+            str(rule.get("pattern", ""))
+            for rule in rules
+            if rule.get("kind") == "action"
+        }
+        if "message_spam" in requested_actions:
+            return True
+        actions = self._detected_auto_actions(
+            message, requested_actions - {"message_spam"}
+        )
+
+        for rule in rules:
+            kind = rule.get("kind")
+            pattern = str(rule.get("pattern", ""))
+            if kind == "word" and self._word_rule_matches(content, pattern):
+                return True
+            if kind == "domain":
+                if domains is None:
+                    domains = self._message_domains(content)
+                if any(domain == pattern or domain.endswith(f".{pattern}") for domain in domains):
+                    return True
+            if kind == "action" and pattern in actions:
+                return True
+        return False
+
     @staticmethod
     def _auto_rule_reason(rule: dict) -> str:
         kind = rule.get("kind")
@@ -4561,7 +4662,10 @@ class PrisonSystem(commands.Cog):
             await self._clear_solitary_member_blackout(guild, member)
         # إلا سالا الحكم الأصلي فنفس اللحظة، ما نرجعوش السجين ولو لثانية
         # للزنزانة العادية قبل مسار الإفراج الكامل.
-        if restore_cell and record is not None and remaining_seconds(record) == 0:
+        sentence_expired = bool(
+            restore_cell and record is not None and remaining_seconds(record) == 0
+        )
+        if sentence_expired:
             restore_cell = False
         if restore_cell and member is not None and record is not None:
             record.pop("solitary_message_id", None)
@@ -4616,6 +4720,18 @@ class PrisonSystem(commands.Cog):
             except (discord.Forbidden, discord.HTTPException, discord.NotFound):
                 pass
 
+        released_from_prison = False
+        prison_release_error = ""
+        if sentence_expired:
+            release_result = await self.release(
+                guild,
+                user_id,
+                reason="سالا الحكم الأصلي أثناء الحبس الانفرادي",
+                actor=None,
+            )
+            released_from_prison = bool(release_result.get("ok"))
+            prison_release_error = str(release_result.get("error", ""))
+
         embed = discord.Embed(
             title="🔓 نهاية الحبس الانفرادي",
             description=(member.mention if member else f"<@{user_id}>") + f" — {reason}",
@@ -4623,7 +4739,11 @@ class PrisonSystem(commands.Cog):
             timestamp=datetime.now(),
         )
         await self._log(guild, embed)
-        return {"ok": True}
+        return {
+            "ok": True,
+            "released_from_prison": released_from_prison,
+            "prison_release_error": prison_release_error,
+        }
 
     # ═══════════════════════════════════════════════════
     # ║             5أ. بانلات التدخل فالزنازن             ║
@@ -5229,6 +5349,30 @@ class PrisonSystem(commands.Cog):
         except (discord.Forbidden, discord.HTTPException):
             pass
 
+    async def refresh_rule_surfaces(self, guild: discord.Guild) -> None:
+        """مصدر واحد: Prison Code + Blacklist كيتحدثو بعد أي تبديل من الـOwner."""
+        await self.publish_prison_code(guild)
+        refresh_blacklist = (getattr(self.bot, "gg", {}) or {}).get(
+            "setup_blacklist_message"
+        )
+        if callable(refresh_blacklist):
+            try:
+                await refresh_blacklist(guild)
+            except Exception as exc:
+                print(
+                    f"[PRISON-RULES] ⚠️ تبدلات الداتا ولكن Blacklist ما تحدثاتش: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+        refresh_rules = (getattr(self.bot, "gg", {}) or {}).get("setup_rules_message")
+        if callable(refresh_rules):
+            try:
+                await refresh_rules(guild)
+            except Exception as exc:
+                print(
+                    f"[PRISON-RULES] ⚠️ تبدلات الداتا ولكن Rules ما تحدثاتش: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+
     def board_embed(self, guild: discord.Guild) -> discord.Embed:
         inmates = self.store.inmates(guild.id)
         embed = discord.Embed(
@@ -5534,6 +5678,9 @@ class PrisonSystem(commands.Cog):
         self._ready_done = True
         for guild in self.bot.guilds:
             try:
+                catalogue_changed = self.ensure_owner_rule_catalog(guild)
+                if catalogue_changed:
+                    await self.refresh_rule_surfaces(guild)
                 if self.prisoner_role(guild) is None:
                     continue  # ما تصاوبش عاد — كيستنا Setup من بانل الاونر
                 await self.hide_everywhere(guild)

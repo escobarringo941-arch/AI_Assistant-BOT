@@ -248,6 +248,11 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         )
         if guild and guild.icon:
             embed.set_thumbnail(url=guild.icon.url)
+        live_prison_rules = _owner_prison_rules_blacklist_field(guild, lang)
+        if live_prison_rules is not None:
+            embed.add_field(
+                name=live_prison_rules[0], value=live_prison_rules[1], inline=False
+            )
         embed.set_footer(text=footer)
         return embed
     
@@ -555,6 +560,11 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             timestamp=datetime.now()
         )
         embed.set_thumbnail(url=guild.icon.url if guild.icon else None)
+        live_prison_rules = _owner_prison_rules_blacklist_field(guild, "darija")
+        if live_prison_rules is not None:
+            embed.add_field(
+                name=live_prison_rules[0], value=live_prison_rules[1], inline=False
+            )
         embed.set_footer(text="GGMW9 | القوانين والتفعيل • الدارجة هي الأساسية")
         message = await upsert_fixed_panel(
             bot,
@@ -576,7 +586,58 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         return message is not None
     
     
-    def _build_blacklist_embed(lang: str = "darija") -> discord.Embed:
+    def _owner_prison_rules_blacklist_field(guild: discord.Guild, lang: str):
+        """ملخص حي من نفس PrisonStore؛ ما كايناش أرقام منسوخة فـBlacklist."""
+        prison_cog = bot.get_cog("PrisonSystem") if guild is not None else None
+        if prison_cog is None:
+            return None
+        from cogs.prison_core import AUTO_ACTION_LABELS, format_duration
+
+        rules = [
+            rule for rule in prison_cog.store.auto_rules(guild.id).values()
+            if bool(rule.get("enabled", True))
+        ]
+        rules.sort(key=lambda item: int(item.get("id", 0) or 0))
+        if not rules:
+            return None
+
+        titles = {
+            "darija": "🔗 قوانين الـOwner المرتبطة بالسجن (مباشرة)",
+            "en": "🔗 Owner Prison Rules (Live)",
+            "fr": "🔗 Règles Prison du Owner (Direct)",
+        }
+        more_templates = {
+            "darija": "… وزيد **{count}** قوانين؛ اللائحة الكاملة فـ Prison Code/Owner Panel.",
+            "en": "… plus **{count}** rules; the full list is in Prison Code/Owner Panel.",
+            "fr": "… plus **{count}** règles ; liste complète dans Prison Code/Owner Panel.",
+        }
+        lines = []
+        hidden = 0
+        for rule in rules:
+            offense = prison_cog.store.offense(
+                guild.id, str(rule.get("offense", "manual"))
+            )
+            subject = str(rule.get("pattern", ""))
+            if rule.get("kind") == "action":
+                subject = AUTO_ACTION_LABELS.get(subject, subject)
+            line = (
+                f"• `{subject[:45]}` ×**{int(rule.get('trigger_count', 1) or 1)}** "
+                f"→ **{offense.get('label', '—')}** "
+                f"({format_duration(int(offense.get('seconds', 3600)))}, "
+                f"{offense.get('cell', 'holding')})"
+            )
+            if len("\n".join([*lines, line])) > 870:
+                hidden += 1
+                continue
+            lines.append(line)
+        if hidden:
+            lines.append(more_templates[lang].format(count=hidden))
+        return titles[lang], "\n".join(lines)
+
+
+    def _build_blacklist_embed(
+        lang: str = "darija", guild: Optional[discord.Guild] = None
+    ) -> discord.Embed:
         """Same Blacklist content in 3 languages.
     
         The shared channel message is ALWAYS Darija. EN/FR are rendered only in a
@@ -602,7 +663,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                 ("3️⃣ Contenu +18 / Violent / Choquant", "**Interdit :** images/vidéos/liens à caractère sexuel, contenu violent explicite (sang, torture...), scènes choquantes.\n**Exemple :** envoyer une image/un lien à caractère sexuel même « pour rire » → **bannissement immédiat, sans avertissement**."),
                 ("4️⃣ Vie privée (Doxxing)", "**Interdit :** publier un numéro de téléphone, une adresse, des photos personnelles, ou toute information identifiant quelqu'un sans son consentement.\n**Exemple :** publier une capture d'écran contenant le numéro d'un autre membre → **bannissement immédiat**."),
                 ("5️⃣ Mauvaise utilisation des salons", "**Interdit :** discuter hors sujet dans un salon dédié (ex. discussion informelle dans #announcements).\n**Exemple :** poster un mème dans le salon d'actualités officiel → message supprimé + rappel."),
-                ("⚖️ Sanctions progressives", f"1️⃣ **Avertissement** — chaque infraction légère déclenche un avertissement automatique\n2️⃣ **Mute** — à {bot_settings['mute_after_warns']} avertissements ({bot_settings['mute_duration_minutes']} min), ou après {SPAM_THRESHOLD} messages en {SPAM_INTERVAL}s (spam)\n3️⃣ **Kick** — à {bot_settings['kick_after_warns']} avertissements\n4️⃣ **Ban** — à {bot_settings['ban_after_warns']} avertissements, ou immédiatement en cas de doxxing/contenu +18/menace grave"),
+                ("⚖️ Sanctions progressives", f"1️⃣ **Avertissement** — chaque infraction légère déclenche un avertissement automatique\n2️⃣ **Mute** — à {bot_settings['mute_after_warns']} avertissements ({bot_settings['mute_duration_minutes']} min)\n3️⃣ **Kick** — à {bot_settings['kick_after_warns']} avertissements\n4️⃣ **Ban** — à {bot_settings['ban_after_warns']} avertissements, ou immédiatement en cas de doxxing/contenu +18/menace grave\n🔗 Les seuils de spam, liens, mots et actions sont toujours ceux de la liste dynamique ci-dessous."),
             ]
             if REPORTS_CHANNEL_ID:
                 fields.append(("🚨 Comment signaler une infraction", "Utilise le **Support Center** du serveur : choisis **Signaler un membre** pour une personne précise ou **Signalement général** pour un problème global. Les signalements sont privés et envoyés directement au staff."))
@@ -625,7 +686,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                 ("3️⃣ NSFW / Violent / Shocking Content", "**Forbidden:** sexual images/videos/links, explicit violent content (blood, torture...), shocking scenes.\n**Example:** sending sexual content even as a 'joke' → **immediate ban, no warning**."),
                 ("4️⃣ Privacy (Doxxing)", "**Forbidden:** sharing a phone number, address, personal photos, or any identifying information about someone without their consent.\n**Example:** posting a screenshot showing another member's phone number → **immediate ban**."),
                 ("5️⃣ Misusing Channels", "**Forbidden:** off-topic chat in a dedicated channel (e.g. casual talk in #announcements).\n**Example:** posting a meme in the official news channel → message deleted + reminder."),
-                ("⚖️ Escalating Penalties", f"1️⃣ **Warning** — every minor offense triggers an automatic warning\n2️⃣ **Mute** — at {bot_settings['mute_after_warns']} warnings ({bot_settings['mute_duration_minutes']} minutes), or after {SPAM_THRESHOLD} messages in {SPAM_INTERVAL}s (spam)\n3️⃣ **Kick** — upon reaching {bot_settings['kick_after_warns']} warnings\n4️⃣ **Ban** — upon reaching {bot_settings['ban_after_warns']} warnings, or immediately for doxxing/NSFW content/serious threats"),
+                ("⚖️ Escalating Penalties", f"1️⃣ **Warning** — every minor offense triggers an automatic warning\n2️⃣ **Mute** — at {bot_settings['mute_after_warns']} warnings ({bot_settings['mute_duration_minutes']} minutes)\n3️⃣ **Kick** — upon reaching {bot_settings['kick_after_warns']} warnings\n4️⃣ **Ban** — upon reaching {bot_settings['ban_after_warns']} warnings, or immediately for doxxing/NSFW content/serious threats\n🔗 Spam, link, word and action thresholds always use the live Owner rules below."),
             ]
             if REPORTS_CHANNEL_ID:
                 fields.append(("🚨 How to report a violation", "Use the server **Support Center**: choose **Report member** for a specific person or **General report** for a broader issue. Reports are private and go directly to staff."))
@@ -648,13 +709,17 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                 ("3️⃣ محتوى +18 / عنيف / صادم", "**ممنوع:** صور/فيديوهات/روابط جنسية، محتوى عنيف صريح (دم، تعذيب...)، مشاهد صادمة.\n**مثال:** بعثتي صورة/رابط فيه محتوى جنسي حتى بشكل 'مزحة' → **حظر مباشر بلا تحذير**."),
                 ("4️⃣ الخصوصية ونشر المعلومات الشخصية", "**ممنوع:** نشر رقم تيليفون، عنوان، صور شخصية، ولا أي معلومة كتعرف بشخص آخر بلا إذنو.\n**مثال:** نشرتي سكرين شوت فيه رقم ديال عضو آخر → **حظر مباشر**."),
                 ("5️⃣ استعمال القنوات بطريقة غالطة", "**ممنوع:** الهضرة خارج الموضوع فقناة مخصصة (مثلاً هضرة عادية فقناة الإعلانات).\n**مثال:** كتبتي ميم فقناة الأخبار الرسمية → مسح الرسالة + تنبيه."),
-                ("⚖️ العقوبات المتدرجة", f"1️⃣ **تحذير** — كل مخالفة خفيفة كتبان تحذير أوتوماتيكي\n2️⃣ **كتم** — عند {bot_settings['mute_after_warns']} تحذيرات ({bot_settings['mute_duration_minutes']} دقيقة)، ولا إلا بعتي {SPAM_THRESHOLD} رسايل فـ {SPAM_INTERVAL} ثواني (سبام)\n3️⃣ **طرد** — عند الوصول لـ {bot_settings['kick_after_warns']} تحذيرات\n4️⃣ **حظر** — عند الوصول لـ {bot_settings['ban_after_warns']} تحذيرات، ولا مباشرة فحالة نشر معلومات شخصية/محتوى +18/تهديد خطير"),
+                ("⚖️ العقوبات المتدرجة", f"1️⃣ **تحذير** — كل مخالفة خفيفة كتبان تحذير أوتوماتيكي\n2️⃣ **كتم** — عند {bot_settings['mute_after_warns']} تحذيرات ({bot_settings['mute_duration_minutes']} دقيقة)\n3️⃣ **طرد** — عند الوصول لـ {bot_settings['kick_after_warns']} تحذيرات\n4️⃣ **حظر** — عند الوصول لـ {bot_settings['ban_after_warns']} تحذيرات، ولا مباشرة فحالة نشر معلومات شخصية/محتوى +18/تهديد خطير\n🔗 عدد مرات السبام والروابط والكلمات والأفعال كيتقرا دائماً من قوانين الـOwner الحية لتحت."),
             ]
             if REPORTS_CHANNEL_ID:
                 # Keep the public guide practical with the unified Support Center.
                 fields.append(("🚨 كيفاش تبلغ عن مخالفة", "دخل لـ **مركز المساعدة** واختار **بلغ على عضو** إلا كان البلاغ على شخص محدد، أو **بلاغ عام** إلا كان مشكل عام. البلاغ كيمشي مباشرة للإدارة وبشكل خاص."))
             footer = "GGMW9 | نظام المراقبة والعقوبات الأوتوماتيكي"
     
+        live_prison_rules = _owner_prison_rules_blacklist_field(guild, lang)
+        if live_prison_rules is not None:
+            fields.append(live_prison_rules)
+
         for name, value in fields:
             embed.add_field(name=name, value=value, inline=False)
         embed.set_footer(text=footer)
@@ -683,7 +748,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             lang = set_panel_language(interaction.guild.id if interaction.guild else 0, interaction.user.id, self.values[0])
             await interaction.response.edit_message(
                 content=None,
-                embed=_build_blacklist_embed(lang),
+                embed=_build_blacklist_embed(lang, interaction.guild),
                 view=BlacklistPrivateLanguageView(interaction.user.id, lang),
             )
     
@@ -719,7 +784,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             )
             # Always create a fresh private translation. Dismiss never poisons the public selector.
             await interaction.response.send_message(
-                embed=_build_blacklist_embed(lang),
+                embed=_build_blacklist_embed(lang, interaction.guild),
                 view=BlacklistPrivateLanguageView(interaction.user.id, lang),
                 ephemeral=True,
             )
@@ -755,7 +820,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                 )
             ),
             content=None,
-            embed=_build_blacklist_embed("darija"),
+            embed=_build_blacklist_embed("darija", guild),
             view=BlacklistLanguageView("darija"),
             history_limit=None,
         )
