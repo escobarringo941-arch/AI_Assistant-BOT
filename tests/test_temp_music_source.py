@@ -22,7 +22,6 @@ EXPECTED_CORE_ORDER = (
 EXPECTED_LOOPS = (
     "afk_auto_move_loop",
     "update_relationship_lists",
-    "birthday_loop",
     "temp_voice_housekeeping_loop",
     "voice_xp_loop",
     "update_leaderboard",

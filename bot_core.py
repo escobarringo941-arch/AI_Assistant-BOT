@@ -236,9 +236,11 @@ APPLICATIONS_REVIEWER_ROLE_IDS = [
 SUGGESTIONS_CHANNEL_ID = 1532913868509155358            # ← حط هنا ID ديال channel فين كيتبعثو الاقتراحات
 
 # ═══════ نظام Birthdays (أعياد الميلاد) ═══════
-BIRTHDAY_ANNOUNCE_CHANNEL_ID = 1533241235630854224   # ← حط هنا ID ديال channel فين كيتبعث تهنئة عيد الميلاد (بحال #general)
-BIRTHDAY_ROLE_ID = 1533241332473008229               # ← (اختياري) رول 🎂 كيتعطى نهار عيد الميلاد وكيتحيد الغد — خليها 0 إلا مابغيتيش
-BIRTHDAY_ANNOUNCE_HOUR = 9         # ← فأي ساعة (UTC، من 0 لـ 23) كيتبعث التهنئة كل نهار
+BIRTHDAY_CENTER_CHANNEL_ID = 1533241235630854224
+BIRTHDAY_ANNOUNCE_CHANNEL_ID = 1524957892925456545
+BIRTHDAY_ROLE_ID = 1533241332473008229
+BIRTHDAY_TIMEZONE = "Africa/Casablanca"
+BIRTHDAY_CHECK_SECONDS = 30
 
 # ═══════ نظام Marry/Bestfriend (أزواج/أصدقاء) ═══════
 MARRIAGE_ROLE_ID = 1533987822216810706     # ← (اختياري) رول عام 💍 كيتعطى للجوج ملي يتزوجو (بزيادة على الرول الشخصي) — خليها 0 إلا مابغيتيش

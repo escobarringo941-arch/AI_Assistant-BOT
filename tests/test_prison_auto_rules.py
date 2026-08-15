@@ -225,8 +225,45 @@ class AutoRuleStoreTests(unittest.TestCase):
         self.assertNotIn(first["id"], strikes)
         self.assertIn(second["id"], strikes)
 
+    def test_owner_threshold_on_catalog_updates_every_linked_rule(self):
+        store = self.make_store()
+        store.add_auto_rule(
+            1, kind="word", pattern="bad one", offense_key="insult", trigger_count=2
+        )
+        store.add_auto_rule(
+            1, kind="word", pattern="bad two", offense_key="insult", trigger_count=7
+        )
+        result = store.set_offense_trigger_count(1, "insult", 4)
+        linked = [
+            rule for rule in store.auto_rules(1).values()
+            if rule["offense"] == "insult"
+        ]
+        self.assertEqual(result["updated"], 2)
+        self.assertEqual({rule["trigger_count"] for rule in linked}, {4})
+
+    def test_links_catalog_creates_and_updates_all_native_detectors(self):
+        store = self.make_store()
+        result = store.set_offense_trigger_count(1, "links", 3)
+        linked_actions = {
+            rule["pattern"]
+            for rule in store.auto_rules(1).values()
+            if rule["offense"] == "links"
+        }
+        self.assertEqual(linked_actions, {"discord_invite", "any_link"})
+        self.assertEqual(result["created"], 2)
+        self.assertTrue(
+            all(rule["trigger_count"] == 3 for rule in store.auto_rules(1).values())
+        )
+
 
 class AutoRuleSourceTests(unittest.TestCase):
+    def test_owner_can_control_existing_catalog_as_one_group(self):
+        self.assertIn("class OffenseTriggerModal", PANEL_SOURCE)
+        self.assertIn("set_offense_trigger_count", PANEL_SOURCE)
+        self.assertIn("كاع الممنوعات المرتبطة", PANEL_SOURCE)
+        self.assertIn("offense_trigger_count", PRISON_SOURCE)
+        self.assertIn("warning_note", PRISON_SOURCE)
+
     def test_voice_panel_shows_and_refreshes_every_inmate_timer(self):
         roster = method_source(
             PRISON_TREE, PRISON_SOURCE, "PrisonSystem", "_cell_sentence_roster"

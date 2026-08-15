@@ -80,6 +80,8 @@ GAMES_COGS = [
     "cogs.channel_lockdown",
     # 🧹 قناة الاونر تبقى غير البانل — كاع اللوگات/الرسائل الزايدة كتتمسح
     "cogs.owner_channel_autoclean",
+    # 🎂 Birthday Center: panel + midnight celebration + auto-clean
+    "cogs.birthday_center",
 ]
 
 # هاد الـCog أمني: إلا فشل ما خاصش البوت يكمل وكأن الحماية خدامة.
@@ -125,6 +127,16 @@ def _configure_cog_bridge(shared):
         "setup_rules_message": shared["setup_rules_message"],
         "get_active_banned_words": shared["get_active_banned_words"],
         "BANNED_ACTIONS": shared["BANNED_ACTIONS"],
+        "BIRTHDAY_CENTER_CHANNEL_ID": shared["BIRTHDAY_CENTER_CHANNEL_ID"],
+        "BIRTHDAY_ANNOUNCE_CHANNEL_ID": shared["BIRTHDAY_ANNOUNCE_CHANNEL_ID"],
+        "BIRTHDAY_ROLE_ID": shared["BIRTHDAY_ROLE_ID"],
+        "BIRTHDAY_TIMEZONE": shared["BIRTHDAY_TIMEZONE"],
+        "BIRTHDAY_CHECK_SECONDS": shared["BIRTHDAY_CHECK_SECONDS"],
+        "SERVER_NAME": shared["SERVER_NAME"],
+        "birthdays_db": shared["birthdays_db"],
+        "save_birthdays": shared["save_birthdays"],
+        "get_zodiac_sign": shared["get_zodiac_sign"],
+        "sync_zodiac_role": shared["sync_zodiac_role"],
         "get_user_level_data": shared["get_user_level_data"],
         "get_level_perks": shared["get_level_perks"],
         "save_levels": shared["save_levels"],

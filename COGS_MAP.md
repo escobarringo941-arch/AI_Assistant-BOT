@@ -8,7 +8,7 @@ the same execution order across focused extensions in `cogs/`.
 | Base state and persistence | `bootstrap`, `persistent_state`, `xp_runtime`, `settings_storage` |
 | AI and external content | `ai_conversation`, `content_apis` |
 | Moderation and access | `moderation_core`, `access_panels`, `moderation_commands` |
-| Community systems | `support_system`, `applications`, `suggestions`, `birthdays`, `relationships` |
+| Community systems | `support_system`, `applications`, `suggestions`, `birthdays`, `birthday_center`, `relationships` |
 | Voice | `temp_voice`, `temp_music`, `voice_runtime` |
 | Members and server setup | `server_setup`, `member_events`, `verification_commands` |
 | XP and administration | `xp_admin`, `bot_admin_panel`, `leveling_commands`, `levels_center`, `owner_control` |
@@ -24,7 +24,7 @@ python tests/validate_refactor.py
 ```
 
 It verifies the reviewed hashes and dependency order of all 28 core components,
-the unchanged 72-command surface, 10 bot events (including the small
+the reviewed 61-command surface, 10 bot events (including the small
 `setup_hook`), nine task loops, and Python syntax for the complete project.
 
 The focused Temp Music policy/integration checks run offline (without connecting

@@ -102,10 +102,27 @@ class AutoInfoProfessionalTests(unittest.TestCase):
             self.assertIn(constant, self.apis)
         self.assertIn("تقييم IMDb", self.tasks)
         self.assertIn("تقييم MAL", self.tasks)
-        self.assertIn("تقييم RAWG", self.tasks)
+        self.assertIn('game.get("source", "RAWG")', self.tasks)
+        self.assertIn("تقييم {game_source}", self.tasks)
         self.assertIn("مرات التشغيل", self.tasks)
         self.assertIn("embed.set_image", self.tasks)
         self.assertIn('startswith("rx")', self.apis)
+
+    def test_games_and_anime_have_keyless_fallbacks(self):
+        self.assertIn("get_game_from_steam", self.apis)
+        self.assertIn("featuredcategories", self.apis)
+        self.assertIn("appreviews", self.apis)
+        self.assertIn("get_anime_from_kitsu", self.apis)
+        self.assertIn("kitsu.io/api/edge/anime", self.apis)
+        self.assertIn("AUTO_INFO_RELIABILITY_VERSION", self.bootstrap)
+        self.assertIn("apply_auto_info_reliability_migration", self.settings)
+
+    def test_hourly_schedule_is_aligned_and_persistent(self):
+        self.assertIn("schedule_version", self.settings)
+        self.assertIn(
+            "((current // AUTO_INFO_INTERVAL_SECONDS) + 1) * AUTO_INFO_INTERVAL_SECONDS",
+            self.settings,
+        )
 
     def test_item_is_recorded_only_after_successful_discord_send(self):
         for category in ("news", "games", "movies", "anime", "music"):
