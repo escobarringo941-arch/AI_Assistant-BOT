@@ -377,8 +377,17 @@ class AdjustModal(discord.ui.Modal, title="⏳ تعديل مدة الحكم"):
 
         await interaction.response.defer(ephemeral=True, thinking=True)
         if seconds < 0:  # perm
-            cog.store.update_inmate(interaction.guild.id, self.user_id, until=-1)
-            await cog._post_cell_card(member, cog.store.inmate(interaction.guild.id, self.user_id))
+            result = await cog.extend_sentence(
+                member,
+                extra_seconds=-1,
+                reason="الحكم تبدل لمؤبد من طرف الاونر",
+                actor=interaction.user,
+                offense_key="severe",
+                minimum_cell="max",
+            )
+            if not result.get("ok"):
+                await interaction.followup.send(f"❌ {result.get('error')}", ephemeral=True)
+                return
             await interaction.followup.send("♾️ الحكم ولّى **مؤبّد**.", ephemeral=True)
             return
 

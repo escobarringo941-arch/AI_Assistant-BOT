@@ -30,6 +30,7 @@ PRISON_CATEGORY_NAME = "🔒 PRISON"
 
 # المفتاح الداخلي → (اسم الروم، الوصف)
 CELL_KEYS = ("holding", "block", "max")
+CELL_RANK = {key: rank for rank, key in enumerate(CELL_KEYS)}
 
 CHANNEL_NAMES = {
     "code":       "📜┃prison-code",       # read-only — لائحة المخالفات والمدد
@@ -38,7 +39,8 @@ CHANNEL_NAMES = {
     "max":        "🚨┃maximum-security",  # قاسح
     "warden":     "🗣️┃warden-office",     # استئناف / تواصل
     "complaints": "📮┃complaint-desk",    # Warden + Owner — الشكايات الخفيفة
-    "visits":     "🧑‍🤝‍🧑┃visit-room",    # بانل تنظيم الزيارات — Admin/Mod/Warden/Owner
+    "visits":     "🧑‍🤝‍🧑┃visit-room",    # بانل طلب الزيارة — مفتوحة للعموم
+    "visit_admin": "👮┃visit-control",     # الزيارات الجارية/الإغلاق — Warden + Owner فقط
     "log":        "📋┃prison-log",        # Owner بوحدو
 }
 
@@ -61,6 +63,25 @@ WARDEN_ROLE_COLOR = 0x1ABC9C
 MINUTE = 60
 HOUR = 60 * MINUTE
 DAY = 24 * HOUR
+
+# مجموع العقوبات اللي كيطلع السجين أوتوماتيكيا للدرجة الموالية.
+# 24 ساعة متراكمة = بداية Cell Block | 30 يوم = Maximum Security.
+# المخالفة المصنفة أصلاً Block/Max كتطلع مباشرة حتى إلا كانت مدتها أقل.
+CELL_PENALTY_THRESHOLDS = {
+    "block": 24 * HOUR,
+    "max": 30 * DAY,
+}
+
+
+def cell_for_penalty(total_seconds: int, minimum_cell: str = "holding") -> str:
+    """الزنزانة الدنيا الواجبة حسب مجموع العقوبات ونوع المخالفة."""
+    target = minimum_cell if minimum_cell in CELL_RANK else "holding"
+    if int(total_seconds) < 0:
+        return "max"
+    for cell, threshold in CELL_PENALTY_THRESHOLDS.items():
+        if int(total_seconds) >= int(threshold) and CELL_RANK[cell] > CELL_RANK[target]:
+            target = cell
+    return target
 
 # severity: 1 = خفيف (Warden يقدر) | 2 = متوسط | 3 = قاسح (Owner بوحدو)
 DEFAULT_OFFENSES: dict[str, dict[str, Any]] = {
@@ -148,7 +169,7 @@ DEFAULT_OFFENSES: dict[str, dict[str, Any]] = {
 SOLITARY_DEFAULT_SECONDS = 2 * HOUR
 SOLITARY_MAX_SECONDS = 24 * HOUR
 
-# Discord كيسمح بـ50 روم فالكاتيكوري. عندنا 7 ثابتين → الباقي للانفرادي.
+# Discord كيسمح بـ50 روم فالكاتيكوري. كنحسبو الثابتين أوتوماتيكيا والباقي للانفرادي.
 SOLITARY_MAX_ROOMS = 50 - len(CHANNEL_NAMES) - 1  # -1 هامش أمان
 
 # مدة الانتظار بين شكايتين ديال نفس السجين
@@ -310,6 +331,7 @@ def _blank_guild() -> dict:
         "visits": {},         # visit_id → record
         "visit_seq": 0,
         "visits_message_id": 0,
+        "visits_admin_message_id": 0,
     }
 
 
@@ -343,6 +365,7 @@ class PrisonStore:
         record.setdefault("visits", {})
         record.setdefault("visit_seq", 0)
         record.setdefault("visits_message_id", 0)
+        record.setdefault("visits_admin_message_id", 0)
         return record
 
     def save(self) -> bool:
@@ -419,6 +442,7 @@ class PrisonStore:
             "since": started,
             "until": -1 if seconds < 0 else started + int(seconds),
             "sentence": int(seconds),
+            "penalty_seconds_total": int(seconds),
             "offense": offense_key,
             "reason": (reason or "ما ذكرش سبب")[:400],
             "cell": cell if cell in CELL_KEYS else "holding",
@@ -427,6 +451,25 @@ class PrisonStore:
             "by": int(actor_id),
             "cell_message_id": 0,
             "extended": [],
+            "discipline_log": [
+                {
+                    "at": started,
+                    "offense": offense_key,
+                    "reason": (reason or "ما ذكرش سبب")[:400],
+                    "seconds": int(seconds),
+                    "cell": cell if cell in CELL_KEYS else "holding",
+                    "by": int(actor_id),
+                }
+            ],
+            "cell_history": [
+                {
+                    "at": started,
+                    "from": None,
+                    "to": cell if cell in CELL_KEYS else "holding",
+                    "reason": (reason or "الحكم الأول")[:400],
+                    "by": int(actor_id),
+                }
+            ],
         }
         self.inmates(guild_id)[str(int(user_id))] = record
         self.save()
@@ -577,6 +620,7 @@ class PrisonStore:
             "prisoner_id": int(prisoner_id),
             "visitor_id": int(visitor_id),
             "channel_id": 0,
+            "invite_channel_id": 0,
             "seconds": int(seconds),
             "since": 0,
             "until": 0,
@@ -585,6 +629,14 @@ class PrisonStore:
             "status": "pending",   # pending → active → (كتمسح ملي تسالي)
         }
         self.visits(guild_id)[vid] = record
+        self.save()
+        return record
+
+    def set_visit_invite_channel(self, guild_id: int, visit_id, channel_id: int) -> Optional[dict]:
+        record = self.visit(guild_id, visit_id)
+        if record is None:
+            return None
+        record["invite_channel_id"] = int(channel_id)
         self.save()
         return record
 
@@ -610,6 +662,15 @@ class PrisonStore:
             (vid, record)
             for vid, record in list(self.visits(guild_id).items())
             if record.get("status") == "active" and now_ts() >= int(record.get("until", 0) or 0)
+        ]
+
+    def expired_pending_visits(self, guild_id: int) -> list[tuple[str, dict]]:
+        """دعوات بقات معلّقة أكثر من مهلة القبول (ومنها اللي فات عليها restart)."""
+        return [
+            (vid, record)
+            for vid, record in list(self.visits(guild_id).items())
+            if record.get("status") == "pending"
+            and now_ts() >= int(record.get("created", 0) or 0) + VISIT_INVITE_TIMEOUT_SECONDS
         ]
 
     # ───── الشكايات ─────
