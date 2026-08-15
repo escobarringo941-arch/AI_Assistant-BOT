@@ -38,7 +38,7 @@ CHANNEL_NAMES = {
     "block":      "🔒┃cell-block",        # متوسط
     "max":        "🚨┃maximum-security",  # قاسح
     "warden":     "🗣️┃warden-office",     # استئناف / تواصل
-    "complaints": "📮┃complaint-desk",    # Warden + Owner — الشكايات الخفيفة
+    "complaints": "📮┃complaint-desk",    # Warden + Owner — شكايات Holding Cell
     "visits":     "🧑‍🤝‍🧑┃visit-room",    # بانل طلب الزيارة — مفتوحة للعموم
     "visit_admin": "👮┃visit-control",     # الزيارات الجارية/الإغلاق — Warden + Owner فقط
     "log":        "📋┃prison-log",        # Owner بوحدو
@@ -172,8 +172,13 @@ SOLITARY_MAX_SECONDS = 24 * HOUR
 # Discord كيسمح بـ50 روم فالكاتيكوري. كنحسبو الثابتين أوتوماتيكيا والباقي للانفرادي.
 SOLITARY_MAX_ROOMS = 50 - len(CHANNEL_NAMES) - 1  # -1 هامش أمان
 
-# مدة الانتظار بين شكايتين ديال نفس السجين
-COMPLAINT_COOLDOWN_SECONDS = 30 * MINUTE
+# مدة الانتظار بين طلبَي تدخل ديال نفس السجين. خمس دقايق كتحبس السبام
+# بلا ما تخلي السجين عالق مدة طويلة إلا وقع مشكل جديد فعلاً.
+COMPLAINT_COOLDOWN_SECONDS = 5 * MINUTE
+
+# Discord User Select كيسمح بالبحث وسط لائحة كبيرة؛ كنحدّو غير عدد
+# المشكي عليهم فنفس الطلب باش يبقى القرار واضح وقابل للمراجعة.
+COMPLAINT_MAX_TARGETS = 10
 
 # أقصى شكايات معلقة فنفس الوقت
 COMPLAINT_MAX_PENDING = 25
@@ -188,7 +193,13 @@ def solitary_channel_name(display_name: str, user_id: int) -> str:
     cleaned = re.sub(r"-{2,}", "-", cleaned)[:20].strip("-")
     if not cleaned:
         cleaned = f"inmate-{int(user_id) % 100000}"
-    return f"{SOLITARY_PREFIX}{cleaned}"
+    # الـID القصير كيضمن أن كل سجين عندو روم مميزة حتى إلا تشابهات السميات.
+    return f"{SOLITARY_PREFIX}{cleaned}-{int(user_id) % 10000:04d}"
+
+
+def complaint_route_for_cell(cell: str) -> str:
+    """Holding يقدر يحسمها Warden/Owner؛ أي مستوى آخر Owner بوحدو."""
+    return "warden" if str(cell) == "holding" else "owner"
 
 
 # ═══════ الزيارات (Visits) ═══════
@@ -319,7 +330,7 @@ def _blank_guild() -> dict:
         # ── الحبس الانفرادي ──
         "solitary": {},      # user_id → {channel_id, until, reason, by, cell}
         # ── الشكايات ──
-        "complaints": {},    # complaint_id → record
+        "complaints": {},    # complaint_id → {author, targets[], cell, reason, ...}
         "complaint_seq": 0,
         "complaint_cooldown": {},  # user_id → timestamp آخر شكاية
         # ── اللوحة العامة ──
@@ -676,7 +687,41 @@ class PrisonStore:
     # ───── الشكايات ─────
 
     def complaints(self, guild_id: int) -> dict[str, dict]:
-        return self.guild(guild_id).setdefault("complaints", {})
+        entries = self.guild(guild_id).setdefault("complaints", {})
+        changed = False
+        # Migration ديال الشكايات القديمة اللي كان فيها target واحد بلا cell snapshot.
+        for record in entries.values():
+            targets = self.complaint_target_ids(record)
+            if targets and record.get("targets") != targets:
+                record["targets"] = targets
+                changed = True
+            if targets and int(record.get("target", 0) or 0) != targets[0]:
+                record["target"] = targets[0]  # توافق مع النسخ القديمة
+                changed = True
+            if record.get("cell") not in CELL_KEYS:
+                record["cell"] = (
+                    "holding" if record.get("route") == "warden" else "block"
+                )
+                changed = True
+        if changed:
+            self.save()
+        return entries
+
+    @staticmethod
+    def complaint_target_ids(record: dict) -> list[int]:
+        """كترد لائحة targets نظيفة وكتفهم حتى صيغة target القديمة."""
+        raw_targets = record.get("targets")
+        if not isinstance(raw_targets, (list, tuple, set)):
+            raw_targets = [record.get("target")]
+        result: list[int] = []
+        for raw in raw_targets:
+            try:
+                target_id = int(raw or 0)
+            except (TypeError, ValueError):
+                continue
+            if target_id > 0 and target_id not in result:
+                result.append(target_id)
+        return result
 
     def pending_complaints(self, guild_id: int) -> dict[str, dict]:
         return {
@@ -701,17 +746,26 @@ class PrisonStore:
         guild_id: int,
         *,
         author_id: int,
-        target_id: int,
         reason: str,
         route: str,
+        cell: str = "holding",
+        target_ids: Optional[list[int]] = None,
+        target_id: int = 0,
     ) -> dict:
+        targets = self.complaint_target_ids(
+            {"targets": target_ids if target_ids is not None else [target_id]}
+        )[:COMPLAINT_MAX_TARGETS]
+        if not targets:
+            raise ValueError("complaint requires at least one target")
         record_guild = self.guild(guild_id)
         record_guild["complaint_seq"] = int(record_guild.get("complaint_seq", 0) or 0) + 1
         cid = str(record_guild["complaint_seq"])
         record = {
             "id": cid,
             "author": int(author_id),
-            "target": int(target_id),
+            "target": targets[0],       # توافق مع البيانات/الإضافات القديمة
+            "targets": targets,
+            "cell": cell if cell in CELL_KEYS else "holding",
             "reason": (reason or "—")[:500],
             "route": route,          # "warden" ولا "owner"
             "status": "pending",
@@ -732,7 +786,13 @@ class PrisonStore:
         return record
 
     def resolve_complaint(
-        self, guild_id: int, complaint_id: str, *, status: str, handler_id: int
+        self,
+        guild_id: int,
+        complaint_id: str,
+        *,
+        status: str,
+        handler_id: int,
+        result: Optional[dict] = None,
     ) -> Optional[dict]:
         record = self.complaints(guild_id).get(str(complaint_id))
         if record is None:
@@ -740,6 +800,8 @@ class PrisonStore:
         record["status"] = status
         record["handled_by"] = int(handler_id)
         record["handled_at"] = now_ts()
+        if result is not None:
+            record["result"] = result
         self.save()
         return record
 

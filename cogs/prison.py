@@ -30,6 +30,7 @@ from cogs.prison_core import (
     CELL_RANK,
     CELL_KEYS,
     CHANNEL_NAMES,
+    COMPLAINT_MAX_TARGETS,
     COMPLAINT_MAX_PENDING,
     SOLITARY_DEFAULT_SECONDS,
     SOLITARY_MAX_ROOMS,
@@ -46,12 +47,12 @@ from cogs.prison_core import (
     PRISONER_ROLE_COLOR,
     PRISONER_ROLE_NAME,
     WARDEN_ALLOWED_CELLS,
-    WARDEN_ALLOWED_SEVERITY,
     WARDEN_MAX_SECONDS,
     WARDEN_ROLE_COLOR,
     WARDEN_ROLE_NAME,
     PrisonStore,
     cell_for_penalty,
+    complaint_route_for_cell,
     format_duration,
     now_ts,
     remaining_seconds,
@@ -113,7 +114,7 @@ def _is_visit_staff(cog, member: discord.Member) -> bool:
 
 class PrisonerCardView(discord.ui.View):
     """
-    زر واحد فبطاقة السجين: كيعطيه الوقت الباقي **دابا بالثانية**.
+    بطاقة السجين: طلب تدخل داخل الزنزانة + الوقت الباقي **دابا بالثانية**.
     persistent (timeout=None + custom_id) باش يخدم حتى بعد ريستارت البوت.
     """
 
@@ -121,8 +122,8 @@ class PrisonerCardView(discord.ui.View):
         super().__init__(timeout=None)
 
     @discord.ui.button(
-        label="اشكي من سجين",
-        emoji="📮",
+        label="طلب تدخل / شكاية",
+        emoji="🆘",
         style=discord.ButtonStyle.danger,
         custom_id="ggmw9:prison:complain",
         row=0,
@@ -137,6 +138,11 @@ class PrisonerCardView(discord.ui.View):
                 "❌ غير السجناء لي كيقدرو يشكيو.", ephemeral=True
             )
             return
+        if cog.store.in_solitary(interaction.guild.id, interaction.user.id):
+            await interaction.response.send_message(
+                "❌ نتا دابا فالانفرادي وما عندكش زملاء فنفس الزنزانة.", ephemeral=True
+            )
+            return
 
         left = cog.store.complaint_cooldown_left(interaction.guild.id, interaction.user.id)
         if left > 0:
@@ -145,21 +151,25 @@ class PrisonerCardView(discord.ui.View):
             )
             return
 
+        author_record = cog.store.inmate(interaction.guild.id, interaction.user.id) or {}
+        author_cell = author_record.get("cell", "holding")
         others = [
             uid
-            for uid in cog.store.inmates(interaction.guild.id)
+            for uid, record in cog.store.inmates(interaction.guild.id).items()
             if int(uid) != interaction.user.id
+            and record.get("cell", "holding") == author_cell
             and not cog.store.in_solitary(interaction.guild.id, int(uid))
         ]
         if not others:
             await interaction.response.send_message(
-                "🕊️ ماكاين حتى سجين آخر تشكي منو.", ephemeral=True
+                "🕊️ ماكاين حتى سجين آخر معاك فنفس الزنزانة.", ephemeral=True
             )
             return
 
         await interaction.response.send_message(
-            "📮 اختار السجين اللي بغيتي تشكي منو:",
-            view=ComplaintTargetView(cog, interaction.guild, others),
+            "🆘 اختار من **1 حتى 10** ديال السجناء اللي دارو المشكل.\n"
+            "البوت غادي يقبل غير اللي معاك دابا فنفس الزنزانة:",
+            view=ComplaintTargetView(),
             ephemeral=True,
         )
 
@@ -216,36 +226,32 @@ class PrisonerCardView(discord.ui.View):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
-class ComplaintTargetSelect(discord.ui.Select):
-    def __init__(self, cog, guild: discord.Guild, user_ids: list):
-        options = []
-        for uid in user_ids[:25]:
-            member = guild.get_member(int(uid))
-            record = cog.store.inmate(guild.id, int(uid)) or {}
-            offense = cog.store.offense(guild.id, record.get("offense", "manual"))
-            options.append(
-                discord.SelectOption(
-                    label=(member.display_name if member else f"ID {uid}")[:100],
-                    value=str(uid),
-                    description=offense["label"][:100],
-                )
-            )
-        super().__init__(placeholder="اختار السجين…", options=options, min_values=1, max_values=1)
+class ComplaintTargetSelect(discord.ui.UserSelect):
+    """Searchable select: كيخدم حتى إلا كانو عشرات السجناء فنفس الزنزانة."""
+
+    def __init__(self):
+        super().__init__(
+            placeholder="اختار المشكي عليهم (من نفس الزنزانة)…",
+            min_values=1,
+            max_values=COMPLAINT_MAX_TARGETS,
+        )
 
     async def callback(self, interaction: discord.Interaction):
-        await interaction.response.send_modal(ComplaintModal(int(self.values[0])))
+        await interaction.response.send_modal(
+            ComplaintModal([int(member.id) for member in self.values])
+        )
 
 
 class ComplaintTargetView(discord.ui.View):
-    def __init__(self, cog, guild: discord.Guild, user_ids: list):
+    def __init__(self):
         super().__init__(timeout=180)
-        self.add_item(ComplaintTargetSelect(cog, guild, user_ids))
+        self.add_item(ComplaintTargetSelect())
 
 
-class ComplaintModal(discord.ui.Modal, title="📮 شكاية من سجين"):
-    def __init__(self, target_id: int):
+class ComplaintModal(discord.ui.Modal, title="🆘 طلب تدخل داخل الزنزانة"):
+    def __init__(self, target_ids: list[int]):
         super().__init__()
-        self.target_id = target_id
+        self.target_ids = target_ids
         self.reason = discord.ui.TextInput(
             label="أشنو وقع بالضبط؟",
             placeholder="كن واضح ومحدد — الشكايات الكاذبة كتاخد تنبيه.",
@@ -263,7 +269,7 @@ class ComplaintModal(discord.ui.Modal, title="📮 شكاية من سجين"):
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
         result = await cog.submit_complaint(
-            interaction.user, self.target_id, str(self.reason.value).strip()
+            interaction.user, self.target_ids, str(self.reason.value).strip()
         )
         if not result.get("ok"):
             await interaction.followup.send(f"❌ {result['error']}", ephemeral=True)
@@ -272,9 +278,9 @@ class ComplaintModal(discord.ui.Modal, title="📮 شكاية من سجين"):
         await interaction.followup.send(
             f"✅ الشكاية **#{result['complaint']['id']}** توصلات.\n"
             + (
-                "👮 غادي يشوفها الـ**Warden**."
+                "👮 غادي يشوفها الـ**Warden** والـ**Owner**."
                 if route == "warden"
-                else "👑 هاد السجين من الكبار — غادي يشوفها **الاونر** بوحدو."
+                else "👑 هاد الزنزانة من اختصاص **الـOwner بوحدو**."
             )
             + "\n\n⏳ غادي توصلك النتيجة فـDM.",
             ephemeral=True,
@@ -284,7 +290,7 @@ class ComplaintModal(discord.ui.Modal, title="📮 شكاية من سجين"):
 class ComplaintReviewView(discord.ui.View):
     """
     أزرار القرار. persistent: الشكاية كتتلقا عبر message_id،
-    والاختصاص كيتفحص فكل ضغطة (Warden للخفاف، Owner للكبار).
+    والاختصاص كيتفحص فكل ضغطة (Warden لـHolding، Owner لكل المستويات).
     """
 
     def __init__(self):
@@ -301,12 +307,9 @@ class ComplaintReviewView(discord.ui.View):
 
     @staticmethod
     def _may_handle(interaction: discord.Interaction, cog, complaint: dict) -> bool:
-        is_owner = interaction.user.id == interaction.guild.owner_id
-        if is_owner:
-            return True
-        if complaint.get("route") == "warden" and isinstance(interaction.user, discord.Member):
-            return cog.is_warden(interaction.user)
-        return False
+        return isinstance(interaction.user, discord.Member) and cog.can_handle_complaint(
+            interaction.user, complaint
+        )
 
     @discord.ui.button(
         label="قبول → انفرادي",
@@ -326,7 +329,7 @@ class ComplaintReviewView(discord.ui.View):
             return
         if not self._may_handle(interaction, cog, complaint):
             await interaction.response.send_message(
-                "❌ هاد الشكاية من اختصاص **الاونر بوحدو** — السجين من الكبار.",
+                "❌ غير الـ**Owner** يقدر يحسم شكايات Cell Block وMaximum Security.",
                 ephemeral=True,
             )
             return
@@ -353,9 +356,21 @@ class ComplaintReviewView(discord.ui.View):
             return
 
         await interaction.response.defer()
-        cog.store.resolve_complaint(
-            interaction.guild.id, cid, status="rejected", handler_id=interaction.user.id
-        )
+        async with cog.complaint_lock(interaction.guild.id, cid):
+            complaint = cog.store.complaints(interaction.guild.id).get(cid)
+            if complaint is None or complaint.get("status") != "pending":
+                await interaction.followup.send(
+                    "⚠️ شي مسؤول حسم الشكاية قبلك.", ephemeral=True
+                )
+                return
+            if not self._may_handle(interaction, cog, complaint):
+                await interaction.followup.send(
+                    "❌ الاختصاص تبدل؛ هاد القرار خاص الـOwner.", ephemeral=True
+                )
+                return
+            cog.store.resolve_complaint(
+                interaction.guild.id, cid, status="rejected", handler_id=interaction.user.id
+            )
         author = interaction.guild.get_member(int(complaint["author"]))
         if author:
             await cog._dm(
@@ -400,16 +415,26 @@ class SolitaryDurationModal(discord.ui.Modal, title="🔗 مدة الحبس ال
 
     async def on_submit(self, interaction: discord.Interaction):
         cog = interaction.client.get_cog("PrisonSystem")
+        if cog is None or interaction.guild is None:
+            await interaction.response.send_message("❌ النظام ماشي متاح.", ephemeral=True)
+            return
         complaint = cog.store.complaints(interaction.guild.id).get(self.complaint_id)
         if complaint is None or complaint.get("status") != "pending":
             await interaction.response.send_message("⚠️ الشكاية تحسمات.", ephemeral=True)
+            return
+        if not isinstance(interaction.user, discord.Member) or not cog.can_handle_complaint(
+            interaction.user, complaint
+        ):
+            await interaction.response.send_message(
+                "❌ ما عندكش الاختصاص باش تحسم هاد الشكاية.", ephemeral=True
+            )
             return
 
         seconds = SOLITARY_DEFAULT_SECONDS
         raw = str(self.duration.value or "").strip()
         if raw:
             parsed = parse_duration(raw)
-            if parsed is None or parsed < 0:
+            if parsed is None or parsed <= 0:
                 await interaction.response.send_message(
                     "❌ المدة ماشي صالحة. مثال: `2h` ولا `45m`.", ephemeral=True
                 )
@@ -422,30 +447,98 @@ class SolitaryDurationModal(discord.ui.Modal, title="🔗 مدة الحبس ال
             )
             return
 
-        target = interaction.guild.get_member(int(complaint["target"]))
-        if target is None:
-            await interaction.response.send_message("❌ المشكي عليه خرج من السيرفر.", ephemeral=True)
-            return
-
         await interaction.response.defer(ephemeral=True, thinking=True)
-        note = str(self.note.value or "").strip()
-        reason = f"شكاية #{self.complaint_id}: {complaint['reason']}" + (
-            f" • {note}" if note else ""
-        )
-        result = await cog.send_to_solitary(
-            target,
-            seconds=seconds,
-            reason=reason,
-            actor=interaction.user,
-            complaint_id=int(self.complaint_id),
-        )
-        if not result.get("ok"):
-            await interaction.followup.send(f"❌ {result['error']}", ephemeral=True)
-            return
+        async with cog.complaint_lock(interaction.guild.id, self.complaint_id):
+            complaint = cog.store.complaints(interaction.guild.id).get(self.complaint_id)
+            if complaint is None or complaint.get("status") != "pending":
+                await interaction.followup.send("⚠️ شي مسؤول حسم الشكاية قبلك.", ephemeral=True)
+                return
+            if not cog.can_handle_complaint(interaction.user, complaint):
+                await interaction.followup.send(
+                    "❌ الاختصاص تبدل؛ هاد القرار خاص الـOwner دابا.", ephemeral=True
+                )
+                return
 
-        cog.store.resolve_complaint(
-            interaction.guild.id, self.complaint_id, status="approved", handler_id=interaction.user.id
-        )
+            target_ids = cog.store.complaint_target_ids(complaint)
+            if not target_ids:
+                await interaction.followup.send(
+                    "❌ الشكاية ما فيها حتى مشكي عليه صالح.", ephemeral=True
+                )
+                return
+            targets: list[discord.Member] = []
+            invalid: list[str] = []
+            is_owner = cog.is_server_owner(interaction.user, interaction.guild)
+            for target_id in target_ids:
+                member = interaction.guild.get_member(target_id)
+                record = cog.store.inmate(interaction.guild.id, target_id)
+                if member is None or record is None:
+                    invalid.append(f"<@{target_id}> (خرج من السيرفر/السجن)")
+                    continue
+                if cog.store.in_solitary(interaction.guild.id, target_id):
+                    invalid.append(f"{member.mention} (راه فالانفرادي)")
+                    continue
+                if not is_owner and record.get("cell", "holding") != "holding":
+                    invalid.append(f"{member.mention} (طلع من Holding)")
+                    continue
+                targets.append(member)
+
+            if invalid or len(targets) != len(target_ids):
+                details = ", ".join(invalid)[:1200] or "اللائحة تبدلات"
+                await interaction.followup.send(
+                    "❌ ما قدرناش ننفذ القرار حيث تبدلات حالة شي سجين:\n"
+                    f"{details}\n\nراجع الشكاية كـOwner إلا تبدل المستوى.",
+                    ephemeral=True,
+                )
+                return
+
+            available = SOLITARY_MAX_ROOMS - cog.store.solitary_count(interaction.guild.id)
+            if available < len(targets):
+                await interaction.followup.send(
+                    f"❌ خاص **{len(targets)}** روم انفرادية وباقي غير **{available}**.",
+                    ephemeral=True,
+                )
+                return
+
+            note = str(self.note.value or "").strip()
+            reason = f"شكاية #{self.complaint_id}: {complaint['reason']}" + (
+                f" • {note}" if note else ""
+            )
+            created: list[tuple[discord.Member, dict]] = []
+            for target in targets:
+                result = await cog.send_to_solitary(
+                    target,
+                    seconds=seconds,
+                    reason=reason,
+                    actor=interaction.user,
+                    complaint_id=int(self.complaint_id),
+                )
+                if not result.get("ok"):
+                    # All-or-nothing: إلى فشلت روم وحدة كنرجعو اللي تصاوبو قبلها.
+                    for created_member, _created_result in created:
+                        await cog.release_from_solitary(
+                            interaction.guild,
+                            created_member.id,
+                            reason=f"إلغاء تنفيذ جزئي للشكاية #{self.complaint_id}",
+                        )
+                    await interaction.followup.send(
+                        f"❌ التنفيذ تلغى كامل حيث وقعات مشكلة: {result['error']}",
+                        ephemeral=True,
+                    )
+                    return
+                created.append((target, result))
+
+            cog.store.resolve_complaint(
+                interaction.guild.id,
+                self.complaint_id,
+                status="approved",
+                handler_id=interaction.user.id,
+                result={
+                    "targets": [member.id for member, _result in created],
+                    "seconds": seconds,
+                    "channels": [result["channel"].id for _member, result in created],
+                },
+            )
+
         author = interaction.guild.get_member(int(complaint["author"]))
         if author:
             await cog._dm(
@@ -454,7 +547,8 @@ class SolitaryDurationModal(discord.ui.Modal, title="🔗 مدة الحبس ال
                     title="✅ الشكاية ديالك تقبلات",
                     description=(
                         f"الشكاية **#{self.complaint_id}** تقبلات.\n"
-                        f"المشكي عليه تنقل للحبس الانفرادي لمدة "
+                        f"**{len(created)}** من المشكي عليهم تنقل كل واحد منهم "
+                        f"لروم انفرادية مستقلة لمدة "
                         f"**{format_duration(seconds)}**."
                     ),
                     color=discord.Color.green(),
@@ -469,7 +563,11 @@ class SolitaryDurationModal(discord.ui.Modal, title="🔗 مدة الحبس ال
                 name="🧾 القرار",
                 value=(
                     f"قبلها {interaction.user.mention}\n"
-                    f"🔗 عزل **{format_duration(seconds)}** فـ {result['channel'].mention}"
+                    f"🔗 عزل **{format_duration(seconds)}**\n"
+                    + "\n".join(
+                        f"• {member.mention} → {result['channel'].mention}"
+                        for member, result in created
+                    )[:900]
                 ),
                 inline=False,
             )
@@ -478,7 +576,12 @@ class SolitaryDurationModal(discord.ui.Modal, title="🔗 مدة الحبس ال
             pass
 
         await interaction.followup.send(
-            f"✅ {target.mention} تنقل للانفرادي — {result['channel'].mention}", ephemeral=True
+            "✅ تنفذ القرار، وكل سجين تحط فروم انفرادية مستقلة:\n"
+            + "\n".join(
+                f"• {member.mention} → {result['channel'].mention}"
+                for member, result in created
+            ),
+            ephemeral=True,
         )
 
 
@@ -785,6 +888,7 @@ class PrisonSystem(commands.Cog):
 
         self._guild_locks: dict[int, asyncio.Lock] = {}
         self._member_locks: dict[int, asyncio.Lock] = {}
+        self._complaint_locks: dict[tuple[int, str], asyncio.Lock] = {}
         # باش on_member_update ما يتصارعش مع العمليات ديالنا
         self._suppress_role_guard: set[int] = set()
         self._ready_done = False
@@ -808,6 +912,15 @@ class PrisonSystem(commands.Cog):
         if lock is None:
             lock = asyncio.Lock()
             self._member_locks[member_id] = lock
+        return lock
+
+    def complaint_lock(self, guild_id: int, complaint_id: str) -> asyncio.Lock:
+        """كيمنع جوج مسؤولين يقبلو نفس الشكاية فنفس اللحظة."""
+        key = (int(guild_id), str(complaint_id))
+        lock = self._complaint_locks.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._complaint_locks[key] = lock
         return lock
 
     @staticmethod
@@ -881,6 +994,16 @@ class PrisonSystem(commands.Cog):
     def is_warden(self, member: discord.Member) -> bool:
         role = self.warden_role(member.guild)
         return bool(role and role in member.roles)
+
+    def can_handle_complaint(self, member: discord.Member, complaint: dict) -> bool:
+        """Owner كيتحكم فكلشي؛ Warden غير فشكايات Holding Cell."""
+        if self.is_server_owner(member, member.guild):
+            return True
+        return bool(
+            complaint.get("route") == "warden"
+            and complaint.get("cell") == "holding"
+            and self.is_warden(member)
+        )
 
     async def _log(self, guild: discord.Guild, embed: discord.Embed) -> None:
         """
@@ -1107,6 +1230,49 @@ class PrisonSystem(commands.Cog):
                         read_message_history=False,
                         send_messages=False,
                     )
+        elif key == "complaints":
+            # مكتب التدخل ديال Holding: Owner + Warden بوحدهم.
+            overwrites[guild.default_role] = discord.PermissionOverwrite(view_channel=False)
+            overwrites[prisoner] = discord.PermissionOverwrite(view_channel=False)
+            warden_role = self.warden_role(guild)
+            if warden_role:
+                overwrites[warden_role] = discord.PermissionOverwrite(
+                    view_channel=True,
+                    read_messages=True,
+                    read_message_history=True,
+                    send_messages=False,
+                    add_reactions=False,
+                )
+            for role_id in (self.admin_role_id, self.moderator_role_id):
+                role = guild.get_role(role_id) if role_id else None
+                if role:
+                    overwrites[role] = discord.PermissionOverwrite(
+                        view_channel=False,
+                        read_messages=False,
+                        read_message_history=False,
+                        send_messages=False,
+                    )
+        elif key in CELL_KEYS:
+            # السجين كيشوف غير زنزانتو بالـmember overwrite.
+            # Warden عندو سلطة فـHolding فقط؛ Block/Maximum مخبيين عليه صراحة.
+            overwrites[prisoner] = discord.PermissionOverwrite(view_channel=False)
+            warden_role = self.warden_role(guild)
+            if warden_role:
+                if key == "holding":
+                    overwrites[warden_role] = discord.PermissionOverwrite(
+                        view_channel=True,
+                        read_messages=True,
+                        read_message_history=True,
+                        send_messages=True,
+                        manage_messages=False,
+                    )
+                else:
+                    overwrites[warden_role] = discord.PermissionOverwrite(
+                        view_channel=False,
+                        read_messages=False,
+                        read_message_history=False,
+                        send_messages=False,
+                    )
         elif key == "log":
             # 🕵️ prison-log = Owner بوحدو. حتى Warden/Admin/Mod ما كيشوفوش أش كيدير الاونر.
             # (الادمين والمود عندهم دابا view-only على باقي السجن، ولكن هاد الروم
@@ -1139,19 +1305,27 @@ class PrisonSystem(commands.Cog):
         """
         صلاحيات فويس شانيل الزنزانة (نفس سمية الروم النصية):
           • الادمين/المود: يشوفو (view_channel) ولكن ميقدروش يدخلو (connect=False).
-          • الـWarden: دخول وتكلم كامل — بحال الاونر.
+          • الـWarden: دخول وتكلم غير فـHolding؛ الباقي Owner بوحدو.
           • السجين: بلا صلاحية على مستوى الرول؛ الوصول الفردي فـ _grant_cell_access.
         """
         overwrites = dict(self._category_overwrites(guild))
         warden = self.warden_role(guild)
         if warden:
-            overwrites[warden] = discord.PermissionOverwrite(
-                view_channel=True,
-                connect=True,
-                speak=True,
-                stream=True,
-                use_voice_activation=True,
-            )
+            if key == "holding":
+                overwrites[warden] = discord.PermissionOverwrite(
+                    view_channel=True,
+                    connect=True,
+                    speak=True,
+                    stream=True,
+                    use_voice_activation=True,
+                )
+            else:
+                overwrites[warden] = discord.PermissionOverwrite(
+                    view_channel=False,
+                    connect=False,
+                    speak=False,
+                    stream=False,
+                )
         prisoner = self.prisoner_role(guild)
         if prisoner:
             overwrites[prisoner] = discord.PermissionOverwrite(view_channel=False, connect=False)
@@ -2441,33 +2615,52 @@ class PrisonSystem(commands.Cog):
     # ║        5. الشكايات + الحبس الانفرادي              ║
     # ═══════════════════════════════════════════════════
 
-    def complaint_route(self, guild: discord.Guild, target_id: int) -> str:
+    def complaint_route(self, cell: str) -> str:
         """
         🔀 تقسيم الاختصاص:
-          • السجين خفيف (severity 1) → الـWarden كيقدر يحسم
-          • السجين كبير (severity 2-3) → **الاونر بوحدو**
+          • Holding Cell → الـWarden أو الـOwner
+          • Cell Block / Maximum Security → **الـOwner بوحدو**
         """
-        record = self.store.inmate(guild.id, target_id)
-        if not record:
-            return "owner"
-        offense = self.store.offense(guild.id, record.get("offense", "manual"))
-        if int(offense.get("severity", 1)) <= WARDEN_ALLOWED_SEVERITY:
-            return "warden"
-        return "owner"
+        return complaint_route_for_cell(cell)
 
     async def submit_complaint(
-        self, author: discord.Member, target_id: int, reason: str
+        self, author: discord.Member, target_ids: Iterable[int] | int, reason: str
     ) -> dict:
         guild = author.guild
+        reason = str(reason or "").strip()
 
         if not self.store.is_inmate(guild.id, author.id):
             return {"ok": False, "error": "غير السجناء لي كيقدرو يشكيو."}
-        if int(target_id) == author.id:
+        if self.store.in_solitary(guild.id, author.id):
+            return {"ok": False, "error": "ما تقدرش تدير شكاية جماعية من الانفرادي."}
+        if len(reason) < 10:
+            return {"ok": False, "error": "شرح أشنو وقع بوضوح (10 حروف على الأقل)."}
+
+        raw_targets = [target_ids] if isinstance(target_ids, int) else list(target_ids)
+        targets = self.store.complaint_target_ids({"targets": raw_targets})
+        if not targets:
+            return {"ok": False, "error": "خاصك تختار سجين واحد على الأقل."}
+        if len(targets) > COMPLAINT_MAX_TARGETS:
+            return {
+                "ok": False,
+                "error": f"تقدر تختار حتى {COMPLAINT_MAX_TARGETS} ديال السجناء فالطلب الواحد.",
+            }
+        if author.id in targets:
             return {"ok": False, "error": "ما تقدرش تشكي من راسك."}
-        if not self.store.is_inmate(guild.id, target_id):
-            return {"ok": False, "error": "هاد العضو ماشي فالسجن."}
-        if self.store.in_solitary(guild.id, target_id):
-            return {"ok": False, "error": "هاد السجين راه أصلاً فالانفرادي."}
+
+        author_record = self.store.inmate(guild.id, author.id) or {}
+        author_cell = author_record.get("cell", "holding")
+        for target_id in targets:
+            target_record = self.store.inmate(guild.id, target_id)
+            if target_record is None:
+                return {"ok": False, "error": f"<@{target_id}> ماشي فالسجن."}
+            if self.store.in_solitary(guild.id, target_id):
+                return {"ok": False, "error": f"<@{target_id}> راه أصلاً فالانفرادي."}
+            if target_record.get("cell", "holding") != author_cell:
+                return {
+                    "ok": False,
+                    "error": "تقدر تشكي غير من السجناء اللي معاك فنفس الزنزانة دابا.",
+                }
 
         left = self.store.complaint_cooldown_left(guild.id, author.id)
         if left > 0:
@@ -2478,21 +2671,30 @@ class PrisonSystem(commands.Cog):
         if len(self.store.pending_complaints(guild.id)) >= COMPLAINT_MAX_PENDING:
             return {"ok": False, "error": "كاين بزاف ديال الشكايات المعلقة. صبر حتى يتحسمو."}
 
-        # ما نقبلوش شكايتين على نفس الهدف من نفس الشاكي
+        # ما نقبلوش طلب جديد كيتقاطع مع طلب معلق من نفس الشاكي.
+        requested = set(targets)
         for record in self.store.pending_complaints(guild.id).values():
-            if int(record["author"]) == author.id and int(record["target"]) == int(target_id):
-                return {"ok": False, "error": "عندك شكاية معلقة على هاد السجين."}
+            if int(record["author"]) != author.id:
+                continue
+            if requested.intersection(self.store.complaint_target_ids(record)):
+                return {"ok": False, "error": "عندك شكاية معلقة على شي واحد من هاد اللائحة."}
 
-        route = self.complaint_route(guild, target_id)
+        route = self.complaint_route(author_cell)
         complaint = self.store.add_complaint(
             guild.id,
             author_id=author.id,
-            target_id=int(target_id),
+            target_ids=targets,
             reason=reason,
             route=route,
+            cell=author_cell,
         )
         posted = await self._post_complaint(guild, complaint)
         if not posted:
+            self.store.complaints(guild.id).pop(str(complaint["id"]), None)
+            self.store.guild(guild.id).setdefault("complaint_cooldown", {}).pop(
+                str(author.id), None
+            )
+            self.store.save()
             return {"ok": False, "error": "ما قدرتش نبعث الشكاية. عيّط للاونر."}
         return {"ok": True, "complaint": complaint, "route": route}
 
@@ -2506,18 +2708,23 @@ class PrisonSystem(commands.Cog):
             return False
 
         author = guild.get_member(int(complaint["author"]))
-        target = guild.get_member(int(complaint["target"]))
-        target_record = self.store.inmate(guild.id, complaint["target"]) or {}
-        offense = self.store.offense(guild.id, target_record.get("offense", "manual"))
-
         author_text = author.mention if author else f"<@{int(complaint['author'])}>"
-        target_text = target.mention if target else f"<@{int(complaint['target'])}>"
+        target_lines: list[str] = []
+        for target_id in self.store.complaint_target_ids(complaint):
+            target = guild.get_member(target_id)
+            target_record = self.store.inmate(guild.id, target_id) or {}
+            offense = self.store.offense(guild.id, target_record.get("offense", "manual"))
+            target_text = target.mention if target else f"<@{target_id}>"
+            target_lines.append(
+                f"• {target_text} — Case #{target_record.get('case', '?')} — {offense['label']}"
+            )
 
         embed = discord.Embed(
-            title=f"📮 شكاية #{complaint['id']} — تسنّا القرار",
+            title=f"🆘 طلب تدخل #{complaint['id']} — تسنّا القرار",
             description=(
                 f"**الشاكي:** {author_text}\n"
-                f"**المشكي عليه:** {target_text}"
+                f"**الزنزانة وقت الحادث:** {_cell_display(complaint.get('cell', 'holding'))}\n\n"
+                "**المشكي عليهم:**\n" + "\n".join(target_lines)[:1600]
             ),
             color=discord.Color.gold(),
             timestamp=datetime.now(),
@@ -2525,27 +2732,25 @@ class PrisonSystem(commands.Cog):
         embed.add_field(
             name="📝 السبب", value=f"```{str(complaint['reason'])[:900]}```", inline=False
         )
-        embed.add_field(name="⚖️ مخالفة المشكي عليه", value=offense["label"], inline=True)
-        embed.add_field(
-            name="🏚️ زنزانتو",
-            value=_cell_display(target_record.get("cell", "holding")),
-            inline=True,
-        )
         embed.add_field(
             name="🔀 الاختصاص",
-            value=("👮 Warden" if route == "warden" else "👑 **Owner بوحدو**"),
+            value=(
+                "👮 Warden + 👑 Owner (Holding Cell)"
+                if route == "warden"
+                else "👑 **Owner بوحدو**"
+            ),
             inline=True,
         )
         embed.add_field(
             name="🔗 القرار",
             value=(
-                "**قبول** → المشكي عليه كيمشي لروم انفرادية خاصة بيه.\n"
+                "**قبول** → كل مشكي عليه كيمشي لروم انفرادية مستقلة.\n"
                 "**رفض** → الشكاية كتطيح، والشاكي كياخد تنبيه."
             ),
             inline=False,
         )
-        if target:
-            embed.set_thumbnail(url=target.display_avatar.url)
+        if author:
+            embed.set_thumbnail(url=author.display_avatar.url)
         embed.set_footer(text=f"GGMW9 Prison • Complaint #{complaint['id']}")
 
         try:
@@ -2561,11 +2766,34 @@ class PrisonSystem(commands.Cog):
     # ───── الحبس الانفرادي ─────
 
     def solitary_overwrites(self, guild: discord.Guild, member: discord.Member) -> dict:
-        """الروم الانفرادية: السجين المعني + الاونر + البوت بوحدهم."""
+        """روم مستقلة: السجين + Owner؛ Warden غير إلا كان أصلها Holding."""
         overwrites = dict(self._category_overwrites(guild))
+        blocked = discord.PermissionOverwrite(
+            view_channel=False,
+            read_messages=False,
+            read_message_history=False,
+            send_messages=False,
+        )
         prisoner = self.prisoner_role(guild)
         if prisoner:
-            overwrites[prisoner] = discord.PermissionOverwrite(view_channel=False)
+            overwrites[prisoner] = blocked
+        for role_id in (self.admin_role_id, self.moderator_role_id):
+            role = guild.get_role(role_id) if role_id else None
+            if role:
+                overwrites[role] = blocked
+        record = self.store.inmate(guild.id, member.id) or {}
+        warden = self.warden_role(guild)
+        if warden:
+            if record.get("cell", "holding") == "holding":
+                overwrites[warden] = discord.PermissionOverwrite(
+                    view_channel=True,
+                    read_messages=True,
+                    read_message_history=True,
+                    send_messages=True,
+                    manage_messages=False,
+                )
+            else:
+                overwrites[warden] = blocked
         overwrites[member] = discord.PermissionOverwrite(
             view_channel=True,
             read_messages=True,
