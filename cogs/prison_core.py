@@ -334,6 +334,7 @@ def _blank_guild() -> dict:
         "complaint_seq": 0,
         "complaint_cooldown": {},  # user_id → timestamp آخر شكاية
         "cell_help_message_ids": {key: 0 for key in CELL_KEYS},
+        "voice_help_message_ids": {key: 0 for key in CELL_KEYS},
         # ── اللوحة العامة ──
         "wanted_channel_id": 0,
         "wanted_message_id": 0,
@@ -377,6 +378,9 @@ class PrisonStore:
         record.setdefault("cell_help_message_ids", {})
         for key in CELL_KEYS:
             record["cell_help_message_ids"].setdefault(key, 0)
+        record.setdefault("voice_help_message_ids", {})
+        for key in CELL_KEYS:
+            record["voice_help_message_ids"].setdefault(key, 0)
         record.setdefault("visits", {})
         record.setdefault("visit_seq", 0)
         record.setdefault("visits_message_id", 0)
@@ -465,6 +469,9 @@ class PrisonStore:
             "nick": nick,
             "by": int(actor_id),
             "cell_message_id": 0,
+            # الصلاحيات الفردية الأصلية ديال آخر روم/فويس قبل الاعتقال.
+            # كتترجع حرفياً ملي كيسالي الحكم.
+            "pre_prison_overwrites": [],
             "extended": [],
             "discipline_log": [
                 {

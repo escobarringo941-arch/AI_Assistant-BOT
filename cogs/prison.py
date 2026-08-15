@@ -917,6 +917,8 @@ class PrisonSystem(commands.Cog):
         # تتبّع الرسائل المتتالية ديال كل سجين فزنزانتو — باش نكشفو Spam
         # ونصعّدو العقوبة أوتوماتيكيا. المفتاح: (guild_id, user_id).
         self._cell_spam_tracker: dict[tuple[int, int], list[int]] = {}
+        # آخر روم عامة كتب فيها العضو؛ كتستعمل باش يتقفل عليه فردياً وقت الاعتقال.
+        self._last_non_prison_message_channel: dict[tuple[int, int], int] = {}
 
     # ═══════════════════════════════════════════════════
     # ║                  0. أدوات مساعدة                  ║
@@ -1337,6 +1339,8 @@ class PrisonSystem(commands.Cog):
             if key == "holding":
                 overwrites[warden] = discord.PermissionOverwrite(
                     view_channel=True,
+                    read_message_history=True,
+                    send_messages=True,
                     connect=True,
                     speak=True,
                     stream=True,
@@ -1345,13 +1349,20 @@ class PrisonSystem(commands.Cog):
             else:
                 overwrites[warden] = discord.PermissionOverwrite(
                     view_channel=False,
+                    read_message_history=False,
+                    send_messages=False,
                     connect=False,
                     speak=False,
                     stream=False,
                 )
         prisoner = self.prisoner_role(guild)
         if prisoner:
-            overwrites[prisoner] = discord.PermissionOverwrite(view_channel=False, connect=False)
+            overwrites[prisoner] = discord.PermissionOverwrite(
+                view_channel=False,
+                read_message_history=False,
+                send_messages=False,
+                connect=False,
+            )
         return overwrites
 
     def _visit_voice_overwrites(
@@ -1679,6 +1690,9 @@ class PrisonSystem(commands.Cog):
                             member,
                             overwrite=discord.PermissionOverwrite(
                                 view_channel=True,
+                                read_message_history=True,
+                                send_messages=False,
+                                add_reactions=False,
                                 connect=True,
                                 speak=True,
                                 use_voice_activation=True,
@@ -1692,11 +1706,27 @@ class PrisonSystem(commands.Cog):
                             member,
                             overwrite=discord.PermissionOverwrite(
                                 view_channel=False,
+                                read_message_history=False,
+                                send_messages=False,
                                 connect=False,
                                 speak=False,
                             ),
                             reason=f"{REASON_TAG}: hide other cell voice",
                         )
+                except (discord.Forbidden, discord.HTTPException, discord.NotFound):
+                    pass
+
+        # Visit Room وVisit Control مخبيين على السجين حتى بmember overwrite مباشر.
+        # هاد المنع كيغلب أي Permission فردية قديمة كانت عندو.
+        for key in ("visits", "visit_admin"):
+            visit_channel = self.prison_channel(member.guild, key)
+            if visit_channel is not None:
+                try:
+                    await visit_channel.set_permissions(
+                        member,
+                        overwrite=HIDE_OVERWRITE,
+                        reason=f"{REASON_TAG}: hide visit channels from inmate",
+                    )
                 except (discord.Forbidden, discord.HTTPException, discord.NotFound):
                     pass
 
@@ -1749,6 +1779,17 @@ class PrisonSystem(commands.Cog):
                 except (discord.Forbidden, discord.HTTPException):
                     pass
 
+        # حيد المنع الفردي ديال الزيارة؛ الصلاحيات العامة كترجع تتحكم من بعد الإفراج.
+        for key in ("visits", "visit_admin"):
+            visit_channel = self.prison_channel(guild, key)
+            if visit_channel is not None:
+                try:
+                    await visit_channel.set_permissions(
+                        target, overwrite=None, reason=f"{REASON_TAG}: release visit access"
+                    )
+                except (discord.Forbidden, discord.HTTPException, discord.NotFound):
+                    pass
+
     # ═══════════════════════════════════════════════════
     # ║              3. السجن وإطلاق السراح               ║
     # ═══════════════════════════════════════════════════
@@ -1766,6 +1807,119 @@ class PrisonSystem(commands.Cog):
             for role in member.roles
             if role.id not in keep and not role.managed and role.position < top
         ]
+
+    def _pre_prison_origin_channels(
+        self,
+        member: discord.Member,
+        announce_channel: Optional[discord.abc.Messageable] = None,
+    ) -> list:
+        """آخر روم كتب فيها + الفويس اللي كان داخل ليه قبل الاعتقال."""
+        guild = member.guild
+        candidates = []
+        tracked_id = self._last_non_prison_message_channel.get((guild.id, member.id), 0)
+        tracked = guild.get_channel(int(tracked_id or 0))
+        if tracked is not None:
+            candidates.append(tracked)
+        if member.voice and member.voice.channel:
+            candidates.append(member.voice.channel)
+        if (
+            announce_channel is not None
+            and getattr(announce_channel, "guild", None) == guild
+            and hasattr(announce_channel, "set_permissions")
+        ):
+            candidates.append(announce_channel)
+
+        result = []
+        seen: set[int] = set()
+        for channel in candidates:
+            channel_id = int(getattr(channel, "id", 0) or 0)
+            if not channel_id or channel_id in seen or self.is_prison_area(channel):
+                continue
+            if not hasattr(channel, "overwrites_for") or not hasattr(channel, "set_permissions"):
+                continue
+            seen.add(channel_id)
+            result.append(channel)
+        return result
+
+    @staticmethod
+    def _has_member_overwrite(channel, member: discord.Member) -> bool:
+        return any(
+            not isinstance(target, discord.Role) and int(getattr(target, "id", 0)) == member.id
+            for target in channel.overwrites
+        )
+
+    async def _lock_pre_prison_channels(
+        self, member: discord.Member, record: dict, channels: Iterable
+    ) -> int:
+        """كيحفظ Permission الفردية الأصلية وكيطبق منع كامل ما يقدرش Role Allow يغلبو."""
+        snapshots = record.setdefault("pre_prison_overwrites", [])
+        existing = {int(item.get("channel_id", 0) or 0) for item in snapshots}
+        changed = False
+        locked = 0
+        for channel in channels:
+            channel_id = int(getattr(channel, "id", 0) or 0)
+            snapshot = None
+            if channel_id not in existing:
+                previous = channel.overwrites_for(member)
+                allow, deny = previous.pair()
+                snapshot = {
+                    "channel_id": channel_id,
+                    "had_overwrite": self._has_member_overwrite(channel, member),
+                    "allow": int(allow.value),
+                    "deny": int(deny.value),
+                }
+            try:
+                await channel.set_permissions(
+                    member,
+                    overwrite=HIDE_OVERWRITE,
+                    reason=f"{REASON_TAG}: lock pre-prison channel",
+                )
+            except (discord.Forbidden, discord.HTTPException, discord.NotFound):
+                continue
+            locked += 1
+            if snapshot is not None:
+                snapshots.append(snapshot)
+                existing.add(channel_id)
+                changed = True
+        if changed:
+            self.store.save()
+        return locked
+
+    async def _enforce_pre_prison_locks(self, member: discord.Member, record: dict) -> None:
+        channels = []
+        for snapshot in record.get("pre_prison_overwrites", []):
+            channel = member.guild.get_channel(int(snapshot.get("channel_id", 0) or 0))
+            if channel is not None and not self.is_prison_area(channel):
+                channels.append(channel)
+        await self._lock_pre_prison_channels(member, record, channels)
+
+    async def _restore_pre_prison_overwrites(
+        self, member: discord.Member, record: dict
+    ) -> tuple[int, list[int]]:
+        """ملي يخرج كيرجع آخر روم لنفس member overwrite اللي كانت قبل السجن."""
+        restored = 0
+        failed: list[int] = []
+        for snapshot in record.get("pre_prison_overwrites", []):
+            channel_id = int(snapshot.get("channel_id", 0) or 0)
+            channel = member.guild.get_channel(channel_id)
+            if channel is None:
+                continue
+            overwrite = None
+            if bool(snapshot.get("had_overwrite")):
+                overwrite = discord.PermissionOverwrite.from_pair(
+                    discord.Permissions(int(snapshot.get("allow", 0) or 0)),
+                    discord.Permissions(int(snapshot.get("deny", 0) or 0)),
+                )
+            try:
+                await channel.set_permissions(
+                    member,
+                    overwrite=overwrite,
+                    reason=f"{REASON_TAG}: restore pre-prison permissions",
+                )
+                restored += 1
+            except (discord.Forbidden, discord.HTTPException, discord.NotFound):
+                failed.append(channel_id)
+        return restored, failed
 
     async def imprison(
         self,
@@ -1815,6 +1969,7 @@ class PrisonSystem(commands.Cog):
                     minimum_cell=cell_key,
                 )
 
+            origin_channels = self._pre_prison_origin_channels(member, announce_channel)
             saved_roles = self._strippable_roles(member)
             saved_ids = [role.id for role in saved_roles]
 
@@ -1847,6 +2002,8 @@ class PrisonSystem(commands.Cog):
                 nick=member.nick,
             )
 
+        await self._lock_pre_prison_channels(member, record, origin_channels)
+        self._last_non_prison_message_channel.pop((guild.id, member.id), None)
         await self._grant_cell_access(member)
         await self._post_cell_card(member, record)
 
@@ -2242,6 +2399,10 @@ class PrisonSystem(commands.Cog):
             return
 
         guild = message.guild
+        if isinstance(message.channel, (discord.TextChannel, discord.VoiceChannel)):
+            if not self.is_prison_area(message.channel):
+                self._last_non_prison_message_channel[(guild.id, member.id)] = message.channel.id
+
         record = self.store.inmate(guild.id, member.id)
         if not record:
             return
@@ -2320,6 +2481,13 @@ class PrisonSystem(commands.Cog):
                     self._suppress_role_guard.discard(member.id)
 
             await self._revoke_cell_access(guild, member)
+            _restored_channels, failed_channels = await self._restore_pre_prison_overwrites(
+                member, record
+            )
+            if failed_channels:
+                print(
+                    f"[PRISON] ⚠️ فشل إرجاع صلاحيات {member.id} فالرومز: {failed_channels}"
+                )
             await self._delete_cell_card(guild, record)
         else:
             await self._delete_cell_card(guild, record)
@@ -3020,9 +3188,10 @@ class PrisonSystem(commands.Cog):
     # ═══════════════════════════════════════════════════
 
     async def publish_cell_help_panels(self, guild: discord.Guild) -> None:
-        """كيصاوب بانل ثابتة ومثبتة فالروم النصية ديال كل زنزانة."""
+        """بانل فالروم النصية وفالـChat المدمج ديال فويس كل زنزانة."""
         record = self.store.guild(guild.id)
         message_ids = record.setdefault("cell_help_message_ids", {})
+        voice_message_ids = record.setdefault("voice_help_message_ids", {})
 
         for cell in CELL_KEYS:
             channel = self.prison_channel(guild, cell)
@@ -3052,7 +3221,9 @@ class PrisonSystem(commands.Cog):
                 value="الاختيار والسبب كيبانو غير ليك، والقرار كيمشي للمسؤول المختص.",
                 inline=False,
             )
-            embed.set_footer(text="البانل ديال الروم النصية؛ كتخدم حتى إلا كنت داخل فويس الزنزانة")
+            embed.set_footer(
+                text="نفس البانل كاينة فالروم النصية وفـOpen Chat ديال فويس الزنزانة"
+            )
 
             message = None
             message_id = int(message_ids.get(cell) or 0)
@@ -3072,6 +3243,39 @@ class PrisonSystem(commands.Cog):
             if message is not None and not message.pinned:
                 try:
                     await message.pin(reason=f"{REASON_TAG}: cell help panel")
+                except (discord.Forbidden, discord.HTTPException):
+                    pass
+
+            # Discord عندو Text Chat مدمج داخل الـVoice. كنستعمل PartialMessageable
+            # حيت discord.py 2.3 ما كيعطيش send() مباشرة على VoiceChannel model.
+            voice_channel = self.cell_voice_channel(guild, cell)
+            if not isinstance(voice_channel, discord.VoiceChannel):
+                continue
+            voice_chat = self.bot.get_partial_messageable(
+                voice_channel.id,
+                guild_id=guild.id,
+                type=discord.ChannelType.voice,
+            )
+            voice_message = None
+            voice_message_id = int(voice_message_ids.get(cell) or 0)
+            if voice_message_id:
+                try:
+                    voice_message = await voice_chat.fetch_message(voice_message_id)
+                    await voice_message.edit(embed=embed, view=CellHelpView())
+                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                    voice_message = None
+            if voice_message is None:
+                try:
+                    voice_message = await voice_chat.send(
+                        content=(
+                            "🔐 الوصول لهاد الـVoice كيتعطى لكل سجين فردياً حسب الـID. "
+                            "منين كتضغط، الاختيار والسبب كيبقاو سريين عندك."
+                        ),
+                        embed=embed,
+                        view=CellHelpView(),
+                    )
+                    voice_message_ids[cell] = voice_message.id
+                    self.store.save()
                 except (discord.Forbidden, discord.HTTPException):
                     pass
 
@@ -3825,6 +4029,7 @@ class PrisonSystem(commands.Cog):
                     record = self.store.inmate(guild.id, member.id)
                     if record is None:
                         continue
+                    await self._enforce_pre_prison_locks(member, record)
                     required_cell = self._required_cell(record, record.get("cell", "holding"))
                     if self.store.in_solitary(guild.id, member.id):
                         if CELL_RANK.get(required_cell, 0) > CELL_RANK.get(
@@ -3876,9 +4081,34 @@ class PrisonSystem(commands.Cog):
             return
         if self.is_prison_area(after):
             return
-        if after.overwrites_for(role).view_channel is False:
-            return
-        await self._apply_hidden(after, role)
+        if after.overwrites_for(role).view_channel is not False:
+            await self._apply_hidden(after, role)
+
+        # حتى member-specific Allow ما يقدرش يحل آخر روم على سجين مازال معتاقل.
+        for user_id, record in self.store.inmates(after.guild.id).items():
+            if not any(
+                int(item.get("channel_id", 0) or 0) == after.id
+                for item in record.get("pre_prison_overwrites", [])
+            ):
+                continue
+            member = after.guild.get_member(int(user_id))
+            if member is None:
+                continue
+            overwrite = after.overwrites_for(member)
+            if (
+                overwrite.view_channel is False
+                and overwrite.send_messages is False
+                and overwrite.connect is False
+            ):
+                continue
+            try:
+                await after.set_permissions(
+                    member,
+                    overwrite=HIDE_OVERWRITE,
+                    reason=f"{REASON_TAG}: enforce pre-prison room lock",
+                )
+            except (discord.Forbidden, discord.HTTPException, discord.NotFound):
+                pass
 
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member):
@@ -3899,6 +4129,7 @@ class PrisonSystem(commands.Cog):
                 pass
         finally:
             self._suppress_role_guard.discard(member.id)
+        await self._enforce_pre_prison_locks(member, record)
         await self._grant_cell_access(member)
         await self._post_cell_card(member, record)
 
