@@ -716,11 +716,17 @@ class GeneralCog(commands.Cog):
     @commands.hybrid_command(description="هضر مع البوت (AI)")
     @commands.cooldown(1, AI_USER_COOLDOWN_SECONDS, commands.BucketType.user)
     async def chat(self, ctx, *, message: str):
-        if ctx.channel.id != TARGET_CHANNEL_ID:
+        if not (
+            ctx.channel.id == TARGET_CHANNEL_ID
+            or (
+                isinstance(ctx.channel, discord.Thread)
+                and ctx.channel.parent_id == TARGET_CHANNEL_ID
+            )
+        ):
             return
-        user_id = str(ctx.author.id)
-        response = await ask_ai(user_id, ctx.author.name, ctx.author.display_name, message)
-        await ctx.send(response[:MAX_REPLY_LENGTH])
+        private_ai = bot.get_cog("PrivateAIChat")
+        if private_ai is not None:
+            await private_ai.handle_hybrid_chat(ctx, message)
 
     @commands.hybrid_command(description="امسح الذاكرة ديال المحادثة (Owner)")
     @app_commands.default_permissions(administrator=True)

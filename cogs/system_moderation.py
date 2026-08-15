@@ -430,8 +430,6 @@ class CoreModerationCog(commands.Cog):
 
     def __init__(self, bot_instance: commands.Bot):
         self.bot = bot_instance
-        self.ai_chat_inflight = set()
-        self.ai_chat_last_request = {}
 
     @commands.Cog.listener()
     async def on_member_join(self, member):
@@ -737,6 +735,14 @@ class CoreModerationCog(commands.Cog):
             return
         if message.author.bot:
             return
+        if (
+            message.channel.id == TARGET_CHANNEL_ID
+            or (
+                isinstance(message.channel, discord.Thread)
+                and message.channel.parent_id == TARGET_CHANNEL_ID
+            )
+        ):
+            return
         # Temp Voice Chat Mute: حتى Administrator إلا كتب كيتمسح المساج فوراً؛ Server Owner محمي.
         if await enforce_temp_voice_chat_mute_message(message):
             return
@@ -807,37 +813,6 @@ class CoreModerationCog(commands.Cog):
                     pass
 
         await maybe_auto_react_translate(message)
-
-        # الردود الحوارية ديال البوت ممنوعة حرفياً خارج روم الـAI المحددة.
-        if message.channel.id != TARGET_CHANNEL_ID:
-            return
-        clean_content = (message.content or "").strip()
-        if not clean_content:
-            return
-
-        user_id = str(message.author.id)
-        now_mono = asyncio.get_running_loop().time()
-        if user_id in self.ai_chat_inflight:
-            return
-        last_request = float(self.ai_chat_last_request.get(user_id, 0.0) or 0.0)
-        if now_mono - last_request < AI_USER_COOLDOWN_SECONDS:
-            return
-
-        self.ai_chat_last_request[user_id] = now_mono
-        self.ai_chat_inflight.add(user_id)
-        try:
-            async with message.channel.typing():
-                response = await ask_ai(
-                    user_id,
-                    message.author.name,
-                    message.author.display_name,
-                    clean_content,
-                )
-            await message.reply(response[:MAX_REPLY_LENGTH], mention_author=False)
-        except discord.HTTPException:
-            pass
-        finally:
-            self.ai_chat_inflight.discard(user_id)
 
     @commands.command(name="report", hidden=True)
     @commands.cooldown(1, 60, commands.BucketType.user)

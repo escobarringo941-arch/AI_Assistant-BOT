@@ -51,6 +51,7 @@ CORE_COGS = [
 
 # Standalone Cogs keep their dependency-safe order.
 GAMES_COGS = [
+    "cogs.private_ai_chat",
     "cogs.economy",
     "cogs.city",
     "cogs.city.businesses",
@@ -83,6 +84,7 @@ GAMES_COGS = [
 
 # هاد الـCog أمني: إلا فشل ما خاصش البوت يكمل وكأن الحماية خدامة.
 REQUIRED_STANDALONE_COGS = {
+    "cogs.private_ai_chat",
     "cogs.economy",
     "cogs.city",
     "cogs.city.businesses",
@@ -125,6 +127,12 @@ def _configure_cog_bridge(shared):
         "log_action": shared["log_action"],
         "is_exempt": shared["is_exempt"],
         "call_openrouter_chat": shared["call_openrouter_chat"],
+        "ask_ai": shared["ask_ai"],
+        "user_memory": shared["user_memory"],
+        "TARGET_CHANNEL_ID": shared["TARGET_CHANNEL_ID"],
+        "AI_USER_COOLDOWN_SECONDS": shared["AI_USER_COOLDOWN_SECONDS"],
+        "AI_PRIVATE_THREAD_IDLE_SECONDS": shared["AI_PRIVATE_THREAD_IDLE_SECONDS"],
+        "MAX_REPLY_LENGTH": shared["MAX_REPLY_LENGTH"],
         "temp_voice_channels": shared["temp_voice_channels"],
         "temp_voice_acl": shared["temp_voice_acl"],
         "is_temp_voice_channel": shared["is_temp_voice_channel"],

@@ -400,16 +400,21 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                                     fallback_channel=message.channel, source="chat")
     
     
-    # محادثة AI: طلب واحد جاري لكل عضو + cooldown صغير ضد الاستنزاف والسبام.
-    ai_chat_inflight = set()
-    ai_chat_last_request = {}
-
-
     @bot.event
     async def on_message(message):
         if message.author == bot.user:
             return
         if message.author.bot:
+            return
+        # محادثات الـAI كيتكلف بها PrivateAIChat: الرسالة العامة كتتمسح
+        # والجلسة الخاصة ما كتدخلش فـXP/Auto-Mod باش تبقى معزولة حسب الـID.
+        if (
+            message.channel.id == TARGET_CHANNEL_ID
+            or (
+                isinstance(message.channel, discord.Thread)
+                and message.channel.parent_id == TARGET_CHANNEL_ID
+            )
+        ):
             return
         # Temp Voice Chat Mute: حتى Administrator إلا كتب كيتمسح المساج فوراً؛ Server Owner محمي.
         if await enforce_temp_voice_chat_mute_message(message):
@@ -485,37 +490,6 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                     pass
     
         await maybe_auto_react_translate(message)
-
-        # الردود الحوارية ديال البوت ممنوعة حرفياً خارج روم الـAI المحددة.
-        if message.channel.id != TARGET_CHANNEL_ID:
-            return
-        clean_content = (message.content or "").strip()
-        if not clean_content:
-            return
-
-        user_id = str(message.author.id)
-        now_mono = asyncio.get_running_loop().time()
-        if user_id in ai_chat_inflight:
-            return
-        last_request = float(ai_chat_last_request.get(user_id, 0.0) or 0.0)
-        if now_mono - last_request < AI_USER_COOLDOWN_SECONDS:
-            return
-
-        ai_chat_last_request[user_id] = now_mono
-        ai_chat_inflight.add(user_id)
-        try:
-            async with message.channel.typing():
-                response = await ask_ai(
-                    user_id,
-                    message.author.name,
-                    message.author.display_name,
-                    clean_content,
-                )
-            await message.reply(response[:MAX_REPLY_LENGTH], mention_author=False)
-        except discord.HTTPException:
-            pass
-        finally:
-            ai_chat_inflight.discard(user_id)
     
     
     

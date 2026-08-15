@@ -79,7 +79,9 @@ class EscalationSourceTests(unittest.TestCase):
     def test_transfer_moves_card_access_voice_and_posts_reason(self):
         transfer = method_source("PrisonSystem", "transfer_cell")
         access = method_source("PrisonSystem", "_grant_cell_access")
-        self.assertIn("_delete_cell_card_at", transfer)
+        self.assertIn("self.store.note_cell_entry", transfer)
+        self.assertIn("_mark_cell_card_status", transfer)
+        self.assertIn("_cleanup_cell_after_departure", transfer)
         self.assertIn("_post_cell_escalation_notice", transfer)
         self.assertIn("view_channel=False", access)
         self.assertIn("connect=False", access)

@@ -392,6 +392,13 @@ def _blank_guild() -> dict:
         "complaint_cooldown": {},  # user_id → timestamp آخر شكاية
         "cell_help_message_ids": {key: 0 for key in CELL_KEYS},
         "voice_help_message_ids": {key: 0 for key in CELL_KEYS},
+        # بطاقة رسمية واحدة لكل سجين/زنزانة، فالتكست وفـChat ديال الفويس.
+        # كتبقى محفوظة بعد النقل/الإفراج وكتتعاود تستعمل فالدخول الموالي.
+        "cell_record_message_ids": {key: {} for key in CELL_KEYS},
+        "voice_record_message_ids": {key: {} for key in CELL_KEYS},
+        # إحصائيات دائمة حسب Discord ID؛ ما كتضيعش ملي history القديمة كتتقلم.
+        "inmate_stats": {},
+        "inmate_stats_version": 1,
         # ── اللوحة العامة ──
         "wanted_channel_id": 0,
         "wanted_message_id": 0,
@@ -421,6 +428,7 @@ class PrisonStore:
     def guild(self, guild_id: int) -> dict:
         guilds = self._db.data.setdefault("guilds", {})
         record = guilds.setdefault(str(int(guild_id)), _blank_guild())
+        needs_stats_migration = int(record.get("inmate_stats_version", 0) or 0) < 1
         # migration آمن: أي مفتاح جديد كيتزاد بلا ما يمسح القديم
         blank = _blank_guild()
         for key, value in blank.items():
@@ -438,6 +446,15 @@ class PrisonStore:
         record.setdefault("voice_help_message_ids", {})
         for key in CELL_KEYS:
             record["voice_help_message_ids"].setdefault(key, 0)
+        record.setdefault("cell_record_message_ids", {})
+        record.setdefault("voice_record_message_ids", {})
+        for key in CELL_KEYS:
+            record["cell_record_message_ids"].setdefault(key, {})
+            record["voice_record_message_ids"].setdefault(key, {})
+        if needs_stats_migration:
+            self._rebuild_inmate_stats(record)
+        record.setdefault("inmate_stats", {})
+        record["inmate_stats_version"] = 1
         record.setdefault("visits", {})
         record.setdefault("visit_seq", 0)
         record.setdefault("visits_message_id", 0)
@@ -445,6 +462,76 @@ class PrisonStore:
         record.setdefault("auto_rules", {})
         record.setdefault("auto_rule_seq", 0)
         return record
+
+    @staticmethod
+    def _record_cell_entries(record: dict) -> list[str]:
+        """كيستخرج كل دخول لدرجة سجنية من سجل حكم واحد."""
+        entries = [
+            str(item.get("to"))
+            for item in (record.get("cell_history") or [])
+            if str(item.get("to")) in CELL_KEYS
+        ]
+        if not entries:
+            cell = str(record.get("cell") or "")
+            if cell not in CELL_KEYS:
+                offense = DEFAULT_OFFENSES.get(str(record.get("offense") or ""), {})
+                cell = str(offense.get("cell") or "")
+            if cell in CELL_KEYS:
+                entries.append(cell)
+        return entries
+
+    @classmethod
+    def _rebuild_inmate_stats(cls, guild_record: dict) -> None:
+        """Migration للسجلات القديمة: كيسترجع أقصى ما يمكن بلا اختراع بيانات."""
+        stats: dict[str, dict] = {}
+
+        def absorb(user_id, case_record: dict) -> None:
+            try:
+                uid = str(int(user_id))
+            except (TypeError, ValueError):
+                return
+            user_stats = stats.setdefault(
+                uid,
+                {"cases": 0, "cells": {key: 0 for key in CELL_KEYS}},
+            )
+            user_stats["cases"] += 1
+            for cell in cls._record_cell_entries(case_record):
+                user_stats["cells"][cell] += 1
+
+        for entry in guild_record.get("history", []) or []:
+            absorb(entry.get("user_id"), entry)
+        for uid, inmate in (guild_record.get("inmates", {}) or {}).items():
+            absorb(uid, inmate)
+
+        guild_record["inmate_stats"] = stats
+        guild_record["inmate_stats_version"] = 1
+
+    def inmate_stats(self, guild_id: int, user_id: int) -> dict:
+        uid = str(int(user_id))
+        stats = self.guild(guild_id).setdefault("inmate_stats", {})
+        user_stats = stats.setdefault(
+            uid,
+            {"cases": 0, "cells": {key: 0 for key in CELL_KEYS}},
+        )
+        user_stats.setdefault("cases", 0)
+        user_stats.setdefault("cells", {})
+        for key in CELL_KEYS:
+            user_stats["cells"].setdefault(key, 0)
+        return user_stats
+
+    def case_count(self, guild_id: int, user_id: int) -> int:
+        return max(0, int(self.inmate_stats(guild_id, user_id).get("cases", 0) or 0))
+
+    def cell_entry_counts(self, guild_id: int, user_id: int) -> dict[str, int]:
+        cells = self.inmate_stats(guild_id, user_id).get("cells", {})
+        return {key: max(0, int(cells.get(key, 0) or 0)) for key in CELL_KEYS}
+
+    def note_cell_entry(self, guild_id: int, user_id: int, cell: str) -> None:
+        if cell not in CELL_KEYS:
+            return
+        stats = self.inmate_stats(guild_id, user_id)
+        stats["cells"][cell] = int(stats["cells"].get(cell, 0) or 0) + 1
+        self.save()
 
     def save(self) -> bool:
         return self._db.save()
@@ -616,6 +703,9 @@ class PrisonStore:
             ],
         }
         self.inmates(guild_id)[str(int(user_id))] = record
+        stats = self.inmate_stats(guild_id, user_id)
+        stats["cases"] = int(stats.get("cases", 0) or 0) + 1
+        stats["cells"][record["cell"]] = int(stats["cells"].get(record["cell"], 0) or 0) + 1
         self.save()
         return record
 
@@ -637,6 +727,9 @@ class PrisonStore:
     ) -> Optional[dict]:
         record = self.inmates(guild_id).pop(str(int(user_id)), None)
         if record is not None:
+            ended = now_ts()
+            record["ended"] = ended
+            record["outcome"] = outcome
             self.push_history(
                 guild_id,
                 {
@@ -645,9 +738,14 @@ class PrisonStore:
                     "offense": record.get("offense"),
                     "reason": record.get("reason"),
                     "since": record.get("since"),
-                    "ended": now_ts(),
+                    "ended": ended,
                     "outcome": outcome,
                     "by": int(actor_id),
+                    "cell": record.get("cell", "holding"),
+                    "sentence": record.get("sentence", 0),
+                    "penalty_seconds_total": record.get("penalty_seconds_total", 0),
+                    "cell_history": list(record.get("cell_history") or []),
+                    "discipline_log": list(record.get("discipline_log") or []),
                 },
             )
             self.save()
@@ -951,10 +1049,5 @@ class PrisonStore:
 
     def record_count(self, guild_id: int, user_id: int) -> int:
         """شحال من مرة تسجن هاد العضو قبل (سوابق)."""
-        uid = int(user_id)
-        past = sum(
-            1
-            for entry in self.guild(guild_id).get("history", [])
-            if int(entry.get("user_id", 0) or 0) == uid
-        )
-        return past
+        total = self.case_count(guild_id, user_id)
+        return max(0, total - (1 if self.is_inmate(guild_id, user_id) else 0))
