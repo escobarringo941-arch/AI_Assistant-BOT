@@ -14,6 +14,76 @@ from discord.ext import commands, tasks
 
 SESSION_PREFIX = "ai-private-"
 REASON_TAG = "GGMW9 Private AI"
+PANEL_MARKER = "GGMW9:PRIVATE_AI_HOME"
+
+
+class AIQuestionModal(discord.ui.Modal, title="🤖 سؤال خاص للـAI"):
+    def __init__(self):
+        super().__init__(timeout=300)
+        self.question = discord.ui.TextInput(
+            label="شنو بغيتي تسول؟",
+            placeholder="كتب سؤالك هنا… غادي يبان غير فالمحادثة الخاصة ديالك.",
+            style=discord.TextStyle.paragraph,
+            required=True,
+            min_length=1,
+            max_length=2500,
+        )
+        self.add_item(self.question)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        cog = interaction.client.get_cog("PrivateAIChat")
+        if (
+            cog is None
+            or interaction.guild is None
+            or not isinstance(interaction.user, discord.Member)
+        ):
+            await interaction.response.send_message(
+                "❌ المحادثة الخاصة ماشي متاحة دابا.", ephemeral=True
+            )
+            return
+
+        parent = interaction.guild.get_channel(cog.parent_channel_id)
+        if not isinstance(parent, discord.TextChannel):
+            await interaction.response.send_message(
+                "❌ شانيل الـAI ما بقاتش موجودة.", ephemeral=True
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        thread = await cog._ensure_session(parent, interaction.user)
+        if thread is None:
+            await interaction.followup.send(
+                "❌ ما قدرتش نفتح المحادثة. تأكد أن البوت عندو Manage Threads.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.followup.send(
+            f"🔒 المحادثة الخاصة ديالك تحلات هنا: {thread.mention}",
+            ephemeral=True,
+        )
+        await cog._answer(
+            thread,
+            interaction.user,
+            str(self.question.value),
+            copy_prompt=True,
+        )
+
+
+class AIHomeView(discord.ui.View):
+    """المدخل الوحيد المضمون باش السؤال ما يبانش فالشانيل العامة."""
+
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="ابدأ محادثة خاصة",
+        emoji="🤖",
+        style=discord.ButtonStyle.primary,
+        custom_id="ggmw9:private-ai:start",
+    )
+    async def start_chat(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(AIQuestionModal())
 
 
 class PrivateAIChat(commands.Cog):
@@ -39,11 +109,22 @@ class PrivateAIChat(commands.Cog):
             )
             if int(role_id or 0)
         }
+        self.participant_role_ids = {
+            int(role_id)
+            for role_id in (
+                bridge.get("MEMBER_ROLE_ID"),
+                bridge.get("BOYS_ROLE_ID"),
+                bridge.get("GIRLS_ROLE_ID"),
+            )
+            if int(role_id or 0)
+        }
 
         self._user_locks: dict[tuple[int, int], asyncio.Lock] = {}
         self._last_request: dict[tuple[int, int], float] = {}
         self._last_activity: dict[int, float] = {}
         self._archived_cleanup_done: set[int] = set()
+        self._panel_message_id = 0
+        self._parent_sync_lock = asyncio.Lock()
         self.cleanup_loop.start()
 
     @staticmethod
@@ -93,25 +174,132 @@ class PrivateAIChat(commands.Cog):
         except (discord.NotFound, discord.Forbidden, discord.HTTPException):
             pass
 
+    @staticmethod
+    def _panel_embed() -> discord.Embed:
+        embed = discord.Embed(
+            title="🤖 المساعد الذكي — محادثة خاصة",
+            description=(
+                "ضغط على الزر لتحت وكتب سؤالك فالخانة الخاصة.\n\n"
+                "🔒 السؤال ديالك ما كيتنشرش فهاد الشانيل.\n"
+                "🧵 البوت كيفتح ليك Private Thread مربوطة بالـDiscord ID ديالك.\n"
+                "💬 كمل الحوار داخل الـThread، وكل مستخدم عندو ذاكرة مستقلة.\n"
+                "🧹 المحادثة والذاكرة كيتمسحو أوتوماتيكياً من بعد 15 دقيقة بلا نشاط."
+            ),
+            color=discord.Color.blurple(),
+        )
+        embed.add_field(
+            name="طريقة الاستعمال",
+            value="**1.** ضغط على «ابدأ محادثة خاصة»\n**2.** كتب السؤال\n**3.** دخل للـThread وكمل الحوار",
+            inline=False,
+        )
+        embed.set_footer(text=f"{PANEL_MARKER} • غير البانل الرسمية كتبقى فهاد الشانيل")
+        return embed
+
+    @staticmethod
+    def _is_home_panel(message: discord.Message) -> bool:
+        return bool(
+            message.embeds
+            and message.embeds[0].footer
+            and PANEL_MARKER in str(message.embeds[0].footer.text or "")
+        )
+
     async def _enforce_parent_privacy(self, parent: discord.TextChannel) -> None:
-        """Manage Threads كيشوف private threads؛ كنمنعوه على الستاف فهاد الروم فقط."""
-        for role_id in self.staff_role_ids:
-            role = parent.guild.get_role(role_id)
-            if role is None:
+        """الشانيل بانل فقط، لكن أعضاء الـPrivate Thread يقدرو يكتبو بلا Read-only."""
+        guild = parent.guild
+        role_targets: list[discord.Role] = [guild.default_role]
+        for role in guild.roles:
+            if role == guild.default_role or role.managed:
                 continue
+            current = parent.overwrites_for(role)
+            if (
+                role.id in self.staff_role_ids
+                or role.id in self.participant_role_ids
+                or current.send_messages is True
+                or current.send_messages_in_threads is False
+                or current.create_private_threads is True
+                or current.create_public_threads is True
+            ):
+                role_targets.append(role)
+
+        for role in role_targets:
             overwrite = parent.overwrites_for(role)
-            if overwrite.manage_threads is False and overwrite.create_private_threads is False:
+            desired = {
+                "view_channel": True,
+                "read_message_history": True,
+                "send_messages": False,
+                "send_messages_in_threads": True,
+                "create_public_threads": False,
+                "create_private_threads": False,
+                "add_reactions": False,
+            }
+            if role.id in self.staff_role_ids:
+                desired["manage_threads"] = False
+            if all(getattr(overwrite, key) is value for key, value in desired.items()):
                 continue
-            overwrite.manage_threads = False
-            overwrite.create_private_threads = False
+            for key, value in desired.items():
+                setattr(overwrite, key, value)
             try:
                 await parent.set_permissions(
                     role,
                     overwrite=overwrite,
-                    reason=f"{REASON_TAG}: user conversations stay private",
+                    reason=f"{REASON_TAG}: private-thread access and clean parent",
                 )
             except (discord.Forbidden, discord.HTTPException):
                 continue
+
+        me = guild.me
+        if me is not None:
+            overwrite = parent.overwrites_for(me)
+            desired = {
+                "view_channel": True,
+                "read_message_history": True,
+                "send_messages": True,
+                "send_messages_in_threads": True,
+                "create_private_threads": True,
+                "manage_threads": True,
+                "manage_messages": True,
+            }
+            if not all(getattr(overwrite, key) is value for key, value in desired.items()):
+                for key, value in desired.items():
+                    setattr(overwrite, key, value)
+                try:
+                    await parent.set_permissions(
+                        me,
+                        overwrite=overwrite,
+                        reason=f"{REASON_TAG}: bot thread permissions",
+                    )
+                except (discord.Forbidden, discord.HTTPException):
+                    pass
+
+    async def _sync_parent_panel(self, parent: discord.TextChannel) -> None:
+        """كيصفر الشانيل وكيبقي رسالة تعليمية رسمية واحدة فقط."""
+        async with self._parent_sync_lock:
+            await self._enforce_parent_privacy(parent)
+            panel = None
+            try:
+                async for message in parent.history(limit=None, oldest_first=False):
+                    if panel is None and self._is_home_panel(message):
+                        panel = message
+                        continue
+                    await self._delete_source_message(message)
+            except (discord.Forbidden, discord.HTTPException):
+                pass
+
+            if panel is not None:
+                try:
+                    await panel.edit(embed=self._panel_embed(), view=AIHomeView(), content=None)
+                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                    panel = None
+            if panel is None:
+                try:
+                    panel = await parent.send(embed=self._panel_embed(), view=AIHomeView())
+                except (discord.Forbidden, discord.HTTPException):
+                    return
+            self._panel_message_id = int(panel.id)
+            try:
+                await panel.pin(reason=f"{REASON_TAG}: official instructions")
+            except (discord.Forbidden, discord.HTTPException):
+                pass
 
     async def _find_active_session(
         self,
@@ -130,7 +318,16 @@ class PrivateAIChat(commands.Cog):
                 continue
             if thread.archived:
                 try:
-                    await thread.edit(archived=False, reason=f"{REASON_TAG}: resume session")
+                    await thread.edit(
+                        archived=False,
+                        locked=False,
+                        reason=f"{REASON_TAG}: resume session",
+                    )
+                except (discord.Forbidden, discord.HTTPException):
+                    return None
+            elif thread.locked:
+                try:
+                    await thread.edit(locked=False, reason=f"{REASON_TAG}: unlock session")
                 except (discord.Forbidden, discord.HTTPException):
                     return None
             return thread
@@ -154,6 +351,15 @@ class PrivateAIChat(commands.Cog):
                 )
             except (discord.Forbidden, discord.HTTPException):
                 return None
+        try:
+            await thread.add_user(member)
+        except (discord.Forbidden, discord.HTTPException):
+            try:
+                await thread.delete(reason=f"{REASON_TAG}: could not grant private access")
+            except (discord.Forbidden, discord.HTTPException, discord.NotFound):
+                pass
+            return None
+        if thread.last_message_id is None:
             try:
                 await thread.send(
                     embed=discord.Embed(
@@ -169,14 +375,6 @@ class PrivateAIChat(commands.Cog):
                 )
             except (discord.Forbidden, discord.HTTPException):
                 pass
-        try:
-            await thread.add_user(member)
-        except (discord.Forbidden, discord.HTTPException):
-            try:
-                await thread.delete(reason=f"{REASON_TAG}: could not grant private access")
-            except (discord.Forbidden, discord.HTTPException, discord.NotFound):
-                pass
-            return None
         self._touch(thread)
         return thread
 
@@ -327,6 +525,13 @@ class PrivateAIChat(commands.Cog):
                 except (discord.NotFound, discord.Forbidden, discord.HTTPException):
                     continue
 
+    @commands.Cog.listener()
+    async def on_ready(self):
+        for guild in list(self.bot.guilds):
+            parent = guild.get_channel(self.parent_channel_id)
+            if isinstance(parent, discord.TextChannel):
+                await self._sync_parent_panel(parent)
+
     @cleanup_loop.before_loop
     async def _before_cleanup(self):
         await self.bot.wait_until_ready()
@@ -342,9 +547,24 @@ class PrivateAIChat(commands.Cog):
         if isinstance(after, discord.TextChannel) and after.id == self.parent_channel_id:
             await self._enforce_parent_privacy(after)
 
+    @commands.Cog.listener()
+    async def on_raw_message_delete(self, payload: discord.RawMessageDeleteEvent):
+        if (
+            int(payload.channel_id) != self.parent_channel_id
+            or int(payload.message_id) != self._panel_message_id
+            or payload.guild_id is None
+        ):
+            return
+        guild = self.bot.get_guild(int(payload.guild_id))
+        parent = guild.get_channel(self.parent_channel_id) if guild else None
+        if isinstance(parent, discord.TextChannel):
+            self._panel_message_id = 0
+            await self._sync_parent_panel(parent)
+
     async def cog_unload(self):
         self.cleanup_loop.cancel()
 
 
 async def setup(bot: commands.Bot):
+    bot.add_view(AIHomeView())
     await bot.add_cog(PrivateAIChat(bot))

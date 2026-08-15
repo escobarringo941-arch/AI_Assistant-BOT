@@ -78,7 +78,8 @@ class VoiceIsolationSourceTests(unittest.TestCase):
         self.assertIn("self.bot.get_partial_messageable", publish)
         self.assertIn("discord.ChannelType.voice", publish)
         self.assertIn("await voice_chat.send", publish)
-        self.assertIn("view=CellHelpView()", publish)
+        self.assertIn("view=CellVoiceHelpView()", publish)
+        self.assertIn("ملف السجين والسجل الكامل كاينين غير فـ#", publish)
 
     def test_current_voice_cell_allows_plain_text_chat_only(self):
         access = method_source("PrisonSystem", "_grant_cell_access")

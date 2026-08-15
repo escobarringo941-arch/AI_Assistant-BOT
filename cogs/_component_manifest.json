@@ -1,6 +1,6 @@
 {
   "description": "Hashes lock the reviewed component bytes and execution order; intentional feature revisions update this baseline.",
-  "joined_sha256": "35870b6c43e044f10f68cf44514f8e2dd9ba4ea3dd32edd9601e4816406e5d0a",
+  "joined_sha256": "cdc2b20fa53d16d76f0605f9008c849b100cddba86bfac545fa67c57ac293722",
   "events_before_setup_hook": [
     "on_voice_state_update",
     "on_member_join",
@@ -14,6 +14,7 @@
   ],
   "task_loops": [
     "afk_auto_move_loop",
+    "update_relationship_lists",
     "birthday_loop",
     "temp_voice_housekeeping_loop",
     "voice_xp_loop",
@@ -211,7 +212,7 @@
       "path": "cogs/owner_control.py",
       "original_start_line": 12456,
       "original_end_line": 13608,
-      "sha256": "70d10dd03fcdcc144400218d78ec16b835aa82126e52d0b656c3861c11d855e8"
+      "sha256": "a016298abe850dec4d7794c5563a21d73d4a2ec7756d2c32042cbb75fddc5862"
     },
     {
       "name": "ready_events",

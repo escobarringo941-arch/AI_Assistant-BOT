@@ -87,10 +87,10 @@ class EscalationSourceTests(unittest.TestCase):
         self.assertIn("connect=False", access)
         self.assertIn("member.move_to(", access)
 
-    def test_solitary_card_refresh_is_isolated(self):
+    def test_live_files_are_on_demand_while_ready_still_repairs_cells(self):
         refresh = method_source("PrisonSystem", "refresh_cell_cards")
         ready = method_source("PrisonSystem", "on_ready")
-        self.assertIn("if self.store.in_solitary", refresh)
+        self.assertIn("return 0", refresh)
         self.assertIn("await self._grant_cell_access(", ready)
         self.assertIn("required_cell = self._required_cell", ready)
         self.assertIn("await self.transfer_cell(", ready)

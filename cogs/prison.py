@@ -249,7 +249,7 @@ class PrisonerCardView(discord.ui.View):
 
 
 class CellHelpView(discord.ui.View):
-    """بانل ثابتة فالروم النصية ديال كل زنزانة."""
+    """بانل موحدة فـ# الزنزانة: الملف الخاص + السجل + طلب التدخل."""
 
     def __init__(self):
         super().__init__(timeout=None)
@@ -262,6 +262,231 @@ class CellHelpView(discord.ui.View):
     )
     async def request_help(self, interaction: discord.Interaction, button: discord.ui.Button):
         await _open_complaint_flow(interaction)
+
+    @discord.ui.button(
+        label="ملفي الحالي",
+        emoji="📄",
+        style=discord.ButtonStyle.primary,
+        custom_id="ggmw9:prison:my-file",
+    )
+    async def my_file(self, interaction: discord.Interaction, button: discord.ui.Button):
+        cog = interaction.client.get_cog("PrisonSystem")
+        if cog is None or interaction.guild is None:
+            await interaction.response.send_message("❌ النظام ماشي متاح.", ephemeral=True)
+            return
+        record = cog.store.inmate(interaction.guild.id, interaction.user.id)
+        if record is None or not isinstance(interaction.user, discord.Member):
+            await interaction.response.send_message(
+                "🕊️ ما عندك حتى ملف سجني نشط دابا.", ephemeral=True
+            )
+            return
+        current_cell = str(record.get("cell") or "holding")
+        channel = cog.prison_channel(interaction.guild, current_cell)
+        if channel is None or int(interaction.channel_id or 0) != int(channel.id):
+            await interaction.response.send_message(
+                "❌ الملف الحالي كيتفتح غير من # الزنزانة المعينة ليك.", ephemeral=True
+            )
+            return
+        await interaction.response.send_message(
+            embed=cog._cell_card_embed(interaction.user, record),
+            view=PrisonerCardView(),
+            ephemeral=True,
+        )
+
+    @discord.ui.button(
+        label="سجل النزلاء",
+        emoji="🗂️",
+        style=discord.ButtonStyle.secondary,
+        custom_id="ggmw9:prison:registry",
+    )
+    async def registry(self, interaction: discord.Interaction, button: discord.ui.Button):
+        cog = interaction.client.get_cog("PrisonSystem")
+        if cog is None or interaction.guild is None:
+            await interaction.response.send_message("❌ النظام ماشي متاح.", ephemeral=True)
+            return
+        cell = cog.cell_key_for_text_channel(interaction.guild, int(interaction.channel_id or 0))
+        if cell is None:
+            await interaction.response.send_message(
+                "❌ سجل النزلاء كيتفتح غير من # ديال الزنزانة.", ephemeral=True
+            )
+            return
+        user_ids = cog.store.registry_user_ids(interaction.guild.id, cell)
+        if not user_ids:
+            await interaction.response.send_message(
+                "📭 ما داز حتى سجين حقيقي من هاد الزنزانة دابا.", ephemeral=True
+            )
+            return
+        await interaction.response.send_message(
+            embed=cog._registry_home_embed(interaction.guild, cell, len(user_ids), 0),
+            view=PrisonRegistryView(
+                cog,
+                interaction.guild,
+                cell,
+                requester_id=interaction.user.id,
+                page=0,
+            ),
+            ephemeral=True,
+        )
+
+
+class CellVoiceHelpView(discord.ui.View):
+    """Voice Chat فيه غير الاستغاثة والعداد؛ ملف السجين ما كيبانش تما."""
+
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="طلب تدخل / شكاية",
+        emoji="🆘",
+        style=discord.ButtonStyle.danger,
+        custom_id="ggmw9:prison:voice-cell-help",
+    )
+    async def request_help(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await _open_complaint_flow(interaction)
+
+
+class PrisonRegistrySelect(discord.ui.Select):
+    def __init__(
+        self,
+        cog,
+        guild: discord.Guild,
+        cell: str,
+        requester_id: int,
+        page: int,
+        user_ids: list[int],
+    ):
+        self.cog = cog
+        self.guild_id = int(guild.id)
+        self.cell = cell
+        self.requester_id = int(requester_id)
+        self.page = max(0, int(page))
+        options: list[discord.SelectOption] = []
+        for user_id in user_ids:
+            member = guild.get_member(int(user_id))
+            stats = cog.store.inmate_summary(guild.id, int(user_id))
+            name = (
+                member.display_name
+                if member is not None
+                else str(stats.get("last_name") or f"ID {int(user_id)}")
+            )
+            counts = stats.get("cells", {})
+            options.append(
+                discord.SelectOption(
+                    label=str(name)[:100],
+                    value=str(int(user_id)),
+                    description=(
+                        f"{int(stats.get('cases', 0) or 0)} حكم • "
+                        f"هاد الزنزانة: {int(counts.get(cell, 0) or 0)}"
+                    )[:100],
+                    emoji="⛓️" if stats.get("active") else "🕊️",
+                )
+            )
+        super().__init__(
+            placeholder="اختار سجين باش تشوف السجل…",
+            min_values=1,
+            max_values=1,
+            options=options,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.requester_id or interaction.guild is None:
+            await interaction.response.send_message("❌ هادي ماشي الجلسة ديالك.", ephemeral=True)
+            return
+        user_id = int(self.values[0])
+        await interaction.response.edit_message(
+            embed=self.cog._registry_record_embed(interaction.guild, user_id, self.cell),
+            view=PrisonRegistryView(
+                self.cog,
+                interaction.guild,
+                self.cell,
+                requester_id=self.requester_id,
+                page=self.page,
+            ),
+        )
+
+
+class PrisonRegistryView(discord.ui.View):
+    PAGE_SIZE = 25
+
+    def __init__(
+        self,
+        cog,
+        guild: discord.Guild,
+        cell: str,
+        *,
+        requester_id: int,
+        page: int = 0,
+    ):
+        super().__init__(timeout=300)
+        self.cog = cog
+        self.guild_id = int(guild.id)
+        self.cell = cell
+        self.requester_id = int(requester_id)
+        all_ids = cog.store.registry_user_ids(guild.id, cell)
+        self.pages = max(1, (len(all_ids) + self.PAGE_SIZE - 1) // self.PAGE_SIZE)
+        self.page = min(max(0, int(page)), self.pages - 1)
+        start = self.page * self.PAGE_SIZE
+        page_ids = all_ids[start : start + self.PAGE_SIZE]
+        if page_ids:
+            self.add_item(
+                PrisonRegistrySelect(
+                    cog,
+                    guild,
+                    cell,
+                    self.requester_id,
+                    self.page,
+                    page_ids,
+                )
+            )
+
+        previous = discord.ui.Button(
+            label="السابق",
+            emoji="⬅️",
+            style=discord.ButtonStyle.secondary,
+            disabled=self.page <= 0,
+            row=1,
+        )
+        following = discord.ui.Button(
+            label="التالي",
+            emoji="➡️",
+            style=discord.ButtonStyle.secondary,
+            disabled=self.page >= self.pages - 1,
+            row=1,
+        )
+
+        async def go_previous(interaction: discord.Interaction):
+            await self._go(interaction, self.page - 1)
+
+        async def go_following(interaction: discord.Interaction):
+            await self._go(interaction, self.page + 1)
+
+        previous.callback = go_previous
+        following.callback = go_following
+        self.add_item(previous)
+        self.add_item(following)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id == self.requester_id:
+            return True
+        await interaction.response.send_message("❌ هادي ماشي الجلسة ديالك.", ephemeral=True)
+        return False
+
+    async def _go(self, interaction: discord.Interaction, page: int) -> None:
+        guild = interaction.guild
+        if guild is None:
+            return
+        total = len(self.cog.store.registry_user_ids(guild.id, self.cell))
+        page = min(max(0, int(page)), self.pages - 1)
+        await interaction.response.edit_message(
+            embed=self.cog._registry_home_embed(guild, self.cell, total, page),
+            view=PrisonRegistryView(
+                self.cog,
+                guild,
+                self.cell,
+                requester_id=self.requester_id,
+                page=page,
+            ),
+        )
 
 
 class ComplaintTargetSelect(discord.ui.UserSelect):
@@ -986,6 +1211,139 @@ class PrisonSystem(commands.Cog):
     def cell_voice_channel(self, guild: discord.Guild, key: str):
         return guild.get_channel(int(self.store.voice_channel_id(guild.id, key)))
 
+    def cell_key_for_text_channel(self, guild: discord.Guild, channel_id: int) -> Optional[str]:
+        for cell in CELL_KEYS:
+            channel = self.prison_channel(guild, cell)
+            if isinstance(channel, discord.TextChannel) and channel.id == int(channel_id):
+                return cell
+        return None
+
+    def _registry_home_embed(
+        self,
+        guild: discord.Guild,
+        cell: str,
+        total: int,
+        page: int,
+    ) -> discord.Embed:
+        pages = max(1, (max(0, int(total)) + PrisonRegistryView.PAGE_SIZE - 1) // PrisonRegistryView.PAGE_SIZE)
+        embed = discord.Embed(
+            title=f"🗂️ سجل نزلاء {_cell_display(cell)}",
+            description=(
+                "هاد اللائحة فيها **غير الناس اللي دازو فعلياً من هاد الزنزانة**.\n"
+                "اختار الاسم باش يطلع ليك السجل بشكل خاص بلا ما يتعمر الشانيل."
+            ),
+            color=discord.Color.dark_teal(),
+        )
+        embed.add_field(name="👥 عدد النزلاء المسجلين", value=f"**{int(total)}**", inline=True)
+        embed.add_field(name="📄 الصفحة", value=f"**{int(page) + 1}/{pages}**", inline=True)
+        embed.add_field(
+            name="🔐 طريقة العرض",
+            value="النتيجة ephemeral: كتشوفها غير نتا، والبانل العامة كتبقى نقية.",
+            inline=False,
+        )
+        embed.set_footer(text="GGMW9 Prison Registry • السجل مربوط بـDiscord ID")
+        return embed
+
+    def _registry_record_embed(
+        self,
+        guild: discord.Guild,
+        user_id: int,
+        cell_context: str,
+    ) -> discord.Embed:
+        summary = self.store.inmate_summary(guild.id, user_id)
+        active = summary.get("active")
+        latest = self.store.latest_case(guild.id, user_id) or {}
+        member = guild.get_member(int(user_id))
+        display_name = (
+            member.display_name
+            if member is not None
+            else str(summary.get("last_name") or f"ID {int(user_id)}")
+        )
+        counts = summary.get("cells", {})
+        visited = sum(1 for cell in CELL_KEYS if int(counts.get(cell, 0) or 0) > 0)
+        status = (
+            f"⛓️ معتاقل دابا فـ **{_cell_display(active.get('cell', 'holding'))}**"
+            if active is not None
+            else "🕊️ **حر طليق — خارج السجن**"
+        )
+        embed = discord.Embed(
+            title=f"🗃️ السجل السجني — {display_name}",
+            description=f"<@{int(user_id)}>\n\n{status}",
+            color=COLOR_JAIL if active is not None else COLOR_FREE,
+            timestamp=datetime.now(),
+        )
+        embed.add_field(name="🆔 Discord ID", value=f"`{int(user_id)}`", inline=True)
+        embed.add_field(
+            name="📚 مجموع الأحكام",
+            value=f"**{int(summary.get('cases', 0) or 0)}** مرة",
+            inline=True,
+        )
+        embed.add_field(name="🏚️ درجات داز منها", value=f"**{visited}/3**", inline=True)
+        embed.add_field(
+            name="📊 الدخول حسب الزنزانة",
+            value=(
+                f"⛓️ Holding: **{int(counts.get('holding', 0) or 0)}**\n"
+                f"🔒 Cell Block: **{int(counts.get('block', 0) or 0)}**\n"
+                f"🚨 Maximum: **{int(counts.get('max', 0) or 0)}**"
+            ),
+            inline=True,
+        )
+        embed.add_field(
+            name="🔁 مرات هاد الزنزانة",
+            value=f"**{int(counts.get(cell_context, 0) or 0)}** مرة",
+            inline=True,
+        )
+        embed.add_field(
+            name="⌛ الوقت المقضي فعلياً",
+            value=f"**{format_duration(int(summary.get('total_served_seconds', 0) or 0))}**",
+            inline=True,
+        )
+
+        first_entry = int(summary.get("first_entry", 0) or 0)
+        last_entry = int(summary.get("last_entry", 0) or 0)
+        last_release = int(summary.get("last_release", 0) or 0)
+        if first_entry:
+            embed.add_field(name="📥 أول دخول", value=f"<t:{first_entry}:f>", inline=True)
+        if last_entry:
+            embed.add_field(name="🕐 آخر دخول", value=f"<t:{last_entry}:f>", inline=True)
+        if last_release:
+            embed.add_field(name="📤 آخر خروج", value=f"<t:{last_release}:f>", inline=True)
+
+        offense_key = str(latest.get("offense") or summary.get("last_offense") or "manual")
+        offense = self.store.offense(guild.id, offense_key)
+        embed.add_field(
+            name="📌 آخر مخالفة مسجلة",
+            value=f"**{offense['label']}** • Case #{int(latest.get('case', summary.get('last_case', 0)) or 0)}",
+            inline=False,
+        )
+        embed.add_field(
+            name="📝 آخر سبب",
+            value=str(latest.get("reason") or summary.get("last_reason") or "ما تسجل حتى سبب")[:1000],
+            inline=False,
+        )
+        if active is not None:
+            left = remaining_seconds(active)
+            timing = "مؤبّد ♾️" if left < 0 else format_duration(left)
+            embed.add_field(name="⏳ الباقي دابا", value=f"**{timing}**", inline=True)
+            until = int(active.get("until", 0) or 0)
+            if until > 0:
+                embed.add_field(name="🔓 موعد الخروج", value=f"<t:{until}:f>\n<t:{until}:R>", inline=True)
+        else:
+            outcomes = {
+                "released": "إفراج إداري",
+                "expired": "سالات المدة",
+            }
+            outcome = str(summary.get("last_outcome") or "released")
+            embed.add_field(
+                name="✅ آخر نتيجة",
+                value=outcomes.get(outcome, outcome),
+                inline=True,
+            )
+        if member is not None:
+            embed.set_thumbnail(url=member.display_avatar.url)
+        embed.set_footer(text="سجل دائم مربوط بالـDiscord ID • العرض خاص بصاحب التفاعل")
+        return embed
+
     def visit_channel(self, guild: discord.Guild):
         return self.prison_channel(guild, "visits")
 
@@ -1558,6 +1916,9 @@ class PrisonSystem(commands.Cog):
 
             self.store.save()
 
+        # Migration ديال التصميم القديم: ما يبقى حتى ملف شخصي عمومي لا فـ# لا فـVoice.
+        await self._remove_legacy_cell_record_cards(guild)
+
         # رجّع الوصول ديال السجناء الحاليين لزنازنهم + خبّي السجن على الباقي
         await self.hide_everywhere(guild)
         for uid in list(self.store.inmates(guild.id)):
@@ -2028,6 +2389,7 @@ class PrisonSystem(commands.Cog):
                 actor_id=int(getattr(actor, "id", 0) or 0),
                 roles=saved_ids,
                 nick=member.nick,
+                display_name=member.display_name,
             )
 
         await self._lock_pre_prison_channels(member, record, origin_channels)
@@ -2655,6 +3017,8 @@ class PrisonSystem(commands.Cog):
         member = guild.get_member(int(user_id))
         restored: list[str] = []
         missing: list[str] = []
+        role_restore_error = ""
+        role_guard_held = False
 
         if member is not None:
             async with self._member_lock(member.id):
@@ -2683,6 +3047,7 @@ class PrisonSystem(commands.Cog):
                 ]
 
                 self._suppress_role_guard.add(member.id)
+                role_guard_held = True
                 try:
                     await member.edit(
                         roles=list({r.id: r for r in (target_roles + keep)}.values()),
@@ -2690,9 +3055,26 @@ class PrisonSystem(commands.Cog):
                     )
                 except (discord.Forbidden, discord.HTTPException) as exc:
                     print(f"[PRISON] ⚠️ إرجاع الرولات فشل لـ {member}: {exc}")
-                finally:
-                    self._suppress_role_guard.discard(member.id)
+                    role_restore_error = str(exc)
 
+        if role_restore_error:
+            if member is not None and role_guard_held:
+                self._suppress_role_guard.discard(member.id)
+            return {
+                "ok": False,
+                "error": "ما قدرتش نرجع الرولات؛ السجين بقا مسجل وغادي نعاود المحاولة.",
+            }
+
+        # كنحيدو من السجل النشط قبل إرجاع overwrite ديال الروم. هاد الترتيب
+        # كيمنع on_guild_channel_update يعاود يطبق HIDE_OVERWRITE وسط الإفراج.
+        released_record = self.store.remove_inmate(
+            guild.id, user_id, outcome=outcome, actor_id=int(getattr(actor, "id", 0) or 0)
+        )
+        released_record = released_record or record
+        if member is not None and role_guard_held:
+            self._suppress_role_guard.discard(member.id)
+
+        if member is not None:
             await self._revoke_cell_access(guild, member)
             _restored_channels, failed_channels = await self._restore_pre_prison_overwrites(
                 member, record
@@ -2701,11 +3083,6 @@ class PrisonSystem(commands.Cog):
                 print(
                     f"[PRISON] ⚠️ فشل إرجاع صلاحيات {member.id} فالرومز: {failed_channels}"
                 )
-
-        released_record = self.store.remove_inmate(
-            guild.id, user_id, outcome=outcome, actor_id=int(getattr(actor, "id", 0) or 0)
-        )
-        released_record = released_record or record
         final_cell = released_record.get("cell", "holding")
         await self._mark_cell_card_status(
             guild,
@@ -2968,6 +3345,53 @@ class PrisonSystem(commands.Cog):
         key = "voice_record_message_ids" if voice else "cell_record_message_ids"
         return record.setdefault(key, {}).setdefault(cell, {})
 
+    async def _remove_legacy_cell_record_cards(self, guild: discord.Guild) -> int:
+        """Migration: كيمسح البطاقات العمومية القديمة من # ومن Voice Chat."""
+        deleted = 0
+        legacy_titles = (
+            "ملف السجين",
+            "ملف مُفرج عنه",
+            "ملف انتقال",
+            "ملف معلق",
+        )
+        for cell in CELL_KEYS:
+            text_channel = self.prison_channel(guild, cell)
+            voice_channel = self.cell_voice_channel(guild, cell)
+            targets = []
+            if isinstance(text_channel, discord.TextChannel):
+                targets.append(text_channel)
+            if isinstance(voice_channel, discord.VoiceChannel):
+                targets.append(
+                    self.bot.get_partial_messageable(
+                        voice_channel.id,
+                        guild_id=guild.id,
+                        type=discord.ChannelType.voice,
+                    )
+                )
+            for target in targets:
+                try:
+                    async for message in target.history(limit=None, oldest_first=False):
+                        if not message.embeds:
+                            continue
+                        title = str(message.embeds[0].title or "")
+                        if not any(marker in title for marker in legacy_titles):
+                            continue
+                        try:
+                            await message.delete()
+                            deleted += 1
+                        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                            continue
+                except (discord.NotFound, discord.Forbidden, discord.HTTPException, AttributeError):
+                    continue
+
+            self._cell_record_map(guild, cell, voice=False).clear()
+            self._cell_record_map(guild, cell, voice=True).clear()
+
+        for record in self.store.inmates(guild.id).values():
+            record.pop("cell_message_id", None)
+        self.store.save()
+        return deleted
+
     async def _upsert_cell_record_card(
         self,
         guild: discord.Guild,
@@ -3041,15 +3465,10 @@ class PrisonSystem(commands.Cog):
             self.store.save()
 
     async def _post_cell_card(self, member: discord.Member, record: dict) -> None:
-        cell = record.get("cell", "holding")
-        await self._upsert_cell_record_card(
+        """الملف الحي ما بقاش Message عامة؛ زر «ملفي الحالي» كيطلعو ephemeral."""
+        await self.publish_cell_help_panels(
             member.guild,
-            member.id,
-            cell=cell,
-            embed=self._cell_card_embed(member, record),
-            view=PrisonerCardView(),
-            content=member.mention,
-            record=record,
+            cell_only=str(record.get("cell") or "holding"),
         )
 
     async def _mark_cell_card_status(
@@ -3064,24 +3483,8 @@ class PrisonSystem(commands.Cog):
         member: Optional[discord.Member] = None,
         destination: Optional[str] = None,
     ) -> None:
-        await self._upsert_cell_record_card(
-            guild,
-            user_id,
-            cell=cell,
-            embed=self._archived_cell_card_embed(
-                guild,
-                user_id,
-                record,
-                cell=cell,
-                status=status,
-                reason=reason,
-                member=member,
-                destination=destination,
-            ),
-            view=None,
-            content=f"<@{int(user_id)}>",
-            record=record,
-        )
+        """الحالة كتتخزن فالسجل وكتبان عند الطلب، بلا بطاقة عمومية دائمة."""
+        return None
 
     async def _post_cell_escalation_notice(
         self,
@@ -3167,18 +3570,8 @@ class PrisonSystem(commands.Cog):
             pass
 
     async def refresh_cell_cards(self, guild: discord.Guild) -> int:
-        """كيحدّث بطاقة كل سجين فالتكست وفـChat ديال الفويس."""
-        updated = 0
-        for uid, record in list(self.store.inmates(guild.id).items()):
-            if self.store.in_solitary(guild.id, int(uid)):
-                continue
-            member = guild.get_member(int(uid))
-            if member is None:
-                continue
-            await self._post_cell_card(member, record)
-            updated += 1
-            await asyncio.sleep(0.6)  # احترام rate limits
-        return updated
+        """Compatibility: الملفات دابا كتتبنى مباشرة من DB ملي السجين يطلبها."""
+        return 0
 
     def _official_cell_message_ids(
         self,
@@ -3190,10 +3583,6 @@ class PrisonSystem(commands.Cog):
         guild_record = self.store.guild(guild.id)
         help_key = "voice_help_message_ids" if voice else "cell_help_message_ids"
         keep = {int(guild_record.get(help_key, {}).get(cell) or 0)}
-        keep.update(
-            int(message_id or 0)
-            for message_id in self._cell_record_map(guild, cell, voice=voice).values()
-        )
         keep.discard(0)
         return keep
 
@@ -3235,7 +3624,7 @@ class PrisonSystem(commands.Cog):
     ) -> int:
         """
         كيمسح رسائل السجين اللي خرج من التكست والفويس. إلا خْوات الزنزانة،
-        كيمسح كاع الرسائل العابرة وكيبقي غير البانل والملفات الرسمية.
+        كيمسح كاع الرسائل العابرة وكيبقي غير البانل الرسمية الواحدة.
         """
         empty = not self._cell_has_active_inmates(guild, cell)
         author_filter = None if empty else int(user_id)
@@ -3719,9 +4108,10 @@ class PrisonSystem(commands.Cog):
         guild: discord.Guild,
         *,
         voice_only: bool = False,
+        cell_only: Optional[str] = None,
     ) -> None:
         """
-        بانل فالروم النصية وفالـChat المدمج ديال فويس كل زنزانة.
+        # الزنزانة: سجل + ملف خاص + شكاية. Voice Chat: شكاية + عداد فقط.
         التحديث الدقيق كل دقيقة كيمس غير رسالة الفويس باش يبقى البوت خفيف.
         """
         record = self.store.guild(guild.id)
@@ -3730,40 +4120,52 @@ class PrisonSystem(commands.Cog):
         changed = False
 
         for cell in CELL_KEYS:
+            if cell_only in CELL_KEYS and cell != cell_only:
+                continue
             authority = (
                 "👮 الـWarden أو 👑 الـOwner"
                 if cell == "holding"
                 else "👑 الـOwner بوحدو"
             )
+            registered = len(self.store.registry_user_ids(guild.id, cell))
             embed = discord.Embed(
-                title=f"🆘 طلب تدخل — {_cell_display(cell)}",
+                title=f"🗂️ سجل نزلاء {_cell_display(cell)}",
                 description=(
-                    "إلا وقع صداع، تهديد، مضاربة ولا مشكل مع سجين آخر، "
-                    "ضغط على الزر لتحت.\n\n"
-                    "1️⃣ اختار سجين واحد أو عدة سجناء من نفس الزنزانة.\n"
-                    "2️⃣ شرح أشنو وقع بوضوح.\n"
-                    "3️⃣ المسؤول المختص كيقبل الطلب أو يرفضو.\n"
-                    "4️⃣ إلا تقبل، كل مسؤول على المشكل كيمشي لانفرادي مستقل ومؤقت."
+                    "هاد هي البانل الرسمية الوحيدة ديال الزنزانة.\n\n"
+                    "📄 **ملفي الحالي:** السجين كيشوف الملف الحي ديالو بوحدو.\n"
+                    "🗂️ **سجل النزلاء:** لائحة الناس اللي دازو بصح من هاد المستوى.\n"
+                    "🆘 **طلب تدخل:** شكاية سرية على سجين واحد أو أكثر من نفس الزنزانة."
                 ),
                 color=(discord.Color.orange() if cell == "holding" else discord.Color.dark_red()),
             )
             embed.add_field(name="⚖️ شكون كيحسم؟", value=authority, inline=False)
             embed.add_field(
                 name="🔒 الخصوصية",
-                value="الاختيار والسبب كيبانو غير ليك، والقرار كيمشي للمسؤول المختص.",
+                value="الملف والسجل والاختيار والسبب كيبانو غير لصاحب التفاعل.",
                 inline=False,
             )
-            voice_embed = embed.copy()
+            embed.add_field(
+                name="👥 نزلاء مسجلين فهاد الدرجة",
+                value=f"**{registered}** حساب مربوط بـDiscord ID",
+                inline=True,
+            )
+            voice_embed = discord.Embed(
+                title=f"🆘 تدخل وعداد — {_cell_display(cell)}",
+                description=(
+                    "إلا وقع صداع، تهديد ولا مضاربة، استعمل زر الشكاية.\n"
+                    "ملف السجين والسجل الكامل كاينين غير فـ# ديال الزنزانة، ماشي هنا."
+                ),
+                color=(discord.Color.orange() if cell == "holding" else discord.Color.dark_red()),
+            )
+            voice_embed.add_field(name="⚖️ شكون كيحسم؟", value=authority, inline=False)
             voice_embed.add_field(
                 name="⏳ المدة الباقية لكل سجين",
                 value=self._cell_sentence_roster(guild, cell),
                 inline=False,
             )
-            embed.set_footer(
-                text="نفس زر التدخل كاين حتى فـOpen Chat ديال فويس الزنزانة"
-            )
+            embed.set_footer(text="GGMW9 Prison Registry • النتائج خاصة وما كتعمرش الشانيل")
             voice_embed.set_footer(
-                text="العداد كيتحدث أوتوماتيكياً كل دقيقة داخل Voice Chat"
+                text="Voice Chat بلا ملفات سجناء • العداد كيتحدث أوتوماتيكياً كل دقيقة"
             )
 
             if not voice_only:
@@ -3804,7 +4206,7 @@ class PrisonSystem(commands.Cog):
             if voice_message_id:
                 try:
                     voice_message = voice_chat.get_partial_message(voice_message_id)
-                    await voice_message.edit(embed=voice_embed, view=CellHelpView())
+                    await voice_message.edit(embed=voice_embed, view=CellVoiceHelpView())
                 except (discord.NotFound, discord.Forbidden, discord.HTTPException):
                     voice_message = None
             if voice_message is None:
@@ -3815,7 +4217,7 @@ class PrisonSystem(commands.Cog):
                             "منين كتضغط، الاختيار والسبب كيبقاو سريين عندك."
                         ),
                         embed=voice_embed,
-                        view=CellHelpView(),
+                        view=CellVoiceHelpView(),
                     )
                     voice_message_ids[cell] = voice_message.id
                     changed = True
@@ -4517,11 +4919,9 @@ class PrisonSystem(commands.Cog):
 
     @tasks.loop(seconds=60)
     async def card_loop(self):
-        """كيخلي بطاقة كل سجين والعداد الجماعي ديال Voice Chat حيّين."""
+        """كيخلي غير العداد الجماعي ديال Voice Chat حي؛ الملفات on-demand."""
         for guild in list(self.bot.guilds):
             try:
-                if self.store.inmates(guild.id):
-                    await self.refresh_cell_cards(guild)
                 if self.prison_category(guild) is not None:
                     await self.publish_cell_help_panels(guild, voice_only=True)
             except Exception as exc:
@@ -4563,6 +4963,7 @@ class PrisonSystem(commands.Cog):
                 if self.prisoner_role(guild) is None:
                     continue  # ما تصاوبش عاد — كيستنا Setup من بانل الاونر
                 await self.hide_everywhere(guild)
+                await self._remove_legacy_cell_record_cards(guild)
                 await self.publish_prison_code(guild)
                 await self.publish_cell_help_panels(guild)
                 await self.publish_visit_panel(guild)
@@ -4822,7 +5223,8 @@ def prison_cog(bot: commands.Bot) -> Optional[PrisonSystem]:
 
 async def setup(bot: commands.Bot):
     bot.add_view(PrisonerCardView())      # persistent: كيخدم حتى بعد ريستارت
-    bot.add_view(CellHelpView())          # persistent: بانل طلب التدخل فكل زنزانة
+    bot.add_view(CellHelpView())          # persistent: ملف خاص + سجل + تدخل فـ#
+    bot.add_view(CellVoiceHelpView())     # persistent: تدخل فقط داخل Voice Chat
     bot.add_view(ComplaintReviewView())   # persistent: أزرار قبول/رفض الشكايات
     bot.add_view(VisitPanelView())        # persistent: بانل غرفة الزيارات
     bot.add_view(VisitManagementPanelView())  # persistent: Warden/Owner فقط

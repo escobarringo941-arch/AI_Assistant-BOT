@@ -41,6 +41,7 @@ class AIChannelCleanlinessTests(unittest.TestCase):
         cls.ai = component_source("cogs/ai_conversation.py")
         cls.events = component_source("cogs/member_events.py")
         cls.commands = component_source("cogs/general_commands.py")
+        cls.owner = component_source("cogs/owner_control.py")
         cls.private_ai = (ROOT / "cogs/private_ai_chat.py").read_text(encoding="utf-8")
         cls.entrypoint = (ROOT / "ai_bot.py").read_text(encoding="utf-8")
 
@@ -76,8 +77,22 @@ class AIChannelCleanlinessTests(unittest.TestCase):
         self.assertIn("await thread.add_user(member)", self.private_ai)
         self.assertIn("owner_id != message.author.id", self.private_ai)
         self.assertIn("await self._delete_source_message(message)", self.private_ai)
-        self.assertIn("overwrite.manage_threads = False", self.private_ai)
-        self.assertIn("overwrite.create_private_threads = False", self.private_ai)
+        self.assertIn('"send_messages_in_threads": True', self.private_ai)
+        self.assertIn('"send_messages": False', self.private_ai)
+        self.assertIn('desired["manage_threads"] = False', self.private_ai)
+        self.assertIn("locked=False", self.private_ai)
+
+    def test_parent_is_one_instruction_panel_with_private_modal_input(self):
+        self.assertIn('PANEL_MARKER = "GGMW9:PRIVATE_AI_HOME"', self.private_ai)
+        self.assertIn("class AIHomeView", self.private_ai)
+        self.assertIn("class AIQuestionModal", self.private_ai)
+        self.assertIn("await interaction.response.send_modal", self.private_ai)
+        self.assertIn("async for message in parent.history(limit=None", self.private_ai)
+        self.assertIn("ephemeral=True", self.private_ai)
+
+    def test_owner_channel_move_test_button_is_removed(self):
+        self.assertNotIn("ggmw9:owner:channel_move_test", self.owner)
+        self.assertNotIn("Test Channel Move", self.owner)
 
     def test_private_sessions_expire_and_forget_model_memory(self):
         self.assertIn("@tasks.loop(seconds=60)", self.private_ai)

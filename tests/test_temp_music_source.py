@@ -21,6 +21,7 @@ EXPECTED_CORE_ORDER = (
 )
 EXPECTED_LOOPS = (
     "afk_auto_move_loop",
+    "update_relationship_lists",
     "birthday_loop",
     "temp_voice_housekeeping_loop",
     "voice_xp_loop",
@@ -195,7 +196,7 @@ class LoaderAndManifestTests(unittest.TestCase):
 
     def test_command_event_and_loop_surface_is_exact(self):
         commands, events, loops = registrations(ordered_component_paths())
-        self.assertEqual(len(commands), 72)
+        self.assertEqual(len(commands), 61)
         self.assertEqual(events, list(EXPECTED_EVENTS))
         self.assertEqual(loops, list(EXPECTED_LOOPS))
 

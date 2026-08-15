@@ -63,8 +63,8 @@ def main() -> None:
 
     tree = ast.parse(joined, filename="ai_bot.reviewed-components.py")
     commands, events, loops = decorators(tree)
-    if len(commands) != 72:
-        raise AssertionError(f"expected 72 commands, found {len(commands)}")
+    if len(commands) != 61:
+        raise AssertionError(f"expected 61 commands, found {len(commands)}")
     if events != MANIFEST["events_before_setup_hook"]:
         raise AssertionError(f"event mismatch: {events}")
     if loops != MANIFEST["task_loops"]:

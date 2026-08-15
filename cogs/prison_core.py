@@ -31,6 +31,7 @@ PRISON_CATEGORY_NAME = "🔒 PRISON"
 # المفتاح الداخلي → (اسم الروم، الوصف)
 CELL_KEYS = ("holding", "block", "max")
 CELL_RANK = {key: rank for rank, key in enumerate(CELL_KEYS)}
+INMATE_STATS_VERSION = 2
 
 CHANNEL_NAMES = {
     "code":       "📜┃prison-code",       # read-only — لائحة المخالفات والمدد
@@ -392,13 +393,13 @@ def _blank_guild() -> dict:
         "complaint_cooldown": {},  # user_id → timestamp آخر شكاية
         "cell_help_message_ids": {key: 0 for key in CELL_KEYS},
         "voice_help_message_ids": {key: 0 for key in CELL_KEYS},
-        # بطاقة رسمية واحدة لكل سجين/زنزانة، فالتكست وفـChat ديال الفويس.
-        # كتبقى محفوظة بعد النقل/الإفراج وكتتعاود تستعمل فالدخول الموالي.
+        # Legacy maps: النسخة الجديدة كتمسح البطاقات العمومية وكتستعمل بانل
+        # واحدة + أجوبة ephemeral، ولكن كنخليو المفاتيح باش migration تكون آمنة.
         "cell_record_message_ids": {key: {} for key in CELL_KEYS},
         "voice_record_message_ids": {key: {} for key in CELL_KEYS},
         # إحصائيات دائمة حسب Discord ID؛ ما كتضيعش ملي history القديمة كتتقلم.
         "inmate_stats": {},
-        "inmate_stats_version": 1,
+        "inmate_stats_version": INMATE_STATS_VERSION,
         # ── اللوحة العامة ──
         "wanted_channel_id": 0,
         "wanted_message_id": 0,
@@ -428,7 +429,9 @@ class PrisonStore:
     def guild(self, guild_id: int) -> dict:
         guilds = self._db.data.setdefault("guilds", {})
         record = guilds.setdefault(str(int(guild_id)), _blank_guild())
-        needs_stats_migration = int(record.get("inmate_stats_version", 0) or 0) < 1
+        needs_stats_migration = (
+            int(record.get("inmate_stats_version", 0) or 0) < INMATE_STATS_VERSION
+        )
         # migration آمن: أي مفتاح جديد كيتزاد بلا ما يمسح القديم
         blank = _blank_guild()
         for key, value in blank.items():
@@ -454,7 +457,7 @@ class PrisonStore:
         if needs_stats_migration:
             self._rebuild_inmate_stats(record)
         record.setdefault("inmate_stats", {})
-        record["inmate_stats_version"] = 1
+        record["inmate_stats_version"] = INMATE_STATS_VERSION
         record.setdefault("visits", {})
         record.setdefault("visit_seq", 0)
         record.setdefault("visits_message_id", 0)
@@ -480,9 +483,27 @@ class PrisonStore:
                 entries.append(cell)
         return entries
 
+    @staticmethod
+    def _blank_inmate_stats() -> dict:
+        return {
+            "cases": 0,
+            "cells": {key: 0 for key in CELL_KEYS},
+            "completed_seconds": 0,
+            "first_entry": 0,
+            "last_entry": 0,
+            "last_release": 0,
+            "last_cell": "",
+            "last_case": 0,
+            "last_offense": "",
+            "last_reason": "",
+            "last_outcome": "",
+            "last_name": "",
+        }
+
     @classmethod
     def _rebuild_inmate_stats(cls, guild_record: dict) -> None:
-        """Migration للسجلات القديمة: كيسترجع أقصى ما يمكن بلا اختراع بيانات."""
+        """Migration كتحتافظ بالعداد القديم وكتزيد الوقت وآخر دخول/خروج."""
+        previous = guild_record.get("inmate_stats", {}) or {}
         stats: dict[str, dict] = {}
 
         def absorb(user_id, case_record: dict) -> None:
@@ -490,33 +511,64 @@ class PrisonStore:
                 uid = str(int(user_id))
             except (TypeError, ValueError):
                 return
-            user_stats = stats.setdefault(
-                uid,
-                {"cases": 0, "cells": {key: 0 for key in CELL_KEYS}},
-            )
+            user_stats = stats.setdefault(uid, cls._blank_inmate_stats())
             user_stats["cases"] += 1
             for cell in cls._record_cell_entries(case_record):
                 user_stats["cells"][cell] += 1
+            since = max(0, int(case_record.get("since", 0) or 0))
+            ended = max(0, int(case_record.get("ended", 0) or 0))
+            if since:
+                if not user_stats["first_entry"] or since < user_stats["first_entry"]:
+                    user_stats["first_entry"] = since
+                if since >= user_stats["last_entry"]:
+                    user_stats["last_entry"] = since
+                    user_stats["last_case"] = int(case_record.get("case", 0) or 0)
+                    user_stats["last_offense"] = str(case_record.get("offense") or "")
+                    user_stats["last_reason"] = str(case_record.get("reason") or "")[:400]
+                    user_stats["last_cell"] = str(case_record.get("cell") or "")
+                    user_stats["last_name"] = str(
+                        case_record.get("display_name") or case_record.get("nick") or ""
+                    )[:100]
+            if ended:
+                user_stats["completed_seconds"] += max(0, ended - since)
+                if ended >= user_stats["last_release"]:
+                    user_stats["last_release"] = ended
+                    user_stats["last_outcome"] = str(case_record.get("outcome") or "released")
 
         for entry in guild_record.get("history", []) or []:
             absorb(entry.get("user_id"), entry)
         for uid, inmate in (guild_record.get("inmates", {}) or {}).items():
             absorb(uid, inmate)
 
+        # history كتتقلم لـ200 حكم؛ ما ننقصوش counts اللي النسخة القديمة حافظاهم.
+        for uid, old in previous.items():
+            if not isinstance(old, dict):
+                continue
+            user_stats = stats.setdefault(str(uid), cls._blank_inmate_stats())
+            user_stats["cases"] = max(
+                int(user_stats.get("cases", 0) or 0), int(old.get("cases", 0) or 0)
+            )
+            old_cells = old.get("cells", {}) or {}
+            for cell in CELL_KEYS:
+                user_stats["cells"][cell] = max(
+                    int(user_stats["cells"].get(cell, 0) or 0),
+                    int(old_cells.get(cell, 0) or 0),
+                )
+
         guild_record["inmate_stats"] = stats
-        guild_record["inmate_stats_version"] = 1
+        guild_record["inmate_stats_version"] = INMATE_STATS_VERSION
 
     def inmate_stats(self, guild_id: int, user_id: int) -> dict:
         uid = str(int(user_id))
         stats = self.guild(guild_id).setdefault("inmate_stats", {})
-        user_stats = stats.setdefault(
-            uid,
-            {"cases": 0, "cells": {key: 0 for key in CELL_KEYS}},
-        )
+        user_stats = stats.setdefault(uid, self._blank_inmate_stats())
         user_stats.setdefault("cases", 0)
         user_stats.setdefault("cells", {})
         for key in CELL_KEYS:
             user_stats["cells"].setdefault(key, 0)
+        for key, default in self._blank_inmate_stats().items():
+            if key != "cells":
+                user_stats.setdefault(key, default)
         return user_stats
 
     def case_count(self, guild_id: int, user_id: int) -> int:
@@ -531,7 +583,53 @@ class PrisonStore:
             return
         stats = self.inmate_stats(guild_id, user_id)
         stats["cells"][cell] = int(stats["cells"].get(cell, 0) or 0) + 1
+        stats["last_cell"] = cell
         self.save()
+
+    def registry_user_ids(self, guild_id: int, cell: Optional[str] = None) -> list[int]:
+        """غير IDs ديال الناس اللي عندهم حكم حقيقي، مرتبين بآخر نشاط سجني."""
+        rows: list[tuple[int, int]] = []
+        for raw_uid, raw_stats in self.guild(guild_id).get("inmate_stats", {}).items():
+            try:
+                uid = int(raw_uid)
+            except (TypeError, ValueError):
+                continue
+            stats = self.inmate_stats(guild_id, uid)
+            if int(stats.get("cases", 0) or 0) <= 0:
+                continue
+            if cell in CELL_KEYS and int(stats.get("cells", {}).get(cell, 0) or 0) <= 0:
+                continue
+            activity = max(
+                int(stats.get("last_release", 0) or 0),
+                int(stats.get("last_entry", 0) or 0),
+            )
+            rows.append((activity, uid))
+        rows.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        return [uid for _activity, uid in rows]
+
+    def inmate_summary(self, guild_id: int, user_id: int) -> dict:
+        """Snapshot صالح للبانل: stats دائمة + الوقت الجاري إلا مازال معتاقل."""
+        stats = dict(self.inmate_stats(guild_id, user_id))
+        stats["cells"] = dict(stats.get("cells", {}))
+        active = self.inmate(guild_id, user_id)
+        active_elapsed = 0
+        if active is not None:
+            active_elapsed = max(0, now_ts() - int(active.get("since", now_ts()) or now_ts()))
+        stats["total_served_seconds"] = max(
+            0, int(stats.get("completed_seconds", 0) or 0) + active_elapsed
+        )
+        stats["active"] = active
+        return stats
+
+    def latest_case(self, guild_id: int, user_id: int) -> Optional[dict]:
+        active = self.inmate(guild_id, user_id)
+        if active is not None:
+            return active
+        uid = int(user_id)
+        for entry in self.history(guild_id, self.MAX_HISTORY):
+            if int(entry.get("user_id", 0) or 0) == uid:
+                return entry
+        return None
 
     def save(self) -> bool:
         return self._db.save()
@@ -662,6 +760,7 @@ class PrisonStore:
         actor_id: int,
         roles: list[int],
         nick: Optional[str] = None,
+        display_name: Optional[str] = None,
     ) -> dict:
         started = now_ts()
         record = {
@@ -676,6 +775,7 @@ class PrisonStore:
             "cell": cell if cell in CELL_KEYS else "holding",
             "roles": [int(r) for r in roles],
             "nick": nick,
+            "display_name": str(display_name or nick or "")[:100],
             "by": int(actor_id),
             "cell_message_id": 0,
             # الصلاحيات الفردية الأصلية ديال آخر روم/فويس قبل الاعتقال.
@@ -706,6 +806,15 @@ class PrisonStore:
         stats = self.inmate_stats(guild_id, user_id)
         stats["cases"] = int(stats.get("cases", 0) or 0) + 1
         stats["cells"][record["cell"]] = int(stats["cells"].get(record["cell"], 0) or 0) + 1
+        stats["first_entry"] = int(stats.get("first_entry", 0) or 0) or started
+        stats["last_entry"] = started
+        stats["last_cell"] = record["cell"]
+        stats["last_case"] = int(record["case"])
+        stats["last_offense"] = str(offense_key)
+        stats["last_reason"] = str(record["reason"])[:400]
+        stats["last_outcome"] = "active"
+        if display_name or nick:
+            stats["last_name"] = str(display_name or nick)[:100]
         self.save()
         return record
 
@@ -730,6 +839,20 @@ class PrisonStore:
             ended = now_ts()
             record["ended"] = ended
             record["outcome"] = outcome
+            stats = self.inmate_stats(guild_id, user_id)
+            stats["completed_seconds"] = int(stats.get("completed_seconds", 0) or 0) + max(
+                0, ended - int(record.get("since", ended) or ended)
+            )
+            stats["last_release"] = ended
+            stats["last_outcome"] = str(outcome)
+            stats["last_cell"] = str(record.get("cell") or stats.get("last_cell") or "")
+            stats["last_case"] = int(record.get("case", 0) or 0)
+            stats["last_offense"] = str(record.get("offense") or "")
+            stats["last_reason"] = str(record.get("reason") or "")[:400]
+            if record.get("display_name") or record.get("nick"):
+                stats["last_name"] = str(
+                    record.get("display_name") or record.get("nick")
+                )[:100]
             self.push_history(
                 guild_id,
                 {
@@ -746,6 +869,7 @@ class PrisonStore:
                     "penalty_seconds_total": record.get("penalty_seconds_total", 0),
                     "cell_history": list(record.get("cell_history") or []),
                     "discipline_log": list(record.get("discipline_log") or []),
+                    "display_name": record.get("display_name") or record.get("nick") or "",
                 },
             )
             self.save()
