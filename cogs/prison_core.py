@@ -333,6 +333,7 @@ def _blank_guild() -> dict:
         "complaints": {},    # complaint_id → {author, targets[], cell, reason, ...}
         "complaint_seq": 0,
         "complaint_cooldown": {},  # user_id → timestamp آخر شكاية
+        "cell_help_message_ids": {key: 0 for key in CELL_KEYS},
         # ── اللوحة العامة ──
         "wanted_channel_id": 0,
         "wanted_message_id": 0,
@@ -373,6 +374,9 @@ class PrisonStore:
         record.setdefault("voice_channels", {})
         for key in CELL_KEYS:
             record["voice_channels"].setdefault(key, 0)
+        record.setdefault("cell_help_message_ids", {})
+        for key in CELL_KEYS:
+            record["cell_help_message_ids"].setdefault(key, 0)
         record.setdefault("visits", {})
         record.setdefault("visit_seq", 0)
         record.setdefault("visits_message_id", 0)

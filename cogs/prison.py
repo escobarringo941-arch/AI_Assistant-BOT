@@ -112,6 +112,54 @@ def _is_visit_staff(cog, member: discord.Member) -> bool:
     return cog.is_server_owner(member, member.guild) or cog.is_warden(member)
 
 
+async def _open_complaint_flow(interaction: discord.Interaction) -> None:
+    """المسار المشترك لزر الشكاية فبطاقة السجين وفبانل الزنزانة."""
+    cog = interaction.client.get_cog("PrisonSystem")
+    if cog is None or interaction.guild is None:
+        await interaction.response.send_message("❌ النظام ماشي متاح دابا.", ephemeral=True)
+        return
+    if not cog.store.is_inmate(interaction.guild.id, interaction.user.id):
+        await interaction.response.send_message(
+            "❌ غير السجناء لي كيقدرو يطلبو التدخل.", ephemeral=True
+        )
+        return
+    if cog.store.in_solitary(interaction.guild.id, interaction.user.id):
+        await interaction.response.send_message(
+            "❌ نتا دابا فالانفرادي وما عندكش زملاء فنفس الزنزانة.", ephemeral=True
+        )
+        return
+
+    left = cog.store.complaint_cooldown_left(interaction.guild.id, interaction.user.id)
+    if left > 0:
+        await interaction.response.send_message(
+            f"⏳ صبر — تقدر تطلب تدخل جديد بعد **{format_duration(left)}**.",
+            ephemeral=True,
+        )
+        return
+
+    author_record = cog.store.inmate(interaction.guild.id, interaction.user.id) or {}
+    author_cell = author_record.get("cell", "holding")
+    others = [
+        uid
+        for uid, record in cog.store.inmates(interaction.guild.id).items()
+        if int(uid) != interaction.user.id
+        and record.get("cell", "holding") == author_cell
+        and not cog.store.in_solitary(interaction.guild.id, int(uid))
+    ]
+    if not others:
+        await interaction.response.send_message(
+            "🕊️ ماكاين حتى سجين آخر معاك فنفس الزنزانة.", ephemeral=True
+        )
+        return
+
+    await interaction.response.send_message(
+        "🆘 اختار من **1 حتى 10** ديال السجناء اللي دارو المشكل.\n"
+        "البوت غادي يقبل غير اللي معاك دابا فنفس الزنزانة:",
+        view=ComplaintTargetView(),
+        ephemeral=True,
+    )
+
+
 class PrisonerCardView(discord.ui.View):
     """
     بطاقة السجين: طلب تدخل داخل الزنزانة + الوقت الباقي **دابا بالثانية**.
@@ -129,49 +177,7 @@ class PrisonerCardView(discord.ui.View):
         row=0,
     )
     async def complain(self, interaction: discord.Interaction, button: discord.ui.Button):
-        cog = interaction.client.get_cog("PrisonSystem")
-        if cog is None or interaction.guild is None:
-            await interaction.response.send_message("❌ النظام ماشي متاح دابا.", ephemeral=True)
-            return
-        if not cog.store.is_inmate(interaction.guild.id, interaction.user.id):
-            await interaction.response.send_message(
-                "❌ غير السجناء لي كيقدرو يشكيو.", ephemeral=True
-            )
-            return
-        if cog.store.in_solitary(interaction.guild.id, interaction.user.id):
-            await interaction.response.send_message(
-                "❌ نتا دابا فالانفرادي وما عندكش زملاء فنفس الزنزانة.", ephemeral=True
-            )
-            return
-
-        left = cog.store.complaint_cooldown_left(interaction.guild.id, interaction.user.id)
-        if left > 0:
-            await interaction.response.send_message(
-                f"⏳ صبر — تقدر تشكي من جديد بعد **{format_duration(left)}**.", ephemeral=True
-            )
-            return
-
-        author_record = cog.store.inmate(interaction.guild.id, interaction.user.id) or {}
-        author_cell = author_record.get("cell", "holding")
-        others = [
-            uid
-            for uid, record in cog.store.inmates(interaction.guild.id).items()
-            if int(uid) != interaction.user.id
-            and record.get("cell", "holding") == author_cell
-            and not cog.store.in_solitary(interaction.guild.id, int(uid))
-        ]
-        if not others:
-            await interaction.response.send_message(
-                "🕊️ ماكاين حتى سجين آخر معاك فنفس الزنزانة.", ephemeral=True
-            )
-            return
-
-        await interaction.response.send_message(
-            "🆘 اختار من **1 حتى 10** ديال السجناء اللي دارو المشكل.\n"
-            "البوت غادي يقبل غير اللي معاك دابا فنفس الزنزانة:",
-            view=ComplaintTargetView(),
-            ephemeral=True,
-        )
+        await _open_complaint_flow(interaction)
 
     @discord.ui.button(
         label="شحال بقا ليا؟",
@@ -224,6 +230,22 @@ class PrisonerCardView(discord.ui.View):
         )
         embed.set_footer(text="محسوب دابا فهاد اللحظة")
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+class CellHelpView(discord.ui.View):
+    """بانل ثابتة فالروم النصية ديال كل زنزانة."""
+
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="طلب تدخل / شكاية",
+        emoji="🆘",
+        style=discord.ButtonStyle.danger,
+        custom_id="ggmw9:prison:cell-help",
+    )
+    async def request_help(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await _open_complaint_flow(interaction)
 
 
 class ComplaintTargetSelect(discord.ui.UserSelect):
@@ -1189,7 +1211,8 @@ class PrisonSystem(commands.Cog):
                 create_private_threads=False,
             )
         elif key == "visits":
-            # 🌍 الروم العامة فيها غير زر طلب الزيارة، بلا أزرار المراقبة.
+            # 🌍 الروم العامة للزوار فيها غير زر طلب الزيارة.
+            # السجناء ما كيشوفوهاش؛ الدعوة كتوصل للسجين فالـDM/الروم الخاصة.
             overwrites[guild.default_role] = discord.PermissionOverwrite(
                 view_channel=True,
                 read_messages=True,
@@ -1200,9 +1223,9 @@ class PrisonSystem(commands.Cog):
                 create_private_threads=False,
             )
             overwrites[prisoner] = discord.PermissionOverwrite(
-                view_channel=True,
-                read_messages=True,
-                read_message_history=True,
+                view_channel=False,
+                read_messages=False,
+                read_message_history=False,
                 send_messages=False,
                 add_reactions=False,
                 create_public_threads=False,
@@ -1514,6 +1537,7 @@ class PrisonSystem(commands.Cog):
                 await self._grant_cell_access(member)
         await self.ensure_wanted_board(guild)
         await self.publish_prison_code(guild)
+        await self.publish_cell_help_panels(guild)
         await self.publish_visit_panel(guild)
         await self.publish_visit_admin_panel(guild)
         await self.refresh_wanted_board(guild)
@@ -2992,6 +3016,66 @@ class PrisonSystem(commands.Cog):
         return {"ok": True}
 
     # ═══════════════════════════════════════════════════
+    # ║             5أ. بانلات التدخل فالزنازن             ║
+    # ═══════════════════════════════════════════════════
+
+    async def publish_cell_help_panels(self, guild: discord.Guild) -> None:
+        """كيصاوب بانل ثابتة ومثبتة فالروم النصية ديال كل زنزانة."""
+        record = self.store.guild(guild.id)
+        message_ids = record.setdefault("cell_help_message_ids", {})
+
+        for cell in CELL_KEYS:
+            channel = self.prison_channel(guild, cell)
+            if not isinstance(channel, discord.TextChannel):
+                continue
+
+            authority = (
+                "👮 الـWarden أو 👑 الـOwner"
+                if cell == "holding"
+                else "👑 الـOwner بوحدو"
+            )
+            embed = discord.Embed(
+                title=f"🆘 طلب تدخل — {_cell_display(cell)}",
+                description=(
+                    "إلا وقع صداع، تهديد، مضاربة ولا مشكل مع سجين آخر، "
+                    "ضغط على الزر لتحت.\n\n"
+                    "1️⃣ اختار سجين واحد أو عدة سجناء من نفس الزنزانة.\n"
+                    "2️⃣ شرح أشنو وقع بوضوح.\n"
+                    "3️⃣ المسؤول المختص كيقبل الطلب أو يرفضو.\n"
+                    "4️⃣ إلا تقبل، كل مسؤول على المشكل كيمشي لانفرادي مستقل ومؤقت."
+                ),
+                color=(discord.Color.orange() if cell == "holding" else discord.Color.dark_red()),
+            )
+            embed.add_field(name="⚖️ شكون كيحسم؟", value=authority, inline=False)
+            embed.add_field(
+                name="🔒 الخصوصية",
+                value="الاختيار والسبب كيبانو غير ليك، والقرار كيمشي للمسؤول المختص.",
+                inline=False,
+            )
+            embed.set_footer(text="البانل ديال الروم النصية؛ كتخدم حتى إلا كنت داخل فويس الزنزانة")
+
+            message = None
+            message_id = int(message_ids.get(cell) or 0)
+            if message_id:
+                try:
+                    message = await channel.fetch_message(message_id)
+                    await message.edit(embed=embed, view=CellHelpView())
+                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                    message = None
+            if message is None:
+                try:
+                    message = await channel.send(embed=embed, view=CellHelpView())
+                    message_ids[cell] = message.id
+                    self.store.save()
+                except (discord.Forbidden, discord.HTTPException):
+                    continue
+            if message is not None and not message.pinned:
+                try:
+                    await message.pin(reason=f"{REASON_TAG}: cell help panel")
+                except (discord.Forbidden, discord.HTTPException):
+                    pass
+
+    # ═══════════════════════════════════════════════════
     # ║                  5ب. الزيارات                     ║
     # ═══════════════════════════════════════════════════
 
@@ -3729,6 +3813,7 @@ class PrisonSystem(commands.Cog):
                     continue  # ما تصاوبش عاد — كيستنا Setup من بانل الاونر
                 await self.hide_everywhere(guild)
                 await self.publish_prison_code(guild)
+                await self.publish_cell_help_panels(guild)
                 await self.publish_visit_panel(guild)
                 await self.publish_visit_admin_panel(guild)
                 await self.refresh_board(guild)
@@ -3938,6 +4023,7 @@ def prison_cog(bot: commands.Bot) -> Optional[PrisonSystem]:
 
 async def setup(bot: commands.Bot):
     bot.add_view(PrisonerCardView())      # persistent: كيخدم حتى بعد ريستارت
+    bot.add_view(CellHelpView())          # persistent: بانل طلب التدخل فكل زنزانة
     bot.add_view(ComplaintReviewView())   # persistent: أزرار قبول/رفض الشكايات
     bot.add_view(VisitPanelView())        # persistent: بانل غرفة الزيارات
     bot.add_view(VisitManagementPanelView())  # persistent: Warden/Owner فقط

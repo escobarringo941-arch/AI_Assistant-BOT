@@ -13,6 +13,7 @@ from unittest.mock import patch
 os.environ.setdefault("DATA_DIR", tempfile.mkdtemp(prefix="prison-complaint-tests-"))
 
 from cogs.prison_core import (
+    CELL_KEYS,
     COMPLAINT_MAX_TARGETS,
     PrisonStore,
     complaint_route_for_cell,
@@ -90,8 +91,34 @@ class ComplaintStoreTests(unittest.TestCase):
     def test_solitary_room_names_are_unique_for_duplicate_names(self):
         self.assertNotEqual(solitary_channel_name("same", 11), solitary_channel_name("same", 12))
 
+    def test_each_cell_has_durable_help_panel_storage(self):
+        store = self.make_store()
+        self.assertEqual(
+            store.guild(1)["cell_help_message_ids"],
+            {cell: 0 for cell in CELL_KEYS},
+        )
+
 
 class ComplaintSourceTests(unittest.TestCase):
+    def test_fixed_help_panel_is_published_in_every_text_cell(self):
+        publish = method_source("PrisonSystem", "publish_cell_help_panels")
+        ensure = method_source("PrisonSystem", "ensure_infrastructure")
+        ready = method_source("PrisonSystem", "on_ready")
+        setup = next(
+            node
+            for node in TREE.body
+            if isinstance(node, ast.AsyncFunctionDef) and node.name == "setup"
+        )
+        setup_source = ast.get_source_segment(SOURCE, setup)
+
+        self.assertIn("for cell in CELL_KEYS", publish)
+        self.assertIn('record.setdefault("cell_help_message_ids", {})', publish)
+        self.assertIn("view=CellHelpView()", publish)
+        self.assertIn("await message.pin", publish)
+        self.assertIn("await self.publish_cell_help_panels(guild)", ensure)
+        self.assertIn("await self.publish_cell_help_panels(guild)", ready)
+        self.assertIn("bot.add_view(CellHelpView())", setup_source)
+
     def test_cellmates_share_text_and_voice_access(self):
         access = method_source("PrisonSystem", "_grant_cell_access")
         self.assertIn("for key in CELL_KEYS", access)
