@@ -1,6 +1,6 @@
 {
   "description": "Hashes lock the reviewed component bytes and execution order; intentional feature revisions update this baseline.",
-  "joined_sha256": "d564e1a941b0bc8b2b05960bc92e1c9735139e10f6ef1f3e50b19e51bb0727e8",
+  "joined_sha256": "b5301973b1c88cf64f70c0b63886fbd29691a66f3039e5b7ce317cc7291d5441",
   "events_before_setup_hook": [
     "on_voice_state_update",
     "on_member_join",
@@ -205,7 +205,7 @@
       "path": "cogs/automation_tasks.py",
       "original_start_line": 12021,
       "original_end_line": 12455,
-      "sha256": "4c3ae6cad1cdce4aa1325a8209b0ef1dc069ad7253ab77c15e45b863947c42b4"
+      "sha256": "e2663c0616d6a100c18562f7b04caae2b7508b1b570fa42e391a7408a32ce062"
     },
     {
       "name": "owner_control",

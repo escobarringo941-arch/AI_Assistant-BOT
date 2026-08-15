@@ -280,6 +280,8 @@ class AutoRuleSourceTests(unittest.TestCase):
         self.assertIn("add_auto_rules_bulk", PANEL_SOURCE)
         self.assertIn("set_auto_rule_trigger_count", PANEL_SOURCE)
         self.assertIn("set_auto_rule_offense", PANEL_SOURCE)
+        self.assertIn('label="الأحكام والمدد"', PANEL_SOURCE)
+        self.assertIn('label="القوانين والتكرارات"', PANEL_SOURCE)
         self.assertIn("DISCORD_SELECT_PAGE_SIZE", PANEL_SOURCE)
 
 

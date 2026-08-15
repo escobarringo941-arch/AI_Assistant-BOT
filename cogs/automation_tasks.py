@@ -51,8 +51,44 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         return sent
 
 
-    async def prepare_auto_info_fresh_start():
-        """كيصفر التاريخ والقنوات مرة وحدة فقط مع Version ديال هاد التحديث."""
+    async def _purge_auto_info_channel(channel) -> tuple[bool, int]:
+        """مسح متدرج: كيكمّل القناة كاملة بلا Timeout ديال purge ضخم واحد."""
+        total_deleted = 0
+        for _batch in range(500):
+            try:
+                deleted = await channel.purge(
+                    limit=100,
+                    bulk=True,
+                    reason="GGMW9 Auto-Info professional fresh start",
+                )
+            except discord.Forbidden:
+                # بلا Manage Messages نقدر نمسحو غير رسائل البوت؛ القناة ما
+                # كتتحسبش صافية إلا بقا فيها مساج ديال شي عضو آخر.
+                complete = True
+                try:
+                    async for message in channel.history(limit=None, oldest_first=False):
+                        if bot.user and message.author.id == bot.user.id:
+                            await message.delete(reason="GGMW9 Auto-Info fresh start")
+                            total_deleted += 1
+                        else:
+                            complete = False
+                    return complete, total_deleted
+                except (discord.Forbidden, discord.HTTPException):
+                    return False, total_deleted
+            except discord.HTTPException as exc:
+                print(f"[AUTO_INFO-RESET] ⏳ خطأ مؤقت فـ {channel.id}: {exc}")
+                return False, total_deleted
+
+            total_deleted += len(deleted)
+            if len(deleted) < 100:
+                return True, total_deleted
+            # كنخلي Discord rate-limit يتنفس بين الدفعات الكبيرة.
+            await asyncio.sleep(1)
+        return False, total_deleted
+
+
+    async def prepare_auto_info_fresh_start() -> bool:
+        """كيكمل القنوات الناقصة فقط، وكيرجع True غير ملي الخمسة كاملين تصفرو."""
         if not auto_info_state.get("history_cleared", False):
             clear_all_posted_history()
             mark_auto_info_history_cleared()
@@ -61,42 +97,28 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             NEWS_CHANNEL_IDS + GAMES_CHANNEL_IDS + MOVIES_CHANNEL_IDS
             + ANIME_CHANNEL_IDS + MUSIC_CHANNEL_IDS
         ))
+        all_complete = True
         for channel_id in channel_ids:
             if is_auto_info_channel_cleared(channel_id):
                 continue
             channel = await _get_auto_info_channel(channel_id)
             if channel is None or not hasattr(channel, "purge"):
                 print(f"[AUTO_INFO-RESET] ⚠️ {channel_id}: ماشي Text Channel أو ما تلقاتش")
+                all_complete = False
                 continue
-            try:
-                deleted = await channel.purge(
-                    limit=None,
-                    bulk=True,
-                    reason="GGMW9 Auto-Info professional fresh start",
-                )
+            complete, deleted_count = await _purge_auto_info_channel(channel)
+            if complete:
                 mark_auto_info_channel_cleared(channel_id)
-                print(f"[AUTO_INFO-RESET] ✅ {channel_id}: تمسحو {len(deleted)} رسالة")
-            except discord.Forbidden as exc:
-                # إلا ناقصة Manage Messages، نجربو على الأقل نمسحو رسائل البوت ديالو.
-                complete = True
-                own_deleted = 0
-                try:
-                    async for message in channel.history(limit=None, oldest_first=False):
-                        if bot.user and message.author.id == bot.user.id:
-                            await message.delete(reason="GGMW9 Auto-Info fresh start")
-                            own_deleted += 1
-                        else:
-                            complete = False
-                    if complete:
-                        mark_auto_info_channel_cleared(channel_id)
-                    print(f"[AUTO_INFO-RESET] ⚠️ {channel_id}: تمسحو {own_deleted} ديال البوت فقط")
-                except (discord.Forbidden, discord.HTTPException):
-                    complete = False
-                if not complete:
-                    # ما كنسجلوهاش كـ cleared باش يحاول غير هاد القناة فالـrestart الجاي.
-                    print(f"[AUTO_INFO-RESET] ❌ {channel_id}: خاص Manage Messages/Read History ({exc})")
-            except discord.HTTPException as exc:
-                print(f"[AUTO_INFO-RESET] ❌ {channel_id}: خطأ مؤقت، غادي يعاود فالـrestart ({exc})")
+                print(f"[AUTO_INFO-RESET] ✅ {channel_id}: تمسحو {deleted_count} رسالة")
+            else:
+                all_complete = False
+                print(
+                    f"[AUTO_INFO-RESET] ❌ {channel_id}: باقي ما تصفاتش؛ "
+                    "غادي يعاود أوتوماتيكياً قبل البث (خاص Manage Messages/Read History)."
+                )
+        return all_complete and all(
+            is_auto_info_channel_cleared(channel_id) for channel_id in channel_ids
+        )
 
 
     @tasks.loop(hours=AUTO_INFO_INTERVAL_HOURS)
@@ -233,7 +255,13 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     @auto_info.before_loop
     async def before_auto_info():
         await bot.wait_until_ready()
-        await prepare_auto_info_fresh_start()
+        # ما نبداو حتى خبر حتى تكمل حتى آخر قناة (الموسيقى داخلة فالحساب).
+        while not bot.is_closed():
+            if await prepare_auto_info_fresh_start():
+                print("[AUTO_INFO-RESET] ✅ القنوات الخمسة تصفرو؛ البث غادي يبدا دابا.")
+                break
+            print("[AUTO_INFO-RESET] ⏳ غادي نعاود القنوات الناقصة من بعد 30 ثانية.")
+            await asyncio.sleep(30)
     
     
     # ═══════════════════════════════════════════════════════

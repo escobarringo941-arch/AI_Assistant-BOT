@@ -60,6 +60,11 @@ class AutoInfoProfessionalTests(unittest.TestCase):
         self.assertIn("await prepare_auto_info_fresh_start()", self.tasks)
         self.assertIn("await channel.purge(", self.tasks)
         self.assertIn("mark_auto_info_channel_cleared(channel_id)", self.tasks)
+        self.assertIn("async def _purge_auto_info_channel", self.tasks)
+        self.assertIn("while not bot.is_closed()", self.tasks)
+        self.assertIn("if await prepare_auto_info_fresh_start()", self.tasks)
+        self.assertIn("NEWS_CHANNEL_IDS + GAMES_CHANNEL_IDS + MOVIES_CHANNEL_IDS", self.tasks)
+        self.assertIn("+ ANIME_CHANNEL_IDS + MUSIC_CHANNEL_IDS", self.tasks)
 
     def test_history_is_permanent_and_music_never_resets(self):
         self.assertNotIn("MAX_HISTORY", self.settings)

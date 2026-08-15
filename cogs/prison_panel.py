@@ -1622,8 +1622,8 @@ def prison_panel_embed(cog, guild: discord.Guild) -> discord.Embed:
             "🔓 **Release** — عفو وإطلاق سراح (كترجع الرولات أوتوماتيكيا)\n"
             "⏳ **Adjust** — زيادة/نقصان المدة ولا تحويلها لمؤبد\n"
             "👮 **Wardens** — شكون كيولي شرطة (أحكام خفيفة بوحدها)\n"
-            "⚖️ **Offenses** — تعديل القانون والمدد\n"
-            "🛡️ **Auto Rules** — كلمات، مواقع وأفعال ممنوعة بعقوبات تلقائية\n"
+            "⚖️ **الأحكام والمدد** — تعديل الاسم والمدة والزنزانة أو إضافة حكم جديد\n"
+            "🛡️ **القوانين والتكرارات** — الممنوعات والحكم ومن أي مرة يتطبق لكل عضو\n"
             "🛠️ **Setup / Repair** — بناء ولا إصلاح الرومز والصلاحيات"
         ),
         color=discord.Color.dark_red(),
@@ -1739,7 +1739,7 @@ class PrisonOwnerPanelView(OwnerOnlyPrisonView):
             embed=embed, view=WardenManageView(self.cog, interaction.guild), ephemeral=True
         )
 
-    @discord.ui.button(label="Offenses", emoji="⚖️", style=discord.ButtonStyle.secondary, row=1)
+    @discord.ui.button(label="الأحكام والمدد", emoji="⚖️", style=discord.ButtonStyle.secondary, row=1)
     async def offenses_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message(
             "⚖️ اختار المخالفة باش تعدل الاسم/المدة/الزنزانة:",
@@ -1753,7 +1753,7 @@ class PrisonOwnerPanelView(OwnerOnlyPrisonView):
             embed=self.cog.board_embed(interaction.guild), ephemeral=True
         )
 
-    @discord.ui.button(label="Auto Rules", emoji="🛡️", style=discord.ButtonStyle.secondary, row=1)
+    @discord.ui.button(label="القوانين والتكرارات", emoji="🛡️", style=discord.ButtonStyle.secondary, row=1)
     async def auto_rules_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message(
             embed=auto_rules_embed(self.cog, interaction.guild),
