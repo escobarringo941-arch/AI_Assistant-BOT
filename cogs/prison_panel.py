@@ -259,7 +259,10 @@ class OffenseSelect(discord.ui.Select):
             discord.SelectOption(
                 label=entry["label"][:100],
                 value=key,
-                description=f"{format_duration(entry['seconds'])} • {entry.get('cell','holding')}"[:100],
+                description=(
+                    f"العقوبة من {cog.store.offense_trigger_count(guild.id, key)} • "
+                    f"{format_duration(entry['seconds'])} • {entry.get('cell','holding')}"
+                )[:100],
             )
             for key, entry in items[start : start + DISCORD_SELECT_PAGE_SIZE]
         ]
@@ -789,7 +792,7 @@ class OffenseEditModal(discord.ui.Modal, title="⚖️ تعديل مخالفة")
         await cog.refresh_rule_surfaces(interaction.guild)
         await interaction.followup.send(
             content="✅ تعدّل الحكم وتحدثات لوحة `prison-code`.",
-            embed=offense_control_embed(self.key, entry),
+            embed=offense_control_embed(cog, interaction.guild, self.key, entry),
             view=OffenseSelectedView(cog, interaction.guild, self.key, self.page),
             ephemeral=True,
         )
@@ -804,20 +807,72 @@ def _seconds_to_text(seconds: int) -> str:
     return f"{max(1, seconds // 60)}m"
 
 
-def offense_control_embed(key: str, entry: dict) -> discord.Embed:
+def offense_control_embed(cog, guild: discord.Guild, key: str, entry: dict) -> discord.Embed:
     custom = bool(entry.get("custom", key not in DEFAULT_OFFENSES))
+    trigger_count = cog.store.offense_trigger_count(guild.id, key)
+    linked_rules = [
+        rule for rule in cog.store.auto_rules(guild.id).values()
+        if str(rule.get("offense")) == str(key)
+    ]
     embed = discord.Embed(
         title=f"⚖️ {entry.get('label', key)}",
         description=(
             f"**المدة:** {format_duration(int(entry.get('seconds', 3600)))}\n"
             f"**الزنزانة:** `{entry.get('cell', 'holding')}`\n"
+            f"**تنفيذ الحكم:** فالخرق **{trigger_count}** "
+            f"(قبلها {max(0, trigger_count - 1)} تحذيرات)\n"
+            f"**القوانين المرتبطة:** {len(linked_rules)}\n"
             f"**النوع:** {'حكم مخصص' if custom else 'حكم أصلي'}\n"
             f"**المعرف الداخلي:** `{key}`"
         ),
         color=discord.Color.gold(),
     )
-    embed.set_footer(text="تعديل المدة هنا كيطبق على السجن اليدوي وAuto Rules")
+    embed.set_footer(text="تحكم كامل: التحذيرات + المدة + الزنزانة، للأحكام الأصلية والجديدة")
     return embed
+
+
+class OffenseTriggerModal(discord.ui.Modal, title="🔢 عدد التحذيرات قبل الحكم"):
+    def __init__(self, key: str, page: int, current: int):
+        super().__init__()
+        self.key = str(key)
+        self.page = int(page)
+        self.count_input = discord.ui.TextInput(
+            label=f"المخالفة رقم كم تطبق الحكم؟ ({AUTO_RULE_TRIGGER_MIN}-{AUTO_RULE_TRIGGER_MAX})",
+            placeholder="مثال: 4 = 3 تحذيرات والعقوبة فالرابعة",
+            default=str(int(current)),
+            min_length=1,
+            max_length=3,
+        )
+        self.add_item(self.count_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if not _is_owner(interaction):
+            await _deny(interaction, "❌ هاد الإعدادات ديال Owner بوحدو.")
+            return
+        try:
+            count = int(str(self.count_input.value).strip())
+        except ValueError:
+            await _deny(interaction, "❌ كتب عدد صحيح بحال `2` ولا `4` ولا `10`.")
+            return
+        cog = _cog(interaction)
+        try:
+            result = cog.store.set_offense_trigger_count(
+                interaction.guild.id, self.key, count
+            )
+        except ValueError as exc:
+            await _deny(interaction, f"❌ {exc}")
+            return
+        entry = cog.store.offense(interaction.guild.id, self.key)
+        await interaction.response.edit_message(
+            content=(
+                f"✅ **{entry['label']}**: الحكم غيتطبق فالمخالفة **{count}**؛ "
+                f"قبلها **{max(0, count - 1)}** تحذيرات. "
+                f"تحدثو **{result['updated']}** قوانين وتزادو **{result['created']}** كواشف أصلية ناقصة."
+            ),
+            embed=offense_control_embed(cog, interaction.guild, self.key, entry),
+            view=OffenseSelectedView(cog, interaction.guild, self.key, self.page),
+        )
+        await cog.refresh_rule_surfaces(interaction.guild)
 
 
 class OffenseCreateModal(discord.ui.Modal, title="➕ إضافة حكم جديد"):
@@ -874,7 +929,7 @@ class OffenseCreateModal(discord.ui.Modal, title="➕ إضافة حكم جديد
         await cog.refresh_rule_surfaces(interaction.guild)
         await interaction.followup.send(
             content="✅ تزاد الحكم الجديد وولا متاح فالسجن وAuto Rules.",
-            embed=offense_control_embed(key, entry),
+            embed=offense_control_embed(cog, interaction.guild, key, entry),
             view=OffenseSelectedView(cog, interaction.guild, key, self.page),
             ephemeral=True,
         )
@@ -904,7 +959,7 @@ class OffenseEditSelect(discord.ui.Select):
         entry = cog.store.offense(interaction.guild.id, key)
         await interaction.response.edit_message(
             content=None,
-            embed=offense_control_embed(key, entry),
+            embed=offense_control_embed(cog, interaction.guild, key, entry),
             view=OffenseSelectedView(cog, interaction.guild, key, self.page),
         )
 
@@ -927,6 +982,13 @@ class OffenseSelectedView(OwnerOnlyPrisonView):
     async def edit_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         entry = self.cog.store.offense(interaction.guild.id, self.key)
         await interaction.response.send_modal(OffenseEditModal(self.key, entry, self.page))
+
+    @discord.ui.button(label="عدد التحذيرات", emoji="🔢", style=discord.ButtonStyle.primary)
+    async def trigger_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        current = self.cog.store.offense_trigger_count(interaction.guild.id, self.key)
+        await interaction.response.send_modal(
+            OffenseTriggerModal(self.key, self.page, current)
+        )
 
     @discord.ui.button(label="مسح / Reset", emoji="🗑️", style=discord.ButtonStyle.danger)
     async def reset_or_delete_btn(
@@ -952,7 +1014,7 @@ class OffenseSelectedView(OwnerOnlyPrisonView):
     @discord.ui.button(label="رجوع للأحكام", emoji="↩️", style=discord.ButtonStyle.secondary)
     async def back_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.edit_message(
-            content="⚖️ اختار الحكم باش تعدل الاسم/المدة/الزنزانة:",
+            content="⚖️ اختار كاتالوگ الحكم باش تتحكم دفعة وحدة فعدد التحذيرات/المدة/الزنزانة:",
             embed=None,
             view=OffenseEditView(self.cog, interaction.guild, self.page),
         )
@@ -976,7 +1038,7 @@ class OffenseEditView(OwnerOnlyPrisonView):
     @discord.ui.button(label="السابق", emoji="⬅️", row=1)
     async def previous_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.edit_message(
-            content="⚖️ اختار الحكم باش تعدل الاسم/المدة/الزنزانة:",
+            content="⚖️ اختار كاتالوگ الحكم باش تتحكم دفعة وحدة فعدد التحذيرات/المدة/الزنزانة:",
             embed=None,
             view=OffenseEditView(self.cog, self.guild, self.page - 1),
         )
@@ -984,7 +1046,7 @@ class OffenseEditView(OwnerOnlyPrisonView):
     @discord.ui.button(label="التالي", emoji="➡️", row=1)
     async def next_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.edit_message(
-            content="⚖️ اختار الحكم باش تعدل الاسم/المدة/الزنزانة:",
+            content="⚖️ اختار كاتالوگ الحكم باش تتحكم دفعة وحدة فعدد التحذيرات/المدة/الزنزانة:",
             embed=None,
             view=OffenseEditView(self.cog, self.guild, self.page + 1),
         )
@@ -1824,8 +1886,8 @@ def prison_panel_embed(cog, guild: discord.Guild) -> discord.Embed:
             "🔓 **Release** — عفو وإطلاق سراح (كترجع الرولات أوتوماتيكيا)\n"
             "⏳ **Adjust** — زيادة/نقصان المدة ولا تحويلها لمؤبد\n"
             "👮 **Wardens** — شكون كيولي شرطة (أحكام خفيفة بوحدها)\n"
-            "⚖️ **الأحكام والمدد** — تعديل الاسم والمدة والزنزانة أو إضافة حكم جديد\n"
-            "🛡️ **القوانين والتكرارات** — الممنوعات والحكم ومن أي مرة يتطبق لكل عضو\n"
+            "⚖️ **الأحكام والمدد** — تحكم جماعي فكل كاتالوگ: التحذيرات والمدة والزنزانة\n"
+            "🛡️ **القوانين والتكرارات** — تحكم متقدم فقانون ممنوع بوحدو عند الحاجة\n"
             "🛠️ **Setup / Repair** — بناء ولا إصلاح الرومز والصلاحيات"
         ),
         color=discord.Color.dark_red(),
@@ -1944,7 +2006,7 @@ class PrisonOwnerPanelView(OwnerOnlyPrisonView):
     @discord.ui.button(label="الأحكام والمدد", emoji="⚖️", style=discord.ButtonStyle.secondary, row=1)
     async def offenses_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message(
-            "⚖️ اختار المخالفة باش تعدل الاسم/المدة/الزنزانة:",
+            "⚖️ اختار كاتالوگ الحكم؛ أي عدد تحذيرات غيتطبق دفعة وحدة على كاع الممنوعات المرتبطة به:",
             view=OffenseEditView(self.cog, interaction.guild),
             ephemeral=True,
         )

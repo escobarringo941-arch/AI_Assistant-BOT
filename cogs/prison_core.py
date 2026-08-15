@@ -275,6 +275,14 @@ AUTO_ACTION_LABELS = {
     "message_spam": "Spam / Flood سريع",
 }
 
+# الأحكام الأصلية اللي عندها كشف أوتوماتيكي مباشر. تعديل عدد التحذيرات
+# من بطاقة الحكم كيحدث جميع هاد القواعد وكيخلق الناقص منها مرة وحدة.
+DEFAULT_OFFENSE_AUTO_ACTIONS = {
+    "spam": ("message_spam", "caps_spam", "emoji_spam"),
+    "mention_spam": ("mass_mentions",),
+    "links": ("discord_invite", "any_link"),
+}
+
 
 def normalize_auto_rule_pattern(kind: str, raw: Any) -> str:
     """تنظيف قيمة قانون تلقائي قبل التخزين والمقارنة."""
@@ -510,6 +518,7 @@ class PrisonStore:
         record.setdefault("auto_rules", {})
         record.setdefault("auto_rule_seq", 0)
         record.setdefault("auto_rule_strikes", {})
+        record.setdefault("offense_trigger_counts", {})
         return record
 
     @staticmethod
@@ -949,6 +958,74 @@ class PrisonStore:
         record["offense"] = str(offense_key)
         self.save()
         return record
+
+    def offense_trigger_count(self, guild_id: int, offense_key: str) -> int:
+        """عدد التحذيرات العام للحكم؛ كيتستعمل فواجهة الأحكام الأصلية والجديدة."""
+        offense_key = str(offense_key)
+        if offense_key not in self.offenses(guild_id):
+            raise ValueError("المخالفة السجنية ماكايناش.")
+        saved = self.guild(guild_id).setdefault("offense_trigger_counts", {}).get(offense_key)
+        if saved is not None:
+            return max(AUTO_RULE_TRIGGER_MIN, min(int(saved), AUTO_RULE_TRIGGER_MAX))
+        linked = [
+            int(rule.get("trigger_count", 1) or 1)
+            for rule in self.auto_rules(guild_id).values()
+            if str(rule.get("offense")) == offense_key
+        ]
+        return max(linked) if linked else 1
+
+    def set_offense_trigger_count(
+        self, guild_id: int, offense_key: str, trigger_count: int
+    ) -> dict:
+        """يحدث كل القواعد المرتبطة بالحكم ويخلق الكشف الأصلي الناقص."""
+        offense_key = str(offense_key)
+        if offense_key not in self.offenses(guild_id):
+            raise ValueError("المخالفة السجنية ماكايناش.")
+        trigger_count = int(trigger_count)
+        if not AUTO_RULE_TRIGGER_MIN <= trigger_count <= AUTO_RULE_TRIGGER_MAX:
+            raise ValueError(
+                f"عدد التكرارات خاصو يكون بين {AUTO_RULE_TRIGGER_MIN} و {AUTO_RULE_TRIGGER_MAX}."
+            )
+
+        guild_record = self.guild(guild_id)
+        guild_record.setdefault("offense_trigger_counts", {})[offense_key] = trigger_count
+        rules = self.auto_rules(guild_id)
+        existing_actions = {
+            str(rule.get("pattern")): rule
+            for rule in rules.values()
+            if rule.get("kind") == "action"
+        }
+        created = 0
+        for action in DEFAULT_OFFENSE_AUTO_ACTIONS.get(offense_key, ()):
+            if action in existing_actions:
+                # اختيار الـOwner لهاد الحكم من واجهة الأحكام هو قرار صريح
+                # باش الفعل الأصلي يرجع مربوط بالحكم الصحيح.
+                existing_actions[action]["offense"] = offense_key
+                continue
+            guild_record["auto_rule_seq"] = int(guild_record.get("auto_rule_seq", 0) or 0) + 1
+            rule_id = str(guild_record["auto_rule_seq"])
+            rules[rule_id] = {
+                "id": rule_id,
+                "kind": "action",
+                "pattern": action,
+                "offense": offense_key,
+                "trigger_count": trigger_count,
+                "enabled": True,
+                "created": now_ts(),
+            }
+            existing_actions[action] = rules[rule_id]
+            created += 1
+
+        updated = 0
+        strikes = guild_record.setdefault("auto_rule_strikes", {})
+        for rule_id, rule in rules.items():
+            if str(rule.get("offense")) != offense_key:
+                continue
+            rule["trigger_count"] = trigger_count
+            strikes.pop(str(rule_id), None)
+            updated += 1
+        self.save()
+        return {"trigger_count": trigger_count, "updated": updated, "created": created}
 
     def record_auto_rule_match(
         self, guild_id: int, rule_id, user_id: int

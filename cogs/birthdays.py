@@ -8,6 +8,11 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     # ═══════════════════════════════════════════════════════
     # ║        Phase 8 — أوامر نظام Birthdays                   ║
     # ═══════════════════════════════════════════════════════
+
+    async def _refresh_birthday_center(guild):
+        center = bot.get_cog("BirthdayCenter")
+        if center is not None and guild is not None:
+            await center.setup_center(guild)
     
     @bot.hybrid_command(name="setbirthday")
     async def setbirthday_cmd(ctx, day: int, month: int):
@@ -21,10 +26,17 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     
         zodiac_key, zodiac_label, zodiac_emoji = get_zodiac_sign(day, month)
     
-        birthdays_db.setdefault("birthdays", {})[str(ctx.author.id)] = {
-            "day": day, "month": month, "last_announced_year": None, "zodiac": zodiac_key
+        previous = birthdays_db.setdefault("birthdays", {}).get(str(ctx.author.id), {})
+        birthdays_db["birthdays"][str(ctx.author.id)] = {
+            "day": day,
+            "month": month,
+            "last_announced_year": previous.get("last_announced_year"),
+            "zodiac": zodiac_key,
+            "registered_at": previous.get("registered_at") or datetime.now().isoformat(),
+            "updated_at": datetime.now().isoformat(),
         }
         save_birthdays()
+        await _refresh_birthday_center(ctx.guild)
     
         zodiac_note = ""
         if isinstance(ctx.author, discord.Member):
@@ -48,6 +60,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             save_birthdays()
             if isinstance(ctx.author, discord.Member):
                 await sync_zodiac_role(ctx.author, None)  # كيحيد أي رول برج عندو بلا مايعطي جديد
+            await _refresh_birthday_center(ctx.guild)
             await ctx.send("🗑️ تم حيد عيد الميلاد ديالك من السجل.", delete_after=8)
         else:
             await ctx.send("⚠️ ماعندكش عيد ميلاد مسجل أصلاً.", delete_after=8)

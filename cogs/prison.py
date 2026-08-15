@@ -68,7 +68,7 @@ from cogs.prison_core import (
 # ═══════════════════════════════════════════════════════
 
 REASON_TAG = "GGMW9 Prison System"
-OWNER_RULE_CATALOG_VERSION = "2026-08-owner-rules-v1"
+OWNER_RULE_CATALOG_VERSION = "2026-08-owner-rules-v2"
 
 # ═══════ التصعيد الأوتوماتيكي للزنازن (Auto-Escalation) ═══════
 # إلا سبام السجين ولا كتب حوايج ممنوعة وهو دايما فزنزانتو، البوت كيديه
@@ -1323,6 +1323,7 @@ class PrisonSystem(commands.Cog):
         for action, offense_key in (
             ("message_spam", "spam"),
             ("discord_invite", "links"),
+            ("any_link", "links"),
             ("mass_mentions", "spam"),
             ("caps_spam", "spam"),
             ("emoji_spam", "spam"),
@@ -5310,11 +5311,21 @@ class PrisonSystem(commands.Cog):
         intro.set_footer(text="GGMW9 Prison • القانون كيتطبق على الجميع بلا استثناء")
 
         by_cell: dict[str, list[str]] = {"holding": [], "block": [], "max": []}
-        for entry in sorted(catalogue.values(), key=lambda e: (e.get("severity", 1), e["seconds"])):
+        for offense_key, entry in sorted(
+            catalogue.items(), key=lambda item: (item[1].get("severity", 1), item[1]["seconds"])
+        ):
             cell = entry.get("cell", "holding")
             if cell not in by_cell:
                 cell = "holding"
-            by_cell[cell].append(f"• **{entry['label']}** — `{format_duration(entry['seconds'])}`")
+            trigger = self.store.offense_trigger_count(guild.id, offense_key)
+            warning_note = (
+                "بلا تحذير مسبق" if trigger == 1
+                else f"{trigger - 1} تحذيرات • الحكم فالمرة {trigger}"
+            )
+            by_cell[cell].append(
+                f"• **{entry['label']}** — `{format_duration(entry['seconds'])}`\n"
+                f"  ↳ {warning_note}"
+            )
 
         titles = {
             "holding": "⛓️ HOLDING CELL — عقوبات خفيفة",

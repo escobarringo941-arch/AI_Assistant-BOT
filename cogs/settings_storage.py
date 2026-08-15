@@ -26,6 +26,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         "auto_info_anime": AUTO_INFO_ANIME_ENABLED,
         "auto_info_music": AUTO_INFO_MUSIC_ENABLED,
         "auto_info_setup_version": "",
+        "auto_info_reliability_version": "",
         "anti_raid_enabled": ANTI_RAID_ENABLED,
         "raid_join_threshold": RAID_JOIN_THRESHOLD,
         "raid_join_interval_seconds": RAID_JOIN_INTERVAL_SECONDS,
@@ -75,10 +76,25 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         bot_settings["auto_info_setup_version"] = AUTO_INFO_SETUP_VERSION
         save_bot_settings()
         print("[AUTO-INFO] ✅ تفعلات القنوات الخمسة تلقائياً لأول تشغيل بهاد النسخة")
+
+
+    def apply_auto_info_reliability_migration():
+        """مرة وحدة: شعل القنوات الخمسة بلا ما تمسح المحتوى القديم."""
+        if bot_settings.get("auto_info_reliability_version") == AUTO_INFO_RELIABILITY_VERSION:
+            return
+        for key in (
+            "auto_info_news", "auto_info_games", "auto_info_movies",
+            "auto_info_anime", "auto_info_music",
+        ):
+            bot_settings[key] = True
+        bot_settings["auto_info_reliability_version"] = AUTO_INFO_RELIABILITY_VERSION
+        save_bot_settings()
+        print("[AUTO-INFO] ✅ الخمس قنوات تشعلو فـ reliability migration")
     
     
     load_bot_settings()
     apply_auto_info_setup_migration()
+    apply_auto_info_reliability_migration()
     
     # ═══════════════════════════════════════════════════════
     # ║   سجل المحتوى المنشور (باش ما يتعاودش تا شي حاجة)      ║
@@ -228,14 +244,21 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
 
 
     def get_auto_info_next_dispatch_at(now_ts_value=None) -> int:
-        """الموعد الدائم للدورة الجاية؛ أول تركيب كيتسنى ساعة كاملة."""
+        """الموعد الدائم للدورة الجاية، مضبوط على رأس الساعة."""
         current = _auto_info_clock(now_ts_value)
+        schedule_version = auto_info_state.get("schedule_version")
+        if schedule_version != AUTO_INFO_RELIABILITY_VERSION:
+            scheduled = ((current // AUTO_INFO_INTERVAL_SECONDS) + 1) * AUTO_INFO_INTERVAL_SECONDS
+            auto_info_state["schedule_version"] = AUTO_INFO_RELIABILITY_VERSION
+            auto_info_state["next_dispatch_at"] = scheduled
+            save_auto_info_state()
+            return scheduled
         try:
             scheduled = int(auto_info_state.get("next_dispatch_at", 0) or 0)
         except (TypeError, ValueError):
             scheduled = 0
         if scheduled <= 0:
-            scheduled = current + AUTO_INFO_INTERVAL_SECONDS
+            scheduled = ((current // AUTO_INFO_INTERVAL_SECONDS) + 1) * AUTO_INFO_INTERVAL_SECONDS
             auto_info_state["next_dispatch_at"] = scheduled
             save_auto_info_state()
         return scheduled

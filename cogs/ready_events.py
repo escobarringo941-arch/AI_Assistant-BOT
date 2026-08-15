@@ -30,7 +30,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         print(f"🆘 Support: Center={SUPPORT_CENTER_CHANNEL_ID or 'ماشي معطي'} | Reports={REPORTS_CHANNEL_ID or 'ماشي معطي'} | Tickets Category={TICKETS_CATEGORY_ID or 'ماشي معطي'} | Ticket Logs={TICKET_LOGS_CHANNEL_ID or 'MOD_LOGS_CHANNEL_ID'}")
         print(f"📋 Applications: Panel={APPLICATIONS_PANEL_CHANNEL_ID or 'ماشي معطي'} | Review={APPLICATIONS_REVIEW_CHANNEL_ID or 'MOD_LOGS_CHANNEL_ID'} | Cooldown={APPLICATIONS_COOLDOWN_HOURS}h")
         print(f"💡 Suggestions: Channel={SUGGESTIONS_CHANNEL_ID or 'ماشي معطي'}")
-        print(f"🎂 Birthdays: Channel={BIRTHDAY_ANNOUNCE_CHANNEL_ID or 'ماشي معطي'} | Role={BIRTHDAY_ROLE_ID or 'بلا رول'} | Hour={BIRTHDAY_ANNOUNCE_HOUR}:00 UTC")
+        print(f"🎂 Birthday Center={BIRTHDAY_CENTER_CHANNEL_ID or 'ماشي معطي'} | General={BIRTHDAY_ANNOUNCE_CHANNEL_ID or 'ماشي معطي'} | Role={BIRTHDAY_ROLE_ID or 'بلا رول'} | TZ={BIRTHDAY_TIMEZONE}")
         print(f"🚨 Anti-Raid: {'نشط' if bot_settings['anti_raid_enabled'] else 'معطل'} (عتبة: {bot_settings['raid_join_threshold']} فـ {bot_settings['raid_join_interval_seconds']}ث | عمل: {bot_settings['raid_action']})")
         print(f"🖼️ Welcome Cards: {'نشط' if (bot_settings['welcome_card_enabled'] and PIL_AVAILABLE) else ('معطل (Pillow ماشي مثبت)' if not PIL_AVAILABLE else 'معطل')}")
         print(f"📊 Leveling: {'نشط' if bot_settings['leveling_enabled'] else 'معطل'} (شات: {xp_settings['chat_min']}-{xp_settings['chat_max']} XP/رسالة، cooldown {xp_settings['chat_cooldown']}ث)")
@@ -63,9 +63,6 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     
         if not check_reminders.is_running():
             check_reminders.start()
-    
-        if not birthday_loop.is_running():
-            birthday_loop.start()
     
         if not voice_xp_loop.is_running():
             voice_xp_loop.start()

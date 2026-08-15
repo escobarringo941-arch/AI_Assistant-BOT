@@ -219,6 +219,8 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     # Version ديال الإطلاق: كتفعّل القنوات وكتصفرها مرة وحدة فقط عند تركيب هاد النسخة.
     # ما كتعاودش تمسح القنوات فكل restart، وتبديلات الـOwner كتبقى محفوظة من بعد.
     AUTO_INFO_SETUP_VERSION = "2026-08-15-best-content-v1"
+    # Migration مستقلة: كتشعل الخمس فئات وتضبط الموعد على رأس الساعة بلا مسح القنوات.
+    AUTO_INFO_RELIABILITY_VERSION = "2026-08-15-hourly-all-channels-v2"
 
     # عتبات الجودة: قديم وجديد مخلوط، ولكن غير المحتوى المعروف والمقيّم مزيان.
     AUTO_INFO_MOVIE_MIN_RATING = 7.0       # IMDb /10
@@ -267,9 +269,12 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     SUGGESTIONS_CHANNEL_ID = 1532913868509155358            # ← حط هنا ID ديال channel فين كيتبعثو الاقتراحات
     
     # ═══════ نظام Birthdays (أعياد الميلاد) ═══════
-    BIRTHDAY_ANNOUNCE_CHANNEL_ID = 1533241235630854224   # ← حط هنا ID ديال channel فين كيتبعث تهنئة عيد الميلاد (بحال #general)
-    BIRTHDAY_ROLE_ID = 1533241332473008229               # ← (اختياري) رول 🎂 كيتعطى نهار عيد الميلاد وكيتحيد الغد — خليها 0 إلا مابغيتيش
-    BIRTHDAY_ANNOUNCE_HOUR = 9         # ← فأي ساعة (UTC، من 0 لـ 23) كيتبعث التهنئة كل نهار
+    # Birthday Center كتبقى غير للبانل؛ التهاني العامة كتمشي لـ #general.
+    BIRTHDAY_CENTER_CHANNEL_ID = 1533241235630854224
+    BIRTHDAY_ANNOUNCE_CHANNEL_ID = 1524957892925456545
+    BIRTHDAY_ROLE_ID = 1533241332473008229
+    BIRTHDAY_TIMEZONE = "Africa/Casablanca"
+    BIRTHDAY_CHECK_SECONDS = 30
     
     # ═══════ نظام Marry/Bestfriend (أزواج/أصدقاء) ═══════
     MARRIAGE_ROLE_ID = 1533987822216810706     # ← (اختياري) رول عام 💍 كيتعطى للجوج ملي يتزوجو (بزيادة على الرول الشخصي) — خليها 0 إلا مابغيتيش

@@ -1,6 +1,6 @@
 {
   "description": "Hashes lock the reviewed component bytes and execution order; intentional feature revisions update this baseline.",
-  "joined_sha256": "251b2fffe21337523d8215b55176184cb907285f47c325a547f097defc5adb7f",
+  "joined_sha256": "611990d751ad52cc7ce5827e5da17db962920ed7f38504abb6c32f702aa03760",
   "events_before_setup_hook": [
     "on_voice_state_update",
     "on_member_join",
@@ -15,7 +15,6 @@
   "task_loops": [
     "afk_auto_move_loop",
     "update_relationship_lists",
-    "birthday_loop",
     "temp_voice_housekeeping_loop",
     "voice_xp_loop",
     "update_leaderboard",
@@ -30,14 +29,14 @@
       "path": "cogs/bootstrap.py",
       "original_start_line": 1,
       "original_end_line": 696,
-      "sha256": "1d90c7e3265b390a63a0703b964080dd8a2b709e0d46015f7aa37872f4a24577"
+      "sha256": "94ea67725014721147d1861eacf18ce0732803faa856a28fbb5b9ae34adbe5e1"
     },
     {
       "name": "persistent_state",
       "path": "cogs/persistent_state.py",
       "original_start_line": 697,
       "original_end_line": 1449,
-      "sha256": "8b3cc3fd911ed52562947d5b385bfcafb34424260e397ad456f20c08add49d66"
+      "sha256": "55ec07551be8504c3799c0f218c22c657b1baf692cf045138f5954e84922e89d"
     },
     {
       "name": "xp_runtime",
@@ -51,7 +50,7 @@
       "path": "cogs/settings_storage.py",
       "original_start_line": 2057,
       "original_end_line": 2432,
-      "sha256": "c7540ca9a91f1b3a91ff83025344c4fbf2056843f7ee8e501f7491797ecfe3fb"
+      "sha256": "3ec490d696b35893d084f6ee09812625273629bcc98d5fcd408cd1e4112c46d2"
     },
     {
       "name": "ai_conversation",
@@ -65,7 +64,7 @@
       "path": "cogs/content_apis.py",
       "original_start_line": 2680,
       "original_end_line": 3230,
-      "sha256": "5642f4e13471235380b0cedc023fa241c7a3d0a4a3f2998f9401abe85553229b"
+      "sha256": "ae5e60727e90270581b551a6851d50010cb53c13c6aa4c0e9fd6311b6de540cc"
     },
     {
       "name": "moderation_core",
@@ -107,14 +106,14 @@
       "path": "cogs/birthdays.py",
       "original_start_line": 5944,
       "original_end_line": 6049,
-      "sha256": "324fdd63dd45b6063a5aad70ab9553843a8aee9684a9ea05458c432123ca3db7"
+      "sha256": "3f42a893140c767771f971bd853da062c52c52f64f474be88f32482d5879a25c"
     },
     {
       "name": "relationships",
       "path": "cogs/relationships.py",
       "original_start_line": 6050,
       "original_end_line": 6735,
-      "sha256": "668aa81c19a26934632b0a2c878aec85cc20c22e786ce459ed2e7e94708e3003"
+      "sha256": "817b11723588eb220963392f7832b655949d25a139f989bc8ee86672078cb07e"
     },
     {
       "name": "temp_voice",
@@ -205,7 +204,7 @@
       "path": "cogs/automation_tasks.py",
       "original_start_line": 12021,
       "original_end_line": 12455,
-      "sha256": "62193c330087ce104159b621225bb2b56748a7bb84df427fca198e460564d552"
+      "sha256": "43faeb4820bb808140bbbe753a46250b769b93b367e4c3b6d8dbf4112a3ccec1"
     },
     {
       "name": "owner_control",
@@ -219,7 +218,7 @@
       "path": "cogs/ready_events.py",
       "original_start_line": 13609,
       "original_end_line": 13761,
-      "sha256": "39dadfd9dad52be5eb3454c187830f8e384c97ce1da5e47392e437641c692611"
+      "sha256": "be01980358483d80f8fcb8805836ce939f89e5afa40e29bfb575d440b4d4492c"
     }
   ]
 }

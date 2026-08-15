@@ -181,8 +181,10 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     # ═══════════════════════════════════════════════════════
     BIRTHDAYS_FILE = os.path.join(DATA_DIR, "birthdays.json")
     # birthdays: {"<user_id>": {"day": int, "month": int, "last_announced_year": int|null}}
-    # role_holders: [user_id, ...] — العضاء اللي عندهم الرول ديال اليوم دابا، باش نحيدوه غدا
-    birthdays_db = {"birthdays": {}, "role_holders": []}
+    # celebrations: الإعلان العام + المصوتين بالتهاني + الـThread حتى نهاية اليوم.
+    birthdays_db = {
+        "birthdays": {}, "role_holders": [], "celebrations": {}, "panel_messages": {}
+    }
     
     
     def load_birthdays():
@@ -190,7 +192,10 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         try:
             with open(BIRTHDAYS_FILE, "r", encoding="utf-8") as f:
                 birthdays_db = json.load(f)
+            birthdays_db.setdefault("birthdays", {})
             birthdays_db.setdefault("role_holders", [])
+            birthdays_db.setdefault("celebrations", {})
+            birthdays_db.setdefault("panel_messages", {})
             print(f"[BIRTHDAYS] تحمل {len(birthdays_db.get('birthdays', {}))} عيد ميلاد محفوظ")
         except FileNotFoundError:
             print("[BIRTHDAYS] ماكاينش أعياد ميلاد محفوظين من قبل")

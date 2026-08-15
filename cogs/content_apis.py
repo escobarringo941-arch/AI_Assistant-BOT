@@ -399,8 +399,8 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     
             print(f"[JIKAN] محاولة {page_attempt+1}: كاع نتائج الصفحة مبعوتين من قبل ولا بلا synopsis")
     
-        print("[JIKAN] ❌ ماكاينش نتيجة بعد كل المحاولات")
-        return {}
+        print("[JIKAN] ⚠️ ماكاينش نتيجة؛ غادي نجرب Kitsu بلا API key")
+        return await get_anime_from_kitsu()
     
     
     async def _build_anime_embed_data(anime: dict) -> dict:
@@ -427,8 +427,63 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             "scored_by": _safe_int(anime.get("scored_by")),
             "poster": poster,
             "url": anime.get("url", ""),
+            "source": "MyAnimeList / Jikan",
             "history_keys": [str(mal_id)],
         }
+
+
+    async def get_anime_from_kitsu() -> dict:
+        """Fallback مجاني للأنمي ملي Jikan يكون rate-limited أو فارغ."""
+        url = "https://kitsu.io/api/edge/anime"
+        headers = {
+            "Accept": "application/vnd.api+json",
+            "User-Agent": "GGMW9Bot/2.0",
+        }
+        for attempt in range(5):
+            params = {
+                "sort": "-averageRating",
+                "page[limit]": 20,
+                "page[offset]": random.randint(0, 35) * 20,
+            }
+            payload = await fetch_json(url, params, headers=headers)
+            results = payload.get("data", []) if payload else []
+            random.shuffle(results)
+            for item in results:
+                item_id = str(item.get("id") or "")
+                attrs = item.get("attributes", {}) or {}
+                history_key = f"kitsu:{item_id}"
+                score = _safe_float(attrs.get("averageRating")) / 10
+                age_rating = str(attrs.get("ageRating") or "").upper()
+                if not item_id or is_posted("anime", history_key):
+                    continue
+                if score < AUTO_INFO_ANIME_MIN_SCORE or age_rating in {"R18", "XXX"}:
+                    continue
+                synopsis = attrs.get("synopsis") or attrs.get("description")
+                poster = (attrs.get("posterImage") or {}).get("original") or (attrs.get("posterImage") or {}).get("large")
+                if not synopsis or not poster:
+                    continue
+                titles = attrs.get("titles") or {}
+                title = attrs.get("canonicalTitle") or titles.get("en") or "Unknown"
+                subtype = attrs.get("subtype") or "TV"
+                return {
+                    "title": title,
+                    "title_jp": titles.get("ja_jp") or "",
+                    "type": subtype,
+                    "episodes": attrs.get("episodeCount") or "N/A",
+                    "genres": await translate_genres(subtype),
+                    "synopsis": await translate_to_darija(synopsis),
+                    "score": round(score, 2),
+                    "rank": "N/A",
+                    "scored_by": _safe_int(attrs.get("userCount")),
+                    "poster": poster,
+                    "url": f"https://kitsu.app/anime/{attrs.get('slug') or item_id}",
+                    "source": "Kitsu",
+                    "history_keys": [history_key],
+                }
+            if attempt < 4:
+                await asyncio.sleep(1)
+        print("[KITSU] ❌ ما لقا حتى أنمي جديد مناسب")
+        return {}
     
     
     async def get_game_from_rawg() -> dict:
@@ -438,8 +493,8 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         التفاصيل الكاملة ديال اللعبة المختارة.
         """
         if not RAWG_API_KEY:
-            print("[RAWG] RAWG_API_KEY ماكاينش!")
-            return {}
+            print("[RAWG] RAWG_API_KEY ماكاينش؛ غادي نستعمل Steam المجاني")
+            return await get_game_from_steam()
     
         list_url = "https://api.rawg.io/api/games"
     
@@ -496,9 +551,80 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                     "metacritic": detail.get("metacritic") or game.get("metacritic") or "N/A",
                     "poster": poster,
                     "url": f"https://rawg.io/games/{slug}",
+                    "source": "RAWG",
                     "history_keys": [slug],
                 }
     
+        print("[RAWG] ⚠️ ما لقا حتى لعبة جديدة؛ غادي نستعمل Steam")
+        return await get_game_from_steam()
+
+
+    async def get_game_from_steam() -> dict:
+        """Fallback بلا API key: Steam featured + app details + review score."""
+        featured = await fetch_json(
+            "https://store.steampowered.com/api/featuredcategories",
+            {"cc": "us", "l": "en"},
+        )
+        candidates = []
+        for bucket_name in ("top_sellers", "new_releases", "specials", "coming_soon"):
+            bucket = featured.get(bucket_name, {}) if featured else {}
+            if isinstance(bucket, dict):
+                candidates.extend(bucket.get("items", []) or [])
+        random.shuffle(candidates)
+
+        for candidate in candidates[:35]:
+            app_id = str(candidate.get("id") or "")
+            history_key = f"steam:{app_id}"
+            if not app_id or is_posted("games", history_key):
+                continue
+            details_payload = await fetch_json(
+                "https://store.steampowered.com/api/appdetails",
+                {"appids": app_id, "cc": "us", "l": "en"},
+            )
+            wrapper = details_payload.get(app_id, {}) if details_payload else {}
+            details = wrapper.get("data", {}) if wrapper.get("success") else {}
+            if not details or str(details.get("type")) != "game" or _safe_int(details.get("required_age")) >= 18:
+                continue
+
+            reviews = await fetch_json(
+                f"https://store.steampowered.com/appreviews/{app_id}",
+                {
+                    "json": 1,
+                    "language": "all",
+                    "purchase_type": "all",
+                    "num_per_page": 0,
+                },
+            )
+            summary = reviews.get("query_summary", {}) if reviews else {}
+            total_reviews = _safe_int(summary.get("total_reviews"))
+            total_positive = _safe_int(summary.get("total_positive"))
+            positive_percent = (total_positive / total_reviews * 100) if total_reviews else 0
+            if total_reviews < 1000 or positive_percent < 80:
+                continue
+
+            description = details.get("short_description") or "No description available."
+            poster = details.get("header_image") or candidate.get("large_capsule_image")
+            if not poster:
+                continue
+            genres = ", ".join(
+                genre.get("description", "") for genre in details.get("genres", []) if genre.get("description")
+            ) or "Game"
+            release = (details.get("release_date") or {}).get("date") or "N/A"
+            metacritic = (details.get("metacritic") or {}).get("score") or "N/A"
+            return {
+                "name": details.get("name") or candidate.get("name") or "Unknown",
+                "released": release,
+                "genres": await translate_genres(genres),
+                "description": await translate_to_darija(description),
+                "rating": round(positive_percent / 20, 1),
+                "ratings_count": total_reviews,
+                "metacritic": metacritic,
+                "poster": poster,
+                "url": f"https://store.steampowered.com/app/{app_id}/",
+                "source": "Steam",
+                "history_keys": [history_key],
+            }
+        print("[STEAM] ❌ ما لقا حتى لعبة جديدة مناسبة")
         return {}
     
     

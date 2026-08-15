@@ -51,6 +51,7 @@ def _channel_ids() -> dict[int, str]:
         getattr(core, "BLACKLIST_CHANNEL_ID", 0): "🚫 الممنوعات (Blacklist)",
         getattr(core, "SUPPORT_CENTER_CHANNEL_ID", 0): "🎫 Support Center",
         getattr(core, "SUGGESTIONS_CHANNEL_ID", 0): "💡 الاقتراحات",
+        getattr(core, "BIRTHDAY_CENTER_CHANNEL_ID", 0): "🎂 Birthday Center",
         getattr(core, "APPLICATIONS_PANEL_CHANNEL_ID", 0): "📋 التوظيف (Applications)",
         getattr(core, "LEVELS_INFO_CHANNEL_ID", 0): "🎚️ Levels / Leaderboard",
         getattr(core, "LEADERBOARD_CHANNEL_ID", 0): "🏆 Leaderboard",

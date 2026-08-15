@@ -166,6 +166,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             try:
                 game = await get_game_from_rawg()
                 if game:
+                    game_source = game.get("source", "RAWG")
                     embed = discord.Embed(
                         title=f"🎮 {game['name']}",
                         description=_auto_info_excerpt(game["description"]),
@@ -173,15 +174,17 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                         url=game["url"],
                         timestamp=datetime.now(),
                     )
-                    embed.add_field(name="⭐ تقييم RAWG", value=f"{game['rating']:.1f}/5", inline=True)
+                    embed.add_field(name=f"⭐ تقييم {game_source}", value=f"{game['rating']:.1f}/5", inline=True)
                     embed.add_field(name="👥 عدد التقييمات", value=f"{game['ratings_count']:,}", inline=True)
                     embed.add_field(name="🏅 Metacritic", value=str(game["metacritic"]), inline=True)
                     embed.add_field(name="📅 تاريخ الصدور", value=game["released"], inline=True)
                     embed.add_field(name="🎭 الأنواع", value=game["genres"], inline=False)
                     embed.set_image(url=game["poster"])
-                    embed.set_footer(text="GGMW9 • من أفضل الألعاب • RAWG")
+                    embed.set_footer(text=f"GGMW9 • من أفضل الألعاب • {game_source}")
                     if await _send_auto_info_embed(GAMES_CHANNEL_IDS, "Games Ping", embed):
                         mark_posted_many("games", game["history_keys"])
+                else:
+                    print("[AUTO_INFO] ⚠️ GAMES: RAWG وSteam ما رجعو حتى اختيار جديد")
             except Exception as exc:
                 print(f"[AUTO_INFO] ❌ خطأ فـ GAMES: {exc}")
 
@@ -215,6 +218,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             try:
                 anime = await get_anime_from_jikan()
                 if anime:
+                    anime_source = anime.get("source", "MyAnimeList / Jikan")
                     embed = discord.Embed(
                         title=f"📺 {anime['title']}",
                         description=_auto_info_excerpt(anime["synopsis"]),
@@ -223,16 +227,19 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                         timestamp=datetime.now(),
                     )
                     embed.add_field(name="⭐ تقييم MAL", value=f"{anime['score']}/10", inline=True)
-                    embed.add_field(name="🏆 الترتيب العالمي", value=f"#{anime['rank']}", inline=True)
+                    rank_value = f"#{anime['rank']}" if str(anime.get("rank", "N/A")).isdigit() else str(anime.get("rank", "N/A"))
+                    embed.add_field(name="🏆 الترتيب العالمي", value=rank_value, inline=True)
                     embed.add_field(name="👥 عدد المقيمين", value=f"{anime['scored_by']:,}", inline=True)
                     embed.add_field(name="📺 النوع والحلقات", value=f"{anime['type']} • {anime['episodes']}", inline=True)
                     embed.add_field(name="🎭 الأنواع", value=anime["genres"], inline=False)
                     if anime.get("title_jp"):
                         embed.add_field(name="🇯🇵 الاسم الياباني", value=anime["title_jp"], inline=False)
                     embed.set_image(url=anime["poster"])
-                    embed.set_footer(text="GGMW9 • من أفضل الأنمي • MyAnimeList / Jikan")
+                    embed.set_footer(text=f"GGMW9 • من أفضل الأنمي • {anime_source}")
                     if await _send_auto_info_embed(ANIME_CHANNEL_IDS, "Anime Ping", embed):
                         mark_posted_many("anime", anime["history_keys"])
+                else:
+                    print("[AUTO_INFO] ⚠️ ANIME: Jikan وKitsu ما رجعو حتى اختيار جديد")
             except Exception as exc:
                 print(f"[AUTO_INFO] ❌ خطأ فـ ANIME: {exc}")
 
