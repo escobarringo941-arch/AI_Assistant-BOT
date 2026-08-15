@@ -315,6 +315,8 @@ async def handle_flag_translation(payload: discord.RawReactionActionEvent,
 async def maybe_auto_react_translate(message: discord.Message):
     """كيزيد الأعلام ديال AUTO_REACT_FLAGS أوتوماتيك على كل رسالة (إلا فيها نص)،
     باش العضو غير يكليكي على العلم بلا ما يقلب عليه/يكتبو بيدو."""
+    if message.channel.id != TARGET_CHANNEL_ID:
+        return
     if not bot_settings['auto_react_enabled'] or not bot_settings['auto_translate_enabled']:
         return
     if not message.content or not message.content.strip():
@@ -428,6 +430,8 @@ class CoreModerationCog(commands.Cog):
 
     def __init__(self, bot_instance: commands.Bot):
         self.bot = bot_instance
+        self.ai_chat_inflight = set()
+        self.ai_chat_last_request = {}
 
     @commands.Cog.listener()
     async def on_member_join(self, member):
@@ -645,7 +649,11 @@ class CoreModerationCog(commands.Cog):
             return
 
         # ═══════ الترجمة التلقائية بالـ Reaction (علم الدولة 🇬🇧🇫🇷) — كتخدم فأي channel ═══════
-        if bot_settings['auto_translate_enabled'] and str(payload.emoji) in FLAG_TO_LANGUAGE:
+        if (
+            payload.channel_id == TARGET_CHANNEL_ID
+            and bot_settings['auto_translate_enabled']
+            and str(payload.emoji) in FLAG_TO_LANGUAGE
+        ):
             await handle_flag_translation(payload, guild, member)
             return
 
@@ -736,7 +744,6 @@ class CoreModerationCog(commands.Cog):
         # (bot.process_commands ماعادش كيتصاوب، حيت الأوامر ديال ! معطلة نهائياً)
         await process_message_xp(message)
         msg_lower = message.content.lower()
-        gender = detect_gender(message.author.name, message.author.display_name)
 
         if not is_exempt(message.author):
             for word in get_active_banned_words() + BANNED_ACTIONS:
@@ -801,86 +808,36 @@ class CoreModerationCog(commands.Cog):
 
         await maybe_auto_react_translate(message)
 
-        if "ggmw9" in msg_lower:
-            await message.reply("نعام! 😂 واش بغيتي؟", mention_author=False)
-            return
-        if "غيرها" in msg_lower:
-            await message.reply("وخا أسي زبي 😂", mention_author=False)
-            return
-        if "سير تقود" in msg_lower or "تقود" in msg_lower:
-            await message.reply("وخا هاني غادي نتقود دابا 🏃‍♂️", mention_author=False)
-            return
-        if "مالك" in msg_lower and ("ازبي" in msg_lower or "زبي" in msg_lower):
-            if gender == "female":
-                await message.reply("زبي فكرك مخبي ابنت القحبة 😂", mention_author=False)
-            else:
-                await message.reply("زبي فكرك مخبي اولد القحبة 😂", mention_author=False)
-            return
-        if "قحبة" in msg_lower:
-            await message.reply("القحبة هي مك 😂", mention_author=False)
-            return
-        if "سير تحوا" in msg_lower:
-            if gender == "female":
-                await message.reply("سيري تحواي نتي نيت 😂", mention_author=False)
-            else:
-                await message.reply("سير تحوا نتا نيت 😂", mention_author=False)
-            return
-        if "اهيا" in msg_lower or "اه" in msg_lower:
-            await message.reply("وي مالك؟ 🤔", mention_author=False)
-            return
-        if "شحال" in msg_lower and "ساعة" in msg_lower:
-            await message.reply("ساعاتو لله 🕐", mention_author=False)
-            return
-        if "زبي" in msg_lower or "ازبي" in msg_lower:
-            replies = [
-                "ههههه ونتا؟ 😂",
-                "صافي صافي، ريح مع كرك",
-                "ياك خويا، هدي راسك شوية",
-                "زبي فكرك مخبي 😂"
-            ]
-            await message.reply(random.choice(replies), mention_author=False)
-            return
-        if "لقلاوي" in msg_lower or "لقلاو" in msg_lower:
-            await message.reply("ههههه لقلاوي نتا 😂", mention_author=False)
-            return
-        if "زامل" in msg_lower:
-            if gender == "female":
-                await message.reply("ههههه زاملة نتي 😂", mention_author=False)
-            else:
-                await message.reply("ههههه زامل نتا 😂", mention_author=False)
-            return
-        insults = ["حمار", "غبي", "قحبة", "زامل", "طاحون", "بوليس", "ولد القحبة", 
-                   "wld l9ahba", "nik mok", "tabon", "zamel", "7mar", "9a7ba", "tahwan",
-                   "لي حواك", "قواد", "طبون مك", "ابن القحبة", "ابنت القحبة",
-                   "نيك", "زب", "احا", "فمك", "كسمك", "كس"]
-        is_insult = any(insult in msg_lower for insult in insults)
-        if is_insult:
-            if gender == "female":
-                replies = [
-                    "ههههه ونتي نيت ابنت القحبة 😂",
-                    "صافي صافي، ريحي مع كرك 😂",
-                    "ياك اختي، هدي راسك شوية",
-                    "ههههه نتي اللي جاييا تهضري معايا؟"
-                ]
-            else:
-                replies = [
-                    "ههههه ونتا نيت اولد القحبة 😂",
-                    "صافي صافي، ريح مع كرك 😂",
-                    "ياك خويا، هدي راسك شوية",
-                    "ههههه نتا اللي جاي تهضر معايا؟"
-                ]
-            await message.reply(random.choice(replies), mention_author=False)
-            return
+        # الردود الحوارية ديال البوت ممنوعة حرفياً خارج روم الـAI المحددة.
         if message.channel.id != TARGET_CHANNEL_ID:
             return
+        clean_content = (message.content or "").strip()
+        if not clean_content:
+            return
+
         user_id = str(message.author.id)
-        response = await ask_ai(
-            user_id, 
-            message.author.name, 
-            message.author.display_name, 
-            message.content
-        )
-        await message.reply(response[:MAX_REPLY_LENGTH], mention_author=False)
+        now_mono = asyncio.get_running_loop().time()
+        if user_id in self.ai_chat_inflight:
+            return
+        last_request = float(self.ai_chat_last_request.get(user_id, 0.0) or 0.0)
+        if now_mono - last_request < AI_USER_COOLDOWN_SECONDS:
+            return
+
+        self.ai_chat_last_request[user_id] = now_mono
+        self.ai_chat_inflight.add(user_id)
+        try:
+            async with message.channel.typing():
+                response = await ask_ai(
+                    user_id,
+                    message.author.name,
+                    message.author.display_name,
+                    clean_content,
+                )
+            await message.reply(response[:MAX_REPLY_LENGTH], mention_author=False)
+        except discord.HTTPException:
+            pass
+        finally:
+            self.ai_chat_inflight.discard(user_id)
 
     @commands.command(name="report", hidden=True)
     @commands.cooldown(1, 60, commands.BucketType.user)

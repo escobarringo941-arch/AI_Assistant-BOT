@@ -1,6 +1,6 @@
 {
   "description": "Hashes lock the reviewed component bytes and execution order; intentional feature revisions update this baseline.",
-  "joined_sha256": "94dbfadee1c63f5d9f73ba3c2ec95b67408238566189d11779460092bae27468",
+  "joined_sha256": "355411d762005575a0643b14d2e47096287961a25630d8995ca092c648479f1c",
   "events_before_setup_hook": [
     "on_voice_state_update",
     "on_member_join",
@@ -29,14 +29,14 @@
       "path": "cogs/bootstrap.py",
       "original_start_line": 1,
       "original_end_line": 696,
-      "sha256": "6661176998ac7ae1875d0da6eedc72422588c2b4b469affed240dca20535583c"
+      "sha256": "1226508b53b52b53b82a2b5e1b3f198cacd6afc52c441dcab773d7f1a7c1e060"
     },
     {
       "name": "persistent_state",
       "path": "cogs/persistent_state.py",
       "original_start_line": 697,
       "original_end_line": 1449,
-      "sha256": "cde7058e319006ff51ac3961713938616308ff9ec43cdea5ea9661705b3655ee"
+      "sha256": "7454c101562ff4df07c20aed8c879b3ce140ec0ef28840c3b187222562009b46"
     },
     {
       "name": "xp_runtime",
@@ -50,14 +50,14 @@
       "path": "cogs/settings_storage.py",
       "original_start_line": 2057,
       "original_end_line": 2432,
-      "sha256": "2ece05459fac0818b18a7327d5dfa4466072c937df1d45933f58ea0d91e495a4"
+      "sha256": "519c472cbb35d22aa324e939a83fbce2f4961ea15ecab87356cc869387326dbd"
     },
     {
       "name": "ai_conversation",
       "path": "cogs/ai_conversation.py",
       "original_start_line": 2433,
       "original_end_line": 2679,
-      "sha256": "ca6508998e671ef5051b8181d7d8681539e4155776002ac4485e22c1369cf60d"
+      "sha256": "4ab8bdf5c2db4caa3b201f02d0a6ff7b51f51b8ef0f49e785462b58a890122d8"
     },
     {
       "name": "content_apis",
@@ -78,7 +78,7 @@
       "path": "cogs/access_panels.py",
       "original_start_line": 3522,
       "original_end_line": 4289,
-      "sha256": "5caa943541f6f2fad2573dba406396c4c05bcd131b575b9f08a8c11059f2367f"
+      "sha256": "45107fd0256e47a51575e9a7e5b3b6113450325eb2196083eeaa762c17771f29"
     },
     {
       "name": "support_system",
@@ -99,7 +99,7 @@
       "path": "cogs/suggestions.py",
       "original_start_line": 5376,
       "original_end_line": 5943,
-      "sha256": "76e714e063213abf5a07651b3a757a29b89f07a8be69b06a0370f6113227b792"
+      "sha256": "f5ef19aba3dc40c0deb9cf2fc8e41d0ed80134612fbae746e290db0c712d9a91"
     },
     {
       "name": "birthdays",
@@ -113,7 +113,7 @@
       "path": "cogs/relationships.py",
       "original_start_line": 6050,
       "original_end_line": 6735,
-      "sha256": "23551da2906119d504981bcd6b5c11a8f519d1dea30fac7034fbd239fbd11e9c"
+      "sha256": "668aa81c19a26934632b0a2c878aec85cc20c22e786ce459ed2e7e94708e3003"
     },
     {
       "name": "temp_voice",
@@ -141,21 +141,21 @@
       "path": "cogs/server_setup.py",
       "original_start_line": 8414,
       "original_end_line": 8842,
-      "sha256": "cb4731ef54fa02623991cb54d10dd8f31796fa3a6a15121b66fc8ec4888c1f1a"
+      "sha256": "f143db7114f893ab1a89d67522a3e43e1400f300e6dfe9033b50df6418c7642a"
     },
     {
       "name": "member_events",
       "path": "cogs/member_events.py",
       "original_start_line": 8843,
       "original_end_line": 9431,
-      "sha256": "bb715af634381ad52df4caa13c6523a933f91e9677bfc80ff26b3a0d8e3ecfeb"
+      "sha256": "37e90609a14f4fa0d26df8d994157ddec39f15ab3a275c74d579752408021829"
     },
     {
       "name": "moderation_commands",
       "path": "cogs/moderation_commands.py",
       "original_start_line": 9432,
       "original_end_line": 9839,
-      "sha256": "fa12486384c7177bd45071f4fa23d93cc989a0aa19218f176af388de2b277b1b"
+      "sha256": "286b1da2adde3b97adc18f575408cd98a7b77e6e210638448e12cb2a88d0641d"
     },
     {
       "name": "xp_admin",
@@ -197,28 +197,28 @@
       "path": "cogs/general_commands.py",
       "original_start_line": 11674,
       "original_end_line": 12020,
-      "sha256": "473329d9f5465f710ee745d74138d187c64a42f77f94fdfb067892b1367ee3f3"
+      "sha256": "ba1eb6af37911ddde7cfc040ae9f2167986b43387bbfb31c04db67d884f2370f"
     },
     {
       "name": "automation_tasks",
       "path": "cogs/automation_tasks.py",
       "original_start_line": 12021,
       "original_end_line": 12455,
-      "sha256": "3498cb05b78fc7919ebf12199fb80d307b2d04b16e10078666b61c1f8a0ce427"
+      "sha256": "b33e31f6a27d4626ad5112e727e1f78554a780915bf4b1f0365bd888cc7f83c7"
     },
     {
       "name": "owner_control",
       "path": "cogs/owner_control.py",
       "original_start_line": 12456,
       "original_end_line": 13608,
-      "sha256": "ae0ded7834b1f655f9624f6f8a0d633cabea9fc6409110a4548f59e8764eee19"
+      "sha256": "70d10dd03fcdcc144400218d78ec16b835aa82126e52d0b656c3861c11d855e8"
     },
     {
       "name": "ready_events",
       "path": "cogs/ready_events.py",
       "original_start_line": 13609,
       "original_end_line": 13761,
-      "sha256": "d982d4a6e351fce8438aded340ab70c499e1e3f40236d7129497dacdc92960bf"
+      "sha256": "39dadfd9dad52be5eb3454c187830f8e384c97ce1da5e47392e437641c692611"
     }
   ]
 }

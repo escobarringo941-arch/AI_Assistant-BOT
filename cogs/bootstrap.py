@@ -154,9 +154,8 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     # وحط هاد الرابط هنا (كيبدا بـ https://cdn.discordapp.com/attachments/...).
     # مواقع بحال animated-gif-creator.com عادة ماخدامينش كـ hotlink، البوت ما غاديش يقدر يبين الصورة بيهم.
     
-    AI_MODEL = "deepseek/deepseek-v4-flash"  # ← موديل مدفوع رخيص بزاف ($0.0983/مليون token دخول، $0.1966/مليون خروج)
-    #   ✅ متحقق منو فـ openrouter.ai/deepseek — الاسم صحيح 100% وخدام (نسخة أبريل 2026، 1M context).
-    #   بـ 9$ ديال الرصيد عندك تقريبا 90 مليون token دخول — يعني آلاف الردود. ماكاين حتى مشكل هنا.
+    # موديل احترافي ورخيص للمحادثة. OpenRouter كيوجّه الطلب لأرخص provider متاح.
+    AI_MODEL = "deepseek/deepseek-v4-flash"
     
     # ⚠️ DeepSeek V4 Flash هو reasoning model: كيصرف جزء من max_tokens على "التفكير"
     # قبل ما يكتب الجواب. علاش خاصنا نطفيو الـ reasoning فـ المهام القصيرة (بحال الترجمة)،
@@ -164,19 +163,11 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     AI_DISABLE_REASONING = True
     
     # ═══════ سلسلة الاحتياط (Fallback) ═══════
-    # إلا AI_MODEL فشل لسبب ما (بحال خلص الرصيد)، البوت كيجرب أوتوماتيكيا الموديلات
-    # المجانية اللي فـ هاد اللائحة، واحد بواحد، قبل ما يستسلم.
-    # ✅ هاد اللائحة تحققت منها فـ 3 غشت 2026 من openrouter.ai (كاع الأسماء خدامة).
-    # ⚠️ ملاحظة: "qwen/qwen3-next-80b-a3b-instruct:free" اللي كان هنا قبل تحيد من OpenRouter
-    # فـ يوليوز 2026 — كان كيرجع 404 وهو من الأسباب اللي خلات الترجمة ما تخدمش.
+    # إلا الموديل الأساسي ماجاوبش، كنجرب بديل رخيص ثم المسار المجاني.
     AI_MODEL_FALLBACKS = [
-        "nvidia/nemotron-3-ultra-550b-a55b:free",   # أقوى موديل مجاني حاليا (1M context)
-        "openai/gpt-oss-20b:free",
-        "nvidia/nemotron-3-super-120b-a12b:free",
-        "google/gemma-4-31b-it:free",
-        "openrouter/free",   # ← auto-router ديال OpenRouter: كيختار وحدو شي موديل مجاني متاح.
-                             #   خليه دايما فالآخر — هو اللي كيضمن ليك البوت مايوقفش ملي
-                             #   OpenRouter يحيد شي موديل مجاني بلا سابق إنذار.
+        "qwen/qwen3.5-flash-02-23",
+        "nvidia/nemotron-3.5-lightning:free",
+        "openrouter/free",
     ]
     
     OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
@@ -191,10 +182,14 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     
     TMDB_URL = "https://api.themoviedb.org/3"
     
-    MEMORY_SIZE = 100
-    CREATIVITY = 0.85
-    MAX_REPLY_LENGTH = 1500
-    API_TIMEOUT = 15
+    # حدود محادثة اقتصادية: ذاكرة قصيرة، prompt محدود، وجواب مركز.
+    MEMORY_SIZE = 6
+    CREATIVITY = 0.35
+    AI_MAX_OUTPUT_TOKENS = 320
+    AI_MAX_PROMPT_CHARS = 2500
+    AI_USER_COOLDOWN_SECONDS = 6
+    MAX_REPLY_LENGTH = 1800
+    API_TIMEOUT = 25
     
     # ═══════════════════════════════════════════════════════
     # ║              CHANNELS ديال AUTO-INFO                 ║

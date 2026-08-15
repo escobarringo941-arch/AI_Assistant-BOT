@@ -714,7 +714,10 @@ class GeneralCog(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.hybrid_command(description="هضر مع البوت (AI)")
+    @commands.cooldown(1, AI_USER_COOLDOWN_SECONDS, commands.BucketType.user)
     async def chat(self, ctx, *, message: str):
+        if ctx.channel.id != TARGET_CHANNEL_ID:
+            return
         user_id = str(ctx.author.id)
         response = await ask_ai(user_id, ctx.author.name, ctx.author.display_name, message)
         await ctx.send(response[:MAX_REPLY_LENGTH])

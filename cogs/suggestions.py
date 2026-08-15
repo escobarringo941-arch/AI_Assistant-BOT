@@ -525,6 +525,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             "messages": [{"role": "user", "content": "Reply with exactly: OK"}],
             "max_tokens": 20,
             "temperature": 0,
+            "provider": {"sort": "price"},
         }
         if AI_DISABLE_REASONING:
             payload["reasoning"] = {"enabled": False, "exclude": True}
@@ -582,9 +583,9 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                 f"💳 **الرصيد**: خلصتي `${total:.2f}` — صرفتي `${used:.4f}` — "
                 f"باقي ليك **`${left:.4f}`**"
             )
-            # DeepSeek V4 Flash: $0.0983/M in, $0.1966/M out
-            approx_msgs = int(left / 0.0004) if left > 0 else 0
-            lines.append(f"   └ يعني تقريبا **{approx_msgs:,}** رد آخر بهاد الموديل 🎯")
+            # تقدير محافظ لرد قصير مع ذاكرة محدودة؛ الثمن الحقيقي كيتبدل حسب طول السؤال والجواب.
+            approx_msgs = int(left / 0.00025) if left > 0 else 0
+            lines.append(f"   └ تقدير محافظ: حوالي **{approx_msgs:,}** رد قصير 🎯")
         else:
             lines.append("💳 **الرصيد**: ما قدرتش نجيبو (تأكد من `OPENROUTER_API_KEY`)")
     
@@ -595,7 +596,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         lines.append(f"   └ {'خدام مزيان' if ok else 'ماخدامش'} — `{took:.2f}s` — {detail}")
     
         # 3) موديلات الاحتياط
-        lines.append("\n🔁 **موديلات الاحتياط (المجانية):**")
+        lines.append("\n🔁 **موديلات الاحتياط (رخيصة/مجانية):**")
         for fb in AI_MODEL_FALLBACKS:
             fok, fdetail, ftook = await test_single_model(fb)
             lines.append(f"   {'✅' if fok else '❌'} `{fb}` — `{ftook:.2f}s`" + ("" if fok else f" — {fdetail}"))
