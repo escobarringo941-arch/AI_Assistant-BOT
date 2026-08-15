@@ -21,12 +21,14 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta
+import re
 from typing import Iterable, Optional
 
 import discord
 from discord.ext import commands, tasks
 
 from cogs.prison_core import (
+    AUTO_ACTION_LABELS,
     CELL_RANK,
     CELL_KEYS,
     CHANNEL_NAMES,
@@ -55,6 +57,7 @@ from cogs.prison_core import (
     complaint_route_for_cell,
     format_duration,
     now_ts,
+    normalize_auto_rule_pattern,
     remaining_seconds,
 )
 
@@ -80,6 +83,19 @@ CELL_FORBIDDEN_PATTERNS = (
     "http://", "https://", "www.",
     "@everyone", "@here",
 )
+
+# كشف الروابط والأفعال اللي يقدر الـOwner يربطها بعقوبة من Prison Code.
+AUTO_DOMAIN_PATTERN = re.compile(
+    r"(?i)(?:https?://)?(?:www\.)?((?:[a-z0-9-]+\.)+[a-z]{2,63})"
+    r"(?::\d+)?(?:[/\?#][^\s]*)?"
+)
+AUTO_DISCORD_INVITE_PATTERN = re.compile(
+    r"(?i)(?:https?://)?(?:www\.)?(?:discord\.gg|discord(?:app)?\.com/invite)/[a-z0-9-]+"
+)
+AUTO_CUSTOM_EMOJI_PATTERN = re.compile(r"<a?:[A-Za-z0-9_]+:\d+>")
+AUTO_UNICODE_EMOJI_PATTERN = re.compile(r"[\U0001F300-\U0001FAFF\u2600-\u27BF]")
+AUTO_MESSAGE_SPAM_WINDOW_SECONDS = 8
+AUTO_MESSAGE_SPAM_THRESHOLD = 5
 
 # الصلاحيات اللي كتتحيد من السجين فكل روم برا السجن.
 HIDE_OVERWRITE = discord.PermissionOverwrite(
@@ -917,6 +933,8 @@ class PrisonSystem(commands.Cog):
         # تتبّع الرسائل المتتالية ديال كل سجين فزنزانتو — باش نكشفو Spam
         # ونصعّدو العقوبة أوتوماتيكيا. المفتاح: (guild_id, user_id).
         self._cell_spam_tracker: dict[tuple[int, int], list[int]] = {}
+        # Tracker مستقل لقانون Spam العام اللي كيختارو الـOwner من البانل.
+        self._auto_rule_spam_tracker: dict[tuple[int, int], list[int]] = {}
         # آخر روم عامة كتب فيها العضو؛ كتستعمل باش يتقفل عليه فردياً وقت الاعتقال.
         self._last_non_prison_message_channel: dict[tuple[int, int], int] = {}
 
@@ -2016,6 +2034,7 @@ class PrisonSystem(commands.Cog):
         self._last_non_prison_message_channel.pop((guild.id, member.id), None)
         await self._grant_cell_access(member)
         await self._post_cell_card(member, record)
+        await self.publish_cell_help_panels(guild, voice_only=True)
 
         embed = discord.Embed(
             title="⛓️ حكم بالسجن",
@@ -2143,6 +2162,7 @@ class PrisonSystem(commands.Cog):
             record = transfer.get("record", record)
         elif not in_solitary:
             await self._post_cell_card(member, record)
+            await self.publish_cell_help_panels(member.guild, voice_only=True)
 
         embed = discord.Embed(
             title="⏳ تمديد الحكم",
@@ -2184,6 +2204,7 @@ class PrisonSystem(commands.Cog):
             record["sentence"] = max(0, int(record.get("sentence", 0) or 0) - int(seconds))
         self.store.save()
         await self._post_cell_card(member, record)
+        await self.publish_cell_help_panels(member.guild, voice_only=True)
 
         embed = discord.Embed(
             title="⏬ تخفيض الحكم",
@@ -2269,6 +2290,7 @@ class PrisonSystem(commands.Cog):
 
         await self._grant_cell_access(member, move_voice=move_voice)
         await self._post_cell_card(member, record)
+        await self.publish_cell_help_panels(member.guild, voice_only=True)
         await self._post_cell_escalation_notice(
             member,
             record,
@@ -2327,6 +2349,164 @@ class PrisonSystem(commands.Cog):
             return "Spam / Flood فالزنزانة"
         return None
 
+    @staticmethod
+    def _message_domains(content: str) -> set[str]:
+        return {
+            match.casefold().rstrip(".")
+            for match in AUTO_DOMAIN_PATTERN.findall(content or "")
+        }
+
+    @staticmethod
+    def _word_rule_matches(content: str, pattern: str) -> bool:
+        normalized_content = " ".join((content or "").casefold().split())
+        normalized_pattern = normalize_auto_rule_pattern("word", pattern)
+        if not normalized_pattern:
+            return False
+        return bool(
+            re.search(
+                rf"(?<!\w){re.escape(normalized_pattern)}(?!\w)",
+                normalized_content,
+            )
+        )
+
+    def _detected_auto_actions(
+        self,
+        message: discord.Message,
+        requested: set[str],
+    ) -> set[str]:
+        """كيحسب غير الأفعال اللي كاين عليهم قانون مفعّل، حفاظاً على الخفة."""
+        detected: set[str] = set()
+        content = message.content or ""
+
+        if "discord_invite" in requested and AUTO_DISCORD_INVITE_PATTERN.search(content):
+            detected.add("discord_invite")
+        if "any_link" in requested and self._message_domains(content):
+            detected.add("any_link")
+        if "mass_mentions" in requested:
+            mention_ids = {
+                int(item.id)
+                for item in [
+                    *list(getattr(message, "mentions", []) or []),
+                    *list(getattr(message, "role_mentions", []) or []),
+                ]
+                if getattr(item, "id", None)
+            }
+            if bool(getattr(message, "mention_everyone", False)) or len(mention_ids) >= 5:
+                detected.add("mass_mentions")
+        if "attachments" in requested and bool(getattr(message, "attachments", [])):
+            detected.add("attachments")
+        if "caps_spam" in requested:
+            letters = [char for char in content if char.isalpha()]
+            uppercase = sum(1 for char in letters if char.isupper())
+            if len(letters) >= 12 and uppercase / len(letters) >= 0.80:
+                detected.add("caps_spam")
+        if "emoji_spam" in requested:
+            emoji_count = len(AUTO_CUSTOM_EMOJI_PATTERN.findall(content))
+            emoji_count += len(AUTO_UNICODE_EMOJI_PATTERN.findall(content))
+            if emoji_count >= 8:
+                detected.add("emoji_spam")
+        if "message_spam" in requested:
+            key = (message.guild.id, message.author.id)
+            current = now_ts()
+            bucket = self._auto_rule_spam_tracker.setdefault(key, [])
+            bucket.append(current)
+            bucket[:] = [
+                timestamp
+                for timestamp in bucket
+                if current - timestamp <= AUTO_MESSAGE_SPAM_WINDOW_SECONDS
+            ]
+            if len(bucket) >= AUTO_MESSAGE_SPAM_THRESHOLD:
+                detected.add("message_spam")
+                self._auto_rule_spam_tracker[key] = []
+        return detected
+
+    def _matching_auto_rules(self, message: discord.Message) -> list[dict]:
+        rules = [
+            rule
+            for rule in self.store.auto_rules(message.guild.id).values()
+            if bool(rule.get("enabled", True))
+        ]
+        if not rules:
+            return []
+
+        content = message.content or ""
+        domains: Optional[set[str]] = None
+        requested_actions = {
+            str(rule.get("pattern", ""))
+            for rule in rules
+            if rule.get("kind") == "action"
+        }
+        actions = self._detected_auto_actions(message, requested_actions)
+        matches: list[dict] = []
+
+        for rule in rules:
+            kind = rule.get("kind")
+            pattern = str(rule.get("pattern", ""))
+            matched = False
+            if kind == "word":
+                matched = self._word_rule_matches(content, pattern)
+            elif kind == "domain":
+                if domains is None:
+                    domains = self._message_domains(content)
+                matched = any(
+                    domain == pattern or domain.endswith(f".{pattern}")
+                    for domain in domains
+                )
+            elif kind == "action":
+                matched = pattern in actions
+            if matched:
+                matches.append(rule)
+        return matches
+
+    @staticmethod
+    def _auto_rule_reason(rule: dict) -> str:
+        kind = rule.get("kind")
+        pattern = str(rule.get("pattern", ""))
+        if kind == "word":
+            detail = f"كلمة/عبارة ممنوعة: {pattern}"
+        elif kind == "domain":
+            detail = f"موقع ممنوع: {pattern}"
+        else:
+            detail = AUTO_ACTION_LABELS.get(pattern, pattern)
+        return f"قانون تلقائي #{rule.get('id', '?')} — {detail}"
+
+    async def _enforce_auto_message_rules(self, message: discord.Message) -> bool:
+        """كيحذف المخالفة ويطبق أقوى عقوبة مطابقة مرة وحدة."""
+        member = message.author
+        if member.id == message.guild.owner_id:
+            return False
+        matches = self._matching_auto_rules(message)
+        if not matches:
+            return False
+
+        def punishment_rank(rule: dict) -> tuple[int, int, int]:
+            offense = self.store.offense(message.guild.id, rule.get("offense", "manual"))
+            seconds = int(offense.get("seconds", 0) or 0)
+            return (
+                1 if seconds < 0 else 0,
+                int(offense.get("severity", 1) or 1),
+                max(0, seconds),
+            )
+
+        chosen = max(matches, key=punishment_rank)
+        reasons = [self._auto_rule_reason(rule) for rule in matches[:3]]
+        if len(matches) > 3:
+            reasons.append(f"+{len(matches) - 3} قوانين أخرى")
+        reason = " | ".join(reasons)[:400]
+
+        try:
+            await message.delete()
+        except (discord.Forbidden, discord.HTTPException, discord.NotFound):
+            pass
+
+        await self.imprison(
+            member,
+            offense_key=str(chosen.get("offense", "manual")),
+            reason=reason,
+            actor=None,
+        )
+        return True
+
     async def _escalate_cell(self, member: discord.Member, *, reason: str) -> dict:
         """كتصعّد عقوبة السجين تلقائيا — بلا تدخل يدوي — ملي يخرق القوانين فزنزانتو."""
         guild = member.guild
@@ -2368,6 +2548,7 @@ class PrisonSystem(commands.Cog):
             )
             self.store.save()
             await self._post_cell_card(member, record)
+            await self.publish_cell_help_panels(guild, voice_only=True)
             await self._post_cell_escalation_notice(
                 member,
                 record,
@@ -2413,6 +2594,11 @@ class PrisonSystem(commands.Cog):
         if isinstance(message.channel, (discord.TextChannel, discord.VoiceChannel)):
             if not self.is_prison_area(message.channel):
                 self._last_non_prison_message_channel[(guild.id, member.id)] = message.channel.id
+
+        # قوانين الـOwner كتخدم فالسيرفر كامل. إلا تطبقات قاعدة هنا، كنوقفو
+        # باش نفس الرسالة ما تزيدش عقوبة ثانية من مراقبة Chat ديال الزنزانة.
+        if await self._enforce_auto_message_rules(message):
+            return
 
         record = self.store.inmate(guild.id, member.id)
         if not record:
@@ -2510,6 +2696,7 @@ class PrisonSystem(commands.Cog):
         self.store.remove_inmate(
             guild.id, user_id, outcome=outcome, actor_id=int(getattr(actor, "id", 0) or 0)
         )
+        await self.publish_cell_help_panels(guild, voice_only=True)
 
         embed = discord.Embed(
             title="🔓 إطلاق سراح",
@@ -3071,6 +3258,7 @@ class PrisonSystem(commands.Cog):
             cell=record.get("cell", "holding"),
             complaint_id=complaint_id,
         )
+        await self.publish_cell_help_panels(guild, voice_only=True)
 
         # بطاقة السجين كتتعاود فالروم الانفرادية
         await self._post_solitary_card(member, record, solitary, channel)
@@ -3178,6 +3366,7 @@ class PrisonSystem(commands.Cog):
                 self.store.save()
                 await self._grant_cell_access(member)
                 await self._post_cell_card(member, record)
+                await self.publish_cell_help_panels(guild, voice_only=True)
             await self._dm(
                 member,
                 discord.Embed(
@@ -3202,17 +3391,58 @@ class PrisonSystem(commands.Cog):
     # ║             5أ. بانلات التدخل فالزنازن             ║
     # ═══════════════════════════════════════════════════
 
-    async def publish_cell_help_panels(self, guild: discord.Guild) -> None:
-        """بانل فالروم النصية وفالـChat المدمج ديال فويس كل زنزانة."""
+    def _cell_sentence_roster(self, guild: discord.Guild, cell: str) -> str:
+        """لائحة مضغوطة ديال السجناء والمدة الباقية، صالحة لحقل Embed."""
+        inmates: list[tuple[int, dict]] = []
+        for raw_user_id, inmate_record in self.store.inmates(guild.id).items():
+            user_id = int(raw_user_id)
+            if inmate_record.get("cell", "holding") != cell:
+                continue
+            if self.store.in_solitary(guild.id, user_id):
+                continue
+            inmates.append((user_id, inmate_record))
+
+        if not inmates:
+            return "🕊️ ماكاين حتى سجين فهاد الزنزانة دابا."
+
+        inmates.sort(
+            key=lambda item: (
+                remaining_seconds(item[1]) < 0,
+                remaining_seconds(item[1]) if remaining_seconds(item[1]) >= 0 else 0,
+                item[0],
+            )
+        )
+        lines: list[str] = []
+        hidden = 0
+        for user_id, inmate_record in inmates:
+            left = remaining_seconds(inmate_record)
+            timing = "مؤبّد ♾️" if left < 0 else format_duration(left)
+            line = f"• <@{user_id}> — **باقي: {timing}**"
+            candidate = "\n".join([*lines, line])
+            if len(candidate) > 960:
+                hidden += 1
+                continue
+            lines.append(line)
+        if hidden:
+            lines.append(f"… و **{hidden}** سجناء آخرين")
+        return "\n".join(lines)
+
+    async def publish_cell_help_panels(
+        self,
+        guild: discord.Guild,
+        *,
+        voice_only: bool = False,
+    ) -> None:
+        """
+        بانل فالروم النصية وفالـChat المدمج ديال فويس كل زنزانة.
+        التحديث الدقيق كل دقيقة كيمس غير رسالة الفويس باش يبقى البوت خفيف.
+        """
         record = self.store.guild(guild.id)
         message_ids = record.setdefault("cell_help_message_ids", {})
         voice_message_ids = record.setdefault("voice_help_message_ids", {})
+        changed = False
 
         for cell in CELL_KEYS:
-            channel = self.prison_channel(guild, cell)
-            if not isinstance(channel, discord.TextChannel):
-                continue
-
             authority = (
                 "👮 الـWarden أو 👑 الـOwner"
                 if cell == "holding"
@@ -3236,30 +3466,41 @@ class PrisonSystem(commands.Cog):
                 value="الاختيار والسبب كيبانو غير ليك، والقرار كيمشي للمسؤول المختص.",
                 inline=False,
             )
+            voice_embed = embed.copy()
+            voice_embed.add_field(
+                name="⏳ المدة الباقية لكل سجين",
+                value=self._cell_sentence_roster(guild, cell),
+                inline=False,
+            )
             embed.set_footer(
-                text="نفس البانل كاينة فالروم النصية وفـOpen Chat ديال فويس الزنزانة"
+                text="نفس زر التدخل كاين حتى فـOpen Chat ديال فويس الزنزانة"
+            )
+            voice_embed.set_footer(
+                text="العداد كيتحدث أوتوماتيكياً كل دقيقة داخل Voice Chat"
             )
 
-            message = None
-            message_id = int(message_ids.get(cell) or 0)
-            if message_id:
-                try:
-                    message = await channel.fetch_message(message_id)
-                    await message.edit(embed=embed, view=CellHelpView())
-                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            if not voice_only:
+                channel = self.prison_channel(guild, cell)
+                if isinstance(channel, discord.TextChannel):
                     message = None
-            if message is None:
-                try:
-                    message = await channel.send(embed=embed, view=CellHelpView())
-                    message_ids[cell] = message.id
-                    self.store.save()
-                except (discord.Forbidden, discord.HTTPException):
-                    continue
-            if message is not None and not message.pinned:
-                try:
-                    await message.pin(reason=f"{REASON_TAG}: cell help panel")
-                except (discord.Forbidden, discord.HTTPException):
-                    pass
+                    message_id = int(message_ids.get(cell) or 0)
+                    if message_id:
+                        try:
+                            message = channel.get_partial_message(message_id)
+                            await message.edit(embed=embed, view=CellHelpView())
+                        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                            message = None
+                    if message is None:
+                        try:
+                            message = await channel.send(embed=embed, view=CellHelpView())
+                            message_ids[cell] = message.id
+                            changed = True
+                            try:
+                                await message.pin(reason=f"{REASON_TAG}: cell help panel")
+                            except (discord.Forbidden, discord.HTTPException):
+                                pass
+                        except (discord.Forbidden, discord.HTTPException):
+                            pass
 
             # Discord عندو Text Chat مدمج داخل الـVoice. كنستعمل PartialMessageable
             # حيت discord.py 2.3 ما كيعطيش send() مباشرة على VoiceChannel model.
@@ -3275,8 +3516,8 @@ class PrisonSystem(commands.Cog):
             voice_message_id = int(voice_message_ids.get(cell) or 0)
             if voice_message_id:
                 try:
-                    voice_message = await voice_chat.fetch_message(voice_message_id)
-                    await voice_message.edit(embed=embed, view=CellHelpView())
+                    voice_message = voice_chat.get_partial_message(voice_message_id)
+                    await voice_message.edit(embed=voice_embed, view=CellHelpView())
                 except (discord.NotFound, discord.Forbidden, discord.HTTPException):
                     voice_message = None
             if voice_message is None:
@@ -3286,13 +3527,15 @@ class PrisonSystem(commands.Cog):
                             "🔐 الوصول لهاد الـVoice كيتعطى لكل سجين فردياً حسب الـID. "
                             "منين كتضغط، الاختيار والسبب كيبقاو سريين عندك."
                         ),
-                        embed=embed,
+                        embed=voice_embed,
                         view=CellHelpView(),
                     )
                     voice_message_ids[cell] = voice_message.id
-                    self.store.save()
+                    changed = True
                 except (discord.Forbidden, discord.HTTPException):
                     pass
+        if changed:
+            self.store.save()
 
     # ═══════════════════════════════════════════════════
     # ║                  5ب. الزيارات                     ║
@@ -3987,11 +4230,13 @@ class PrisonSystem(commands.Cog):
 
     @tasks.loop(seconds=60)
     async def card_loop(self):
-        """كيخلي بطاقة كل سجين حية فالزنزانة ديالو."""
+        """كيخلي بطاقة كل سجين والعداد الجماعي ديال Voice Chat حيّين."""
         for guild in list(self.bot.guilds):
             try:
                 if self.store.inmates(guild.id):
                     await self.refresh_cell_cards(guild)
+                if self.prison_category(guild) is not None:
+                    await self.publish_cell_help_panels(guild, voice_only=True)
             except Exception as exc:
                 print(f"[PRISON] ❌ card_loop: {type(exc).__name__}: {exc}")
 

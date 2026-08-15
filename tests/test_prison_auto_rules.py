@@ -1,0 +1,159 @@
+#!/usr/bin/env python3
+"""Regression checks for Arabic timers, voice rosters, and owner auto-rules."""
+
+from __future__ import annotations
+
+import ast
+import os
+from pathlib import Path
+import tempfile
+import unittest
+
+os.environ.setdefault("DATA_DIR", tempfile.mkdtemp(prefix="prison-auto-rule-tests-"))
+
+from cogs.prison_core import (  # noqa: E402
+    AUTO_ACTION_LABELS,
+    PrisonStore,
+    format_duration,
+    normalize_auto_rule_pattern,
+)
+
+
+ROOT = Path(__file__).resolve().parents[1]
+PRISON_PATH = ROOT / "cogs" / "prison.py"
+PANEL_PATH = ROOT / "cogs" / "prison_panel.py"
+PRISON_SOURCE = PRISON_PATH.read_text(encoding="utf-8")
+PANEL_SOURCE = PANEL_PATH.read_text(encoding="utf-8")
+PRISON_TREE = ast.parse(PRISON_SOURCE, filename=str(PRISON_PATH))
+PANEL_TREE = ast.parse(PANEL_SOURCE, filename=str(PANEL_PATH))
+
+
+def method_source(tree: ast.Module, source: str, class_name: str, method_name: str) -> str:
+    cls = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == class_name
+    )
+    node = next(
+        item
+        for item in cls.body
+        if isinstance(item, (ast.AsyncFunctionDef, ast.FunctionDef))
+        and item.name == method_name
+    )
+    return ast.get_source_segment(source, node)
+
+
+class FakeDB:
+    def __init__(self):
+        self.data = {"guilds": {}}
+
+    def save(self) -> bool:
+        return True
+
+
+class ArabicDurationTests(unittest.TestCase):
+    def test_minutes_use_singular_dual_and_plural_forms(self):
+        self.assertEqual(format_duration(60), "1 دقيقة")
+        self.assertEqual(format_duration(2 * 60), "دقيقتان")
+        self.assertEqual(format_duration(4 * 60), "4 دقائق")
+        self.assertEqual(format_duration(10 * 60), "10 دقائق")
+        self.assertEqual(format_duration(11 * 60), "11 دقيقة")
+        self.assertEqual(format_duration(20 * 60), "20 دقيقة")
+
+    def test_hours_and_compound_durations_are_grammatical(self):
+        self.assertEqual(format_duration(60 * 60), "1 ساعة")
+        self.assertEqual(format_duration(2 * 60 * 60), "ساعتان")
+        self.assertEqual(format_duration(3 * 60 * 60), "3 ساعات")
+        self.assertEqual(format_duration(11 * 60 * 60), "11 ساعة")
+        self.assertEqual(format_duration((2 * 60 + 2) * 60), "ساعتان و دقيقتان")
+
+
+class AutoRuleStoreTests(unittest.TestCase):
+    def make_store(self) -> PrisonStore:
+        store = PrisonStore.__new__(PrisonStore)
+        store._db = FakeDB()
+        return store
+
+    def test_domain_normalization(self):
+        self.assertEqual(
+            normalize_auto_rule_pattern("domain", "HTTPS://WWW.Example.COM/path?q=1"),
+            "example.com",
+        )
+        self.assertEqual(normalize_auto_rule_pattern("domain", "not a domain"), "")
+
+    def test_rule_lifecycle_is_durable_and_offense_linked(self):
+        store = self.make_store()
+        self.assertEqual(store.guild(1)["auto_rules"], {})
+        rule = store.add_auto_rule(
+            1,
+            kind="word",
+            pattern="  BAD   PHRASE ",
+            offense_key="spam",
+        )
+        self.assertEqual(rule["pattern"], "bad phrase")
+        self.assertEqual(rule["offense"], "spam")
+        self.assertTrue(rule["enabled"])
+        self.assertFalse(store.toggle_auto_rule(1, rule["id"])["enabled"])
+        self.assertEqual(store.remove_auto_rule(1, rule["id"])["id"], rule["id"])
+        self.assertEqual(store.auto_rules(1), {})
+
+    def test_duplicate_and_unknown_action_are_rejected(self):
+        store = self.make_store()
+        action = next(iter(AUTO_ACTION_LABELS))
+        store.add_auto_rule(1, kind="action", pattern=action, offense_key="spam")
+        with self.assertRaises(ValueError):
+            store.add_auto_rule(1, kind="action", pattern=action, offense_key="links")
+        with self.assertRaises(ValueError):
+            store.add_auto_rule(1, kind="action", pattern="unknown", offense_key="spam")
+
+
+class AutoRuleSourceTests(unittest.TestCase):
+    def test_voice_panel_shows_and_refreshes_every_inmate_timer(self):
+        roster = method_source(
+            PRISON_TREE, PRISON_SOURCE, "PrisonSystem", "_cell_sentence_roster"
+        )
+        publish = method_source(
+            PRISON_TREE, PRISON_SOURCE, "PrisonSystem", "publish_cell_help_panels"
+        )
+        loop = method_source(PRISON_TREE, PRISON_SOURCE, "PrisonSystem", "card_loop")
+        self.assertIn("remaining_seconds", roster)
+        self.assertIn("format_duration", roster)
+        self.assertIn("المدة الباقية لكل سجين", publish)
+        self.assertIn("voice_only", publish)
+        self.assertIn("voice_only=True", loop)
+
+    def test_server_wide_rules_delete_and_use_existing_prison_pipeline(self):
+        matching = method_source(
+            PRISON_TREE, PRISON_SOURCE, "PrisonSystem", "_matching_auto_rules"
+        )
+        enforce = method_source(
+            PRISON_TREE, PRISON_SOURCE, "PrisonSystem", "_enforce_auto_message_rules"
+        )
+        on_message = method_source(
+            PRISON_TREE, PRISON_SOURCE, "PrisonSystem", "on_message"
+        )
+        self.assertIn('kind == "word"', matching)
+        self.assertIn('kind == "domain"', matching)
+        self.assertIn('kind == "action"', matching)
+        self.assertIn("await message.delete()", enforce)
+        self.assertIn("await self.imprison(", enforce)
+        self.assertIn("await self._enforce_auto_message_rules(message)", on_message)
+
+    def test_owner_panel_has_full_rule_management(self):
+        owner_panel = method_source(
+            PANEL_TREE, PANEL_SOURCE, "PrisonOwnerPanelView", "auto_rules_btn"
+        )
+        home_names = {
+            node.name
+            for node in PANEL_TREE.body
+            if isinstance(node, ast.ClassDef)
+        }
+        self.assertIn("AutoRulesHomeView", owner_panel)
+        self.assertIn("AutoRulePatternModal", home_names)
+        self.assertIn("AutoActionView", home_names)
+        self.assertIn("AutoRuleManageView", home_names)
+        self.assertIn("AutoRuleSelectedView", home_names)
+
+
+if __name__ == "__main__":
+    unittest.main()

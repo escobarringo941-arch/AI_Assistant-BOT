@@ -219,6 +219,49 @@ def visit_channel_name(display_name: str, user_id: int) -> str:
     return f"{VISIT_CHANNEL_PREFIX}{cleaned}"
 
 
+# ══════ القوانين التلقائية ديال الـOwner ══════
+# كل قاعدة كترتابط بمخالفة من كتالوج السجن. العقوبة والزنزانة
+# كيجيو ديركت من ديك المخالفة، باش ما نكرروش نفس المنطق فبلايص مختلفة.
+AUTO_RULE_MAX = 25
+AUTO_RULE_KINDS = ("word", "domain", "action")
+AUTO_ACTION_LABELS = {
+    "discord_invite": "نشر دعوة Discord",
+    "any_link": "نشر أي رابط",
+    "mass_mentions": "منشن جماعي أو متكرر",
+    "attachments": "إرسال ملف أو صورة",
+    "caps_spam": "إزعاج بالحروف الكبيرة",
+    "emoji_spam": "إغراق بالإيموجي",
+    "message_spam": "Spam / Flood سريع",
+}
+
+
+def normalize_auto_rule_pattern(kind: str, raw: Any) -> str:
+    """تنظيف قيمة قانون تلقائي قبل التخزين والمقارنة."""
+    kind = str(kind or "").strip().lower()
+    text = " ".join(str(raw or "").strip().split()).casefold()
+    if kind == "word":
+        return text[:120]
+    if kind == "action":
+        return text if text in AUTO_ACTION_LABELS else ""
+    if kind != "domain":
+        return ""
+
+    text = re.sub(r"^[a-z][a-z0-9+.-]*://", "", text)
+    text = text.split("/", 1)[0].split("?", 1)[0].split("#", 1)[0]
+    if "@" in text:
+        text = text.rsplit("@", 1)[-1]
+    text = text.split(":", 1)[0].strip(". ")
+    if text.startswith("www."):
+        text = text[4:]
+    if (
+        "." not in text
+        or len(text) > 253
+        or not re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", text)
+    ):
+        return ""
+    return text
+
+
 # أقصى ما يقدر يدير الـ Warden (الشرطة): زنزانة holding + 12 ساعة.
 WARDEN_MAX_SECONDS = 12 * HOUR
 WARDEN_ALLOWED_CELLS = ("holding",)
@@ -269,25 +312,37 @@ def parse_duration(raw: Any) -> Optional[int]:
     return None
 
 
+def _format_arabic_count(value: int, singular: str, dual: str, plural: str) -> str:
+    """صياغة عدد عربية: 1 مفرد، 2 مثنى، 3-10 جمع، ومن 11 مفرد."""
+    value = int(value)
+    if value == 1:
+        return f"1 {singular}"
+    if value == 2:
+        return dual
+    if 3 <= value <= 10:
+        return f"{value} {plural}"
+    return f"{value} {singular}"
+
+
 def format_duration(seconds: int) -> str:
-    """ثواني → نص بالدارجة: '3 أيام و 4 سوايع'."""
+    """ثواني → مدة عربية مضبوطة: 'دقيقتان' / '10 دقائق' / '11 دقيقة'."""
     seconds = int(seconds)
     if seconds < 0:
         return "مؤبّد ♾️"
     if seconds < 60:
-        return f"{seconds} ثانية"
+        return _format_arabic_count(seconds, "ثانية", "ثانيتان", "ثوانٍ")
 
     units = (
-        (DAY, "يوم", "أيام"),
-        (HOUR, "ساعة", "سوايع"),
-        (MINUTE, "دقيقة", "دقايق"),
+        (DAY, "يوم", "يومان", "أيام"),
+        (HOUR, "ساعة", "ساعتان", "ساعات"),
+        (MINUTE, "دقيقة", "دقيقتان", "دقائق"),
     )
     parts: list[str] = []
     remaining = seconds
-    for size, singular, plural in units:
+    for size, singular, dual, plural in units:
         value, remaining = divmod(remaining, size)
         if value:
-            parts.append(f"{value} {singular if value == 1 else plural}")
+            parts.append(_format_arabic_count(value, singular, dual, plural))
         if len(parts) == 2:
             break
     return " و ".join(parts) if parts else "أقل من دقيقة"
@@ -324,6 +379,8 @@ def _blank_guild() -> dict:
         "board_message_id": 0,
         "code_message_id": 0,
         "offenses": {},      # overrides ديال الاونر فوق DEFAULT_OFFENSES
+        "auto_rules": {},    # قانون تلقائي → مخالفة سجنية
+        "auto_rule_seq": 0,
         "inmates": {},       # user_id → record
         "history": [],       # آخر 200 حكم
         "case_seq": 0,
@@ -385,6 +442,8 @@ class PrisonStore:
         record.setdefault("visit_seq", 0)
         record.setdefault("visits_message_id", 0)
         record.setdefault("visits_admin_message_id", 0)
+        record.setdefault("auto_rules", {})
+        record.setdefault("auto_rule_seq", 0)
         return record
 
     def save(self) -> bool:
@@ -424,6 +483,69 @@ class PrisonStore:
                 entry[field] = value
         self.save()
         return self.offense(guild_id, key)
+
+    # ───── قوانين تلقائية ديال الـOwner ─────
+
+    def auto_rules(self, guild_id: int) -> dict[str, dict]:
+        return self.guild(guild_id).setdefault("auto_rules", {})
+
+    def auto_rule(self, guild_id: int, rule_id) -> Optional[dict]:
+        return self.auto_rules(guild_id).get(str(rule_id))
+
+    def add_auto_rule(
+        self,
+        guild_id: int,
+        *,
+        kind: str,
+        pattern: str,
+        offense_key: str,
+    ) -> dict:
+        kind = str(kind or "").strip().lower()
+        if kind not in AUTO_RULE_KINDS:
+            raise ValueError("نوع القانون غير صالح.")
+        normalized = normalize_auto_rule_pattern(kind, pattern)
+        if not normalized:
+            raise ValueError("الكلمة/الموقع/الفعل غير صالح.")
+        if str(offense_key) not in self.offenses(guild_id):
+            raise ValueError("المخالفة السجنية ماكايناش.")
+
+        rules = self.auto_rules(guild_id)
+        if len(rules) >= AUTO_RULE_MAX:
+            raise ValueError(f"وصلتي للحد الأقصى ({AUTO_RULE_MAX} قانون).")
+        if any(
+            rule.get("kind") == kind and rule.get("pattern") == normalized
+            for rule in rules.values()
+        ):
+            raise ValueError("هاد القانون مزاد من قبل.")
+
+        guild_record = self.guild(guild_id)
+        guild_record["auto_rule_seq"] = int(guild_record.get("auto_rule_seq", 0) or 0) + 1
+        rule_id = str(guild_record["auto_rule_seq"])
+        record = {
+            "id": rule_id,
+            "kind": kind,
+            "pattern": normalized,
+            "offense": str(offense_key),
+            "enabled": True,
+            "created": now_ts(),
+        }
+        rules[rule_id] = record
+        self.save()
+        return record
+
+    def toggle_auto_rule(self, guild_id: int, rule_id) -> Optional[dict]:
+        record = self.auto_rule(guild_id, rule_id)
+        if record is None:
+            return None
+        record["enabled"] = not bool(record.get("enabled", True))
+        self.save()
+        return record
+
+    def remove_auto_rule(self, guild_id: int, rule_id) -> Optional[dict]:
+        record = self.auto_rules(guild_id).pop(str(rule_id), None)
+        if record is not None:
+            self.save()
+        return record
 
     # ───── السجناء ─────
 
