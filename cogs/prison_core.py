@@ -228,6 +228,32 @@ def solitary_max_seconds(cell: str) -> int:
     return int(SOLITARY_MAX_SECONDS_BY_CELL.get(str(cell), SOLITARY_MAX_SECONDS_BY_CELL["holding"]))
 
 
+def gender_of(member: Any, boys_role_id: int, girls_role_id: int) -> str:
+    """
+    "male" / "female" / "neutral" — نفس المنطق ديال birthday_center.gender().
+    كتقرا الرول ديال العضو (BOYS_ROLE_ID / GIRLS_ROLE_ID)، وملي ماعندوش
+    حتى واحد منهم (ولا عندو الجوج بغلط) كترجع "neutral" باش الرسالة تبقى
+    بصيغة محايدة بدل ما تخمّن.
+    """
+    role_ids = {role.id for role in getattr(member, "roles", [])}
+    is_boy = int(boys_role_id or 0) in role_ids
+    is_girl = int(girls_role_id or 0) in role_ids
+    if is_boy and not is_girl:
+        return "male"
+    if is_girl and not is_boy:
+        return "female"
+    return "neutral"
+
+
+def pick_by_gender(gender: str, *, male: str, female: str, neutral: str) -> str:
+    """كتختار الصيغة الصحيحة حسب gender_of(). دايماً عطي الجوج التلاتة."""
+    if gender == "male":
+        return male
+    if gender == "female":
+        return female
+    return neutral
+
+
 def solitary_violation_multiplier(cell: str, violations: int) -> int:
     """التكرار كيزيد الضرب تدريجياً، مع سقف باش ما يفلتش الحساب بلا حدود."""
     base = int(SOLITARY_VIOLATION_BASE_MULTIPLIER.get(str(cell), 2))

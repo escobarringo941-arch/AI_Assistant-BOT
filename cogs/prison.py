@@ -58,6 +58,8 @@ from cogs.prison_core import (
     cell_for_penalty,
     complaint_route_for_cell,
     format_duration,
+    gender_of,
+    pick_by_gender,
     now_ts,
     normalize_auto_rule_pattern,
     remaining_seconds,
@@ -1239,6 +1241,8 @@ class PrisonSystem(commands.Cog):
         self.moderator_role_id = int(bridge.get("MODERATOR_ROLE_ID") or 0)
         self.mod_logs_channel_id = int(bridge.get("MOD_LOGS_CHANNEL_ID") or 0)
         self.unverified_role_id = int(bridge.get("UNVERIFIED_ROLE_ID") or 0)
+        self.boys_role_id = int(bridge.get("BOYS_ROLE_ID") or 0)
+        self.girls_role_id = int(bridge.get("GIRLS_ROLE_ID") or 0)
 
         self._guild_locks: dict[int, asyncio.Lock] = {}
         self._member_locks: dict[int, asyncio.Lock] = {}
@@ -1264,6 +1268,14 @@ class PrisonSystem(commands.Cog):
             lock = asyncio.Lock()
             self._guild_locks[guild_id] = lock
         return lock
+
+    def gender(self, member: discord.Member) -> str:
+        """"male" / "female" / "neutral" — حسب الرول BOYS_ROLE_ID / GIRLS_ROLE_ID."""
+        return gender_of(member, self.boys_role_id, self.girls_role_id)
+
+    def g(self, member: discord.Member, *, male: str, female: str, neutral: str) -> str:
+        """كتختار الصيغة الصحيحة (ولد/بنت/محايدة) لرسالة كتخص هاد العضو."""
+        return pick_by_gender(self.gender(member), male=male, female=female, neutral=neutral)
 
     def _member_lock(self, member_id: int) -> asyncio.Lock:
         lock = self._member_locks.get(member_id)
@@ -2608,7 +2620,12 @@ class PrisonSystem(commands.Cog):
 
         embed = discord.Embed(
             title="⛓️ حكم بالسجن",
-            description=f"{member.mention} تحكم عليه بالسجن.",
+            description=self.g(
+                member,
+                male=f"{member.mention} تحكم عليه بالسجن.",
+                female=f"{member.mention} تحكم عليها بالسجن.",
+                neutral=f"تحكم على {member.mention} بالسجن.",
+            ),
             color=COLOR_JAIL,
             timestamp=datetime.now(),
         )
@@ -2885,7 +2902,12 @@ class PrisonSystem(commands.Cog):
 
         embed = discord.Embed(
             title="🚨 تصعيد العقوبة — نقل زنزانة",
-            description=f"{member.mention} تنقل من **{_cell_display(old_cell)}** لـ **{_cell_display(new_cell)}**.",
+            description=self.g(
+                member,
+                male=f"{member.mention} تنقل من **{_cell_display(old_cell)}** لـ **{_cell_display(new_cell)}**.",
+                female=f"{member.mention} تنقلات من **{_cell_display(old_cell)}** لـ **{_cell_display(new_cell)}**.",
+                neutral=f"تنقلة {member.mention} من **{_cell_display(old_cell)}** لـ **{_cell_display(new_cell)}**.",
+            ),
             color=discord.Color.dark_orange(),
             timestamp=datetime.now(),
         )
@@ -3411,7 +3433,16 @@ class PrisonSystem(commands.Cog):
 
         embed = discord.Embed(
             title="🔓 إطلاق سراح",
-            description=(member.mention if member else f"<@{user_id}>") + " خرج من السجن.",
+            description=(
+                self.g(
+                    member,
+                    male=f"{member.mention} خرج من السجن.",
+                    female=f"{member.mention} خرجات من السجن.",
+                    neutral=f"{member.mention} خرج/خرجات من السجن.",
+                )
+                if member is not None
+                else f"<@{user_id}> خرج من السجن."
+            ),
             color=COLOR_FREE,
             timestamp=datetime.now(),
         )
@@ -4433,7 +4464,12 @@ class PrisonSystem(commands.Cog):
 
         embed = discord.Embed(
             title="🔗 حبس انفرادي",
-            description=f"{member.mention} تنقل للحبس الانفرادي.",
+            description=self.g(
+                member,
+                male=f"{member.mention} تنقل للحبس الانفرادي.",
+                female=f"{member.mention} تنقلات للحبس الانفرادي.",
+                neutral=f"تنقلة {member.mention} للحبس الانفرادي.",
+            ),
             color=discord.Color.dark_purple(),
             timestamp=datetime.now(),
         )

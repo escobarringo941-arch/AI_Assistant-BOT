@@ -637,15 +637,33 @@ class SolitaryReleaseSelect(discord.ui.UserSelect):
         if not result.get("ok"):
             await interaction.followup.send(f"❌ {result['error']}", ephemeral=True)
             return
+        target_member = interaction.guild.get_member(user_id)
+        gender_fn = (
+            (lambda male, female, neutral: cog.g(target_member, male=male, female=female, neutral=neutral))
+            if target_member is not None
+            else (lambda male, female, neutral: neutral)
+        )
         if result.get("released_from_prison"):
-            message = "🕊️ خرج من الانفرادي ومن السجن حيت الحكم الأصلي كان سالا. الروم والرول تمسحو."
+            message = gender_fn(
+                "🕊️ خرج من الانفرادي ومن السجن حيت الحكم الأصلي كان سالا. الروم والرول تمسحو.",
+                "🕊️ خرجات من الانفرادي ومن السجن حيت الحكم الأصلي كان سالا. الروم والرول تمسحو.",
+                "🕊️ خرج/خرجات من الانفرادي ومن السجن حيت الحكم الأصلي كان سالا. الروم والرول تمسحو.",
+            )
         elif result.get("prison_release_error"):
-            message = (
+            message = gender_fn(
                 "⚠️ خرج من الانفرادي والروم والرول تمسحو، ولكن الإفراج الكامل "
-                f"تعطل: {result['prison_release_error']}"
+                f"تعطل: {result['prison_release_error']}",
+                "⚠️ خرجات من الانفرادي والروم والرول تمسحو، ولكن الإفراج الكامل "
+                f"تعطل: {result['prison_release_error']}",
+                "⚠️ خرج/خرجات من الانفرادي والروم والرول تمسحو، ولكن الإفراج الكامل "
+                f"تعطل: {result['prison_release_error']}",
             )
         else:
-            message = "🔓 خرج يدوياً من الانفرادي، الروم والرول تمسحو، ورجع لزنزانتو."
+            message = gender_fn(
+                "🔓 خرج يدوياً من الانفرادي، الروم والرول تمسحو، ورجع لزنزانتو.",
+                "🔓 خرجات يدوياً من الانفرادي، الروم والرول تمسحو، ورجعات لزنزانتها.",
+                "🔓 خرج/خرجات يدوياً من الانفرادي، الروم والرول تمسحو، ورجع/رجعات لزنزانتو.",
+            )
         await interaction.followup.send(message, ephemeral=True)
 
 
@@ -2135,6 +2153,92 @@ class PrisonPanel(commands.Cog):
         await ctx.send(
             "❌ هاد البانل خاصة بـ **Owner** و **Warden** بوحدهم.", ephemeral=True
         )
+
+    @commands.hybrid_command(
+        name="solitary_release",
+        description="🔓 إخراج يدوي من الحبس الانفرادي — يرجع للزنزانة اللي كان فيها بالوقت الباقي (Owner فقط)",
+    )
+    @app_commands.describe(member="السجين اللي بغيتي تخرجو من الانفرادي")
+    @app_commands.default_permissions(administrator=True)
+    @commands.guild_only()
+    async def solitary_release_cmd(self, ctx: commands.Context, member: discord.Member):
+        cog = self.bot.get_cog("PrisonSystem")
+        if cog is None:
+            await ctx.send("❌ PrisonSystem ماشي محمّلة.", ephemeral=True)
+            return
+
+        try:
+            await ctx.message.delete()
+        except Exception:
+            pass
+
+        if ctx.author.id != ctx.guild.owner_id:
+            await ctx.send(
+                "❌ هاد الأمر خاص بـ **Owner** ديال السيرفر بوحدو.", ephemeral=True
+            )
+            return
+
+        if not cog.store.in_solitary(ctx.guild.id, member.id):
+            await ctx.send(f"❌ {member.mention} ماشي فالحبس الانفرادي دابا.", ephemeral=True)
+            return
+
+        await ctx.defer(ephemeral=True)
+        result = await cog.release_from_solitary(
+            ctx.guild, member.id, reason="إخراج يدوي من طرف الـOwner (أمر مباشر)"
+        )
+        if not result.get("ok"):
+            await ctx.send(f"❌ {result['error']}", ephemeral=True)
+            return
+        if result.get("released_from_prison"):
+            message = cog.g(
+                member,
+                male=(
+                    f"🕊️ {member.mention} خرج من الانفرادي ومن السجن حيت الحكم الأصلي "
+                    "كان سالا. الروم والرول تمسحو."
+                ),
+                female=(
+                    f"🕊️ {member.mention} خرجات من الانفرادي ومن السجن حيت الحكم الأصلي "
+                    "كان سالا. الروم والرول تمسحو."
+                ),
+                neutral=(
+                    f"🕊️ {member.mention} خرج/خرجات من الانفرادي ومن السجن حيت الحكم "
+                    "الأصلي كان سالا. الروم والرول تمسحو."
+                ),
+            )
+        elif result.get("prison_release_error"):
+            message = cog.g(
+                member,
+                male=(
+                    f"⚠️ {member.mention} خرج من الانفرادي والروم والرول تمسحو، ولكن "
+                    f"الإفراج الكامل تعطل: {result['prison_release_error']}"
+                ),
+                female=(
+                    f"⚠️ {member.mention} خرجات من الانفرادي والروم والرول تمسحو، ولكن "
+                    f"الإفراج الكامل تعطل: {result['prison_release_error']}"
+                ),
+                neutral=(
+                    f"⚠️ {member.mention} خرج/خرجات من الانفرادي والروم والرول تمسحو، "
+                    f"ولكن الإفراج الكامل تعطل: {result['prison_release_error']}"
+                ),
+            )
+        else:
+            message = cog.g(
+                member,
+                male=(
+                    f"🔓 {member.mention} خرج يدوياً من الانفرادي، الروم والرول تمسحو، "
+                    "ورجع لزنزانتو بالوقت اللي كان باقي ليه فحكمو الأصلي."
+                ),
+                female=(
+                    f"🔓 {member.mention} خرجات يدوياً من الانفرادي، الروم والرول تمسحو، "
+                    "ورجعات لزنزانتها بالوقت اللي كان باقي ليها فحكمها الأصلي."
+                ),
+                neutral=(
+                    f"🔓 {member.mention} خرج/خرجات يدوياً من الانفرادي، الروم والرول "
+                    "تمسحو، ورجع/رجعات لزنزانتو بالوقت اللي كان باقي ليه فحكمو الأصلي."
+                ),
+            )
+        await ctx.send(message, ephemeral=True)
+
 
 
 async def setup(bot: commands.Bot):
