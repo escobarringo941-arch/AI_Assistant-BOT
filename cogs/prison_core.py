@@ -306,7 +306,9 @@ AUTO_ACTION_LABELS = {
 DEFAULT_OFFENSE_AUTO_ACTIONS = {
     "spam": ("message_spam", "caps_spam", "emoji_spam"),
     "mention_spam": ("mass_mentions",),
-    "links": ("discord_invite", "any_link"),
+    # "any_link" متعمد ماشي هنا: بغينا الروابط تكون مسموحة بالأصل، وغير
+    # الدومينات اللي الاونر كيزيدها بيدو فـ"روابط ممنوعة" هوما اللي كيتحبس عليهم.
+    "links": ("discord_invite",),
 }
 
 

@@ -1335,7 +1335,6 @@ class PrisonSystem(commands.Cog):
         for action, offense_key in (
             ("message_spam", "spam"),
             ("discord_invite", "links"),
-            ("any_link", "links"),
             ("mass_mentions", "spam"),
             ("caps_spam", "spam"),
             ("emoji_spam", "spam"),
