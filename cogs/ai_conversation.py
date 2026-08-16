@@ -251,8 +251,17 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         return None, last_error
     
     
-    async def ask_ai(user_id: str, username: str, display_name: str, prompt: str) -> str:
-        gender = detect_gender(username, display_name)
+    async def ask_ai(user_id: str, username: str, display_name: str, prompt: str, member: Optional[discord.Member] = None) -> str:
+        # الأولوية لرول BOYS_ROLE_ID/GIRLS_ROLE_ID (نفس منطق prison_core/moderation)،
+        # لأنه دقيق 100%. الحدس من الاسم (detect_gender) كيبقى غير fallback نادر
+        # ملي ماعندناش member (بحال استدعاء خارجي بلا Discord context).
+        if member is not None:
+            from cogs.prison_core import gender_of
+            gender = gender_of(member, BOYS_ROLE_ID, GIRLS_ROLE_ID)
+            if gender == "neutral":
+                gender = detect_gender(username, display_name)
+        else:
+            gender = detect_gender(username, display_name)
         messages = [{"role": "system", "content": get_system_prompt(gender)}]
         if learned_knowledge:
             knowledge_text = (
