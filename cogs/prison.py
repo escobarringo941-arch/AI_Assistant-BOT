@@ -4359,6 +4359,17 @@ class PrisonSystem(commands.Cog):
                 pass
             return {"ok": False, "error": f"ما قدرتش نصاوب الروم: {exc}"}
 
+        # لازم ننقلو العضو للروم الجديدة **قبل** ما نحيدو ليه الوصول للقديمة:
+        # عندو ديجا Connect=True فهاد الروم (من overwrites[member] فـsolitary_overwrites).
+        # إلا بدلنا الترتيب، ديسكورد كيطيح العضو من الـVoice أوتوماتيكياً ملي كتتحيد
+        # ليه صلاحية Connect فالروم القديمة وهو باقي داخلها، وبعدها ما نقدروش ننقلوه
+        # لأن member.voice كيكون ولا None.
+        try:
+            if member.voice and member.voice.channel and member.voice.channel.id != channel.id:
+                await member.move_to(channel, reason=f"{REASON_TAG}: move to solitary voice")
+        except (discord.Forbidden, discord.HTTPException):
+            pass
+
         blackout_ok = await self._apply_solitary_role_blackout(
             guild, member, access_role, allowed_channel_id=channel.id
         )
@@ -4416,13 +4427,6 @@ class PrisonSystem(commands.Cog):
 
         await self._cleanup_cell_after_departure(guild, communal_cell, member.id)
         await self.publish_cell_help_panels(guild, voice_only=True)
-
-        # Discord ما يقدرش يربط عضو ماشي داخل Voice، ولكن إلا كان متصل كننقلوه فوراً.
-        try:
-            if member.voice and member.voice.channel and member.voice.channel.id != channel.id:
-                await member.move_to(channel, reason=f"{REASON_TAG}: move to solitary voice")
-        except (discord.Forbidden, discord.HTTPException):
-            pass
 
         # بطاقة السجين كتتعاود فالروم الانفرادية
         await self._post_solitary_card(member, record, solitary, channel)
