@@ -636,13 +636,19 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
 
 
     def _build_blacklist_embed(
-        lang: str = "darija", guild: Optional[discord.Guild] = None
+        lang: str = "darija",
+        guild: Optional[discord.Guild] = None,
+        include_owner_rules: bool = True,
     ) -> discord.Embed:
         """Same Blacklist content in 3 languages.
     
         The shared channel message is ALWAYS Darija. EN/FR are rendered only in a
         member's private ephemeral panel so the channel never contains 3 duplicate
         rule messages.
+
+        include_owner_rules: إلا كانت False، الفيلد "🔗 قوانين الـOwner المرتبطة
+        بالسجن (مباشرة)" ما كيتزادش. مستعملة باش هاد الفيلد ما يبانش فالرسالة
+        العمومية الثابتة فـ #blacklist (كاع الناس)، ويبقى واضح غير فالنسخ الخاصة.
         """
         lang = lang if lang in {"darija", "en", "fr"} else "darija"
         if lang == "fr":
@@ -716,9 +722,10 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                 fields.append(("🚨 كيفاش تبلغ عن مخالفة", "دخل لـ **مركز المساعدة** واختار **بلغ على عضو** إلا كان البلاغ على شخص محدد، أو **بلاغ عام** إلا كان مشكل عام. البلاغ كيمشي مباشرة للإدارة وبشكل خاص."))
             footer = "GGMW9 | نظام المراقبة والعقوبات الأوتوماتيكي"
     
-        live_prison_rules = _owner_prison_rules_blacklist_field(guild, lang)
-        if live_prison_rules is not None:
-            fields.append(live_prison_rules)
+        if include_owner_rules:
+            live_prison_rules = _owner_prison_rules_blacklist_field(guild, lang)
+            if live_prison_rules is not None:
+                fields.append(live_prison_rules)
 
         for name, value in fields:
             embed.add_field(name=name, value=value, inline=False)
@@ -820,7 +827,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                 )
             ),
             content=None,
-            embed=_build_blacklist_embed("darija", guild),
+            embed=_build_blacklist_embed("darija", guild, include_owner_rules=False),
             view=BlacklistLanguageView("darija"),
             history_limit=None,
         )
