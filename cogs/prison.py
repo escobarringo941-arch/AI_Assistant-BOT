@@ -3053,7 +3053,8 @@ class PrisonSystem(commands.Cog):
                 if domains is None:
                     domains = self._message_domains(content)
                 matched = any(
-                    domain == pattern or domain.endswith(f".{pattern}")
+                    (domain == pattern or domain.endswith(f".{pattern}"))
+                    and not self.store.is_domain_allowed(message.guild.id, domain)
                     for domain in domains
                 )
             elif kind == "action":
@@ -3097,7 +3098,11 @@ class PrisonSystem(commands.Cog):
             if kind == "domain":
                 if domains is None:
                     domains = self._message_domains(content)
-                if any(domain == pattern or domain.endswith(f".{pattern}") for domain in domains):
+                if any(
+                    (domain == pattern or domain.endswith(f".{pattern}"))
+                    and not self.store.is_domain_allowed(message.guild.id, domain)
+                    for domain in domains
+                ):
                     return True
             if kind == "action" and pattern in actions:
                 return True
