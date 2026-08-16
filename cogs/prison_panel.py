@@ -1825,6 +1825,113 @@ class AutoRuleSelectedView(OwnerOnlyPrisonView):
         )
 
 
+def allowed_domains_embed(cog, guild: discord.Guild) -> discord.Embed:
+    domains = cog.store.allowed_domains(guild.id)
+    embed = discord.Embed(
+        title="🟢 روابط مسموحة",
+        description=(
+            "الدومينات هادي **ما كيتحبسو عليهم حتى العضو**، حتى إلا كان "
+            "قانون \"روابط ممنوعة\" مفعّل — أي رابط ديال subdomain تابع "
+            "ليهم كيفوت هو الآخر (مثلا `youtube.com` كتغطي `m.youtube.com`).\n\n"
+            + ("\n".join(f"🔗 `{d}`" for d in domains) if domains else "*ماكاين حتى دومين مزاد.*")
+        ),
+        color=discord.Color.green(),
+    )
+    embed.set_footer(text=f"{len(domains)}/{cog.store.ALLOWED_DOMAINS_MAX} دومين")
+    return embed
+
+
+class AllowedDomainAddModal(discord.ui.Modal, title="🟢 زيادة روابط مسموحة"):
+    def __init__(self):
+        super().__init__()
+        self.domains_input = discord.ui.TextInput(
+            label="الدومينات (كل وحدة فسطر أو بفاصلة)",
+            placeholder="tenor.com\ngiphy.com\nyoutube.com",
+            required=True,
+            max_length=1000,
+            style=discord.TextStyle.paragraph,
+        )
+        self.add_item(self.domains_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if not _is_owner(interaction):
+            await _deny(interaction, "❌ هاد الإعدادات ديال Owner بوحدو.")
+            return
+        raw_items = re.split(r"[\n,;،؛]+", str(self.domains_input.value))
+        cog = _cog(interaction)
+        result = cog.store.add_allowed_domains(interaction.guild.id, raw_items)
+        created = len(result["created"])
+        skipped = len(result["skipped"])
+        invalid = len(result["invalid"])
+        details = []
+        if created:
+            details.append(f"✅ تزادو **{created}** دومين مسموح.")
+        else:
+            details.append("❌ ما تزاد حتى دومين.")
+        if skipped:
+            details.append(f"↪️ {skipped} كانو مزادين من قبل.")
+        if invalid:
+            details.append(f"⚠️ {invalid} قيم ماكانوش صالحين أو الحد وصل.")
+        await interaction.response.edit_message(
+            content="\n".join(details),
+            embed=allowed_domains_embed(cog, interaction.guild),
+            view=AllowedDomainsView(cog, interaction.guild),
+        )
+        await cog.refresh_rule_surfaces(interaction.guild)
+
+
+class AllowedDomainRemoveSelect(discord.ui.Select):
+    def __init__(self, cog, guild: discord.Guild):
+        domains = cog.store.allowed_domains(guild.id)
+        options = [
+            discord.SelectOption(label=domain[:100], value=domain)
+            for domain in domains[:DISCORD_SELECT_PAGE_SIZE]
+        ] or [discord.SelectOption(label="ماكاين حتى دومين", value="__none__")]
+        super().__init__(
+            placeholder="اختار دومين باش تحيدو…",
+            options=options,
+            disabled=not domains,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        if self.values[0] == "__none__":
+            await interaction.response.defer()
+            return
+        cog = _cog(interaction)
+        removed = cog.store.remove_allowed_domain(interaction.guild.id, self.values[0])
+        await interaction.response.edit_message(
+            content=(
+                f"✅ تحيد `{self.values[0]}` من الروابط المسموحة."
+                if removed else "❌ هاد الدومين ماكاينش."
+            ),
+            embed=allowed_domains_embed(cog, interaction.guild),
+            view=AllowedDomainsView(cog, interaction.guild),
+        )
+        if removed:
+            await cog.refresh_rule_surfaces(interaction.guild)
+
+
+class AllowedDomainsView(OwnerOnlyPrisonView):
+    def __init__(self, cog, guild: discord.Guild):
+        super().__init__()
+        self.cog = cog
+        self.guild = guild
+        self.add_item(AllowedDomainRemoveSelect(cog, guild))
+
+    @discord.ui.button(label="زيد دومين", emoji="➕", style=discord.ButtonStyle.success, row=1)
+    async def add_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(AllowedDomainAddModal())
+
+    @discord.ui.button(label="🛡️ قوانين تلقائية", emoji="🛡️", style=discord.ButtonStyle.secondary, row=1)
+    async def auto_rules_shortcut_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        cog = _cog(interaction)
+        await interaction.response.edit_message(
+            content=None,
+            embed=auto_rules_embed(cog, interaction.guild, 0),
+            view=AutoRulesHomeView(cog, interaction.guild, 0),
+        )
+
+
 class AutoRulesHomeView(OwnerOnlyPrisonView):
     def __init__(self, cog, guild: discord.Guild, page: int = 0):
         super().__init__()
@@ -1847,6 +1954,15 @@ class AutoRulesHomeView(OwnerOnlyPrisonView):
     async def add_action_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message(
             "⚙️ اختار الفعل الممنوع:", view=AutoActionView(), ephemeral=True
+        )
+
+    @discord.ui.button(label="روابط مسموحة", emoji="🟢", style=discord.ButtonStyle.success, row=0)
+    async def allowed_domains_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        cog = _cog(interaction)
+        await interaction.response.send_message(
+            embed=allowed_domains_embed(cog, interaction.guild),
+            view=AllowedDomainsView(cog, interaction.guild),
+            ephemeral=True,
         )
 
     @discord.ui.button(label="إدارة القوانين", emoji="🧰", style=discord.ButtonStyle.secondary, row=1)
@@ -1906,6 +2022,7 @@ def prison_panel_embed(cog, guild: discord.Guild) -> discord.Embed:
             "👮 **Wardens** — شكون كيولي شرطة (أحكام خفيفة بوحدها)\n"
             "⚖️ **الأحكام والمدد** — تحكم جماعي فكل كاتالوگ: التحذيرات والمدة والزنزانة\n"
             "🛡️ **القوانين والتكرارات** — تحكم متقدم فقانون ممنوع بوحدو عند الحاجة\n"
+            "🟢 **روابط مسموحة** — دومينات كتفوّت من الحبس التلقائي ديال الروابط\n"
             "🛠️ **Setup / Repair** — بناء ولا إصلاح الرومز والصلاحيات"
         ),
         color=discord.Color.dark_red(),
@@ -2040,6 +2157,14 @@ class PrisonOwnerPanelView(OwnerOnlyPrisonView):
         await interaction.response.send_message(
             embed=auto_rules_embed(self.cog, interaction.guild),
             view=AutoRulesHomeView(self.cog, interaction.guild),
+            ephemeral=True,
+        )
+
+    @discord.ui.button(label="روابط مسموحة", emoji="🟢", style=discord.ButtonStyle.secondary, row=1)
+    async def allowed_domains_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(
+            embed=allowed_domains_embed(self.cog, interaction.guild),
+            view=AllowedDomainsView(self.cog, interaction.guild),
             ephemeral=True,
         )
 
