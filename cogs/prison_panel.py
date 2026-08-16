@@ -2073,33 +2073,42 @@ def prison_panel_embed(cog, guild: discord.Guild) -> discord.Embed:
 
 class PrisonOwnerPanelView(OwnerOnlyPrisonView):
     def __init__(self, cog, guild: discord.Guild):
-        super().__init__()
+        super().__init__(timeout=None)
         self.cog = cog
 
-    @discord.ui.button(label="Imprison", emoji="⛓️", style=discord.ButtonStyle.danger, row=0)
+    def _get_cog(self, interaction: discord.Interaction):
+        # self.cog قد يكون None فـ instance المسجلة كـ persistent قبل ما PrisonSystem يتحمل
+        cog = self.cog or _cog(interaction)
+        self.cog = cog
+        return cog
+
+    @discord.ui.button(label="Imprison", emoji="⛓️", style=discord.ButtonStyle.danger, row=0, custom_id="prison_panel:imprison")
     async def imprison_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message(
             "⛓️ اختار العضو اللي غادي تسجنو:", view=ImprisonFlowView(False), ephemeral=True
         )
 
-    @discord.ui.button(label="Release", emoji="🔓", style=discord.ButtonStyle.success, row=0)
+    @discord.ui.button(label="Release", emoji="🔓", style=discord.ButtonStyle.success, row=0, custom_id="prison_panel:release")
     async def release_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        cog = self._get_cog(interaction)
         await interaction.response.send_message(
-            "🔓 اختار السجين:", view=ReleaseView(self.cog, interaction.guild), ephemeral=True
+            "🔓 اختار السجين:", view=ReleaseView(cog, interaction.guild), ephemeral=True
         )
 
-    @discord.ui.button(label="Adjust", emoji="⏳", style=discord.ButtonStyle.primary, row=0)
+    @discord.ui.button(label="Adjust", emoji="⏳", style=discord.ButtonStyle.primary, row=0, custom_id="prison_panel:adjust")
     async def adjust_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        cog = self._get_cog(interaction)
         await interaction.response.send_message(
             "⏳ اختار السجين باش تعدل المدة:",
-            view=AdjustView(self.cog, interaction.guild),
+            view=AdjustView(cog, interaction.guild),
             ephemeral=True,
         )
 
-    @discord.ui.button(label="Solitary", emoji="🔗", style=discord.ButtonStyle.danger, row=0)
+    @discord.ui.button(label="Solitary", emoji="🔗", style=discord.ButtonStyle.danger, row=0, custom_id="prison_panel:solitary")
     async def solitary_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        count = self.cog.store.solitary_count(interaction.guild.id)
-        pending = len(self.cog.store.pending_complaints(interaction.guild.id))
+        cog = self._get_cog(interaction)
+        count = cog.store.solitary_count(interaction.guild.id)
+        pending = len(cog.store.pending_complaints(interaction.guild.id))
         embed = discord.Embed(
             title="🔗 الحبس الانفرادي",
             description=(
@@ -2113,12 +2122,13 @@ class PrisonOwnerPanelView(OwnerOnlyPrisonView):
             color=discord.Color.dark_purple(),
         )
         await interaction.response.send_message(
-            embed=embed, view=SolitaryView(self.cog, interaction.guild), ephemeral=True
+            embed=embed, view=SolitaryView(cog, interaction.guild), ephemeral=True
         )
 
-    @discord.ui.button(label="Wardens", emoji="👮", style=discord.ButtonStyle.secondary, row=1)
+    @discord.ui.button(label="Wardens", emoji="👮", style=discord.ButtonStyle.secondary, row=1, custom_id="prison_panel:wardens")
     async def wardens_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        warden = self.cog.warden_role(interaction.guild)
+        cog = self._get_cog(interaction)
+        warden = cog.warden_role(interaction.guild)
         current = (
             ", ".join(m.mention for m in warden.members) if warden and warden.members else "ماكاين حتى واحد"
         )
@@ -2135,44 +2145,49 @@ class PrisonOwnerPanelView(OwnerOnlyPrisonView):
             color=discord.Color.teal(),
         )
         await interaction.response.send_message(
-            embed=embed, view=WardenManageView(self.cog, interaction.guild), ephemeral=True
+            embed=embed, view=WardenManageView(cog, interaction.guild), ephemeral=True
         )
 
-    @discord.ui.button(label="الأحكام والمدد", emoji="⚖️", style=discord.ButtonStyle.secondary, row=1)
+    @discord.ui.button(label="الأحكام والمدد", emoji="⚖️", style=discord.ButtonStyle.secondary, row=1, custom_id="prison_panel:offenses")
     async def offenses_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        cog = self._get_cog(interaction)
         await interaction.response.send_message(
             "⚖️ اختار كاتالوگ الحكم؛ أي عدد تحذيرات غيتطبق دفعة وحدة على كاع الممنوعات المرتبطة به:",
-            view=OffenseEditView(self.cog, interaction.guild),
+            view=OffenseEditView(cog, interaction.guild),
             ephemeral=True,
         )
 
-    @discord.ui.button(label="Inmates", emoji="📋", style=discord.ButtonStyle.secondary, row=1)
+    @discord.ui.button(label="Inmates", emoji="📋", style=discord.ButtonStyle.secondary, row=1, custom_id="prison_panel:inmates")
     async def inmates_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        cog = self._get_cog(interaction)
         await interaction.response.send_message(
-            embed=self.cog.board_embed(interaction.guild), ephemeral=True
+            embed=cog.board_embed(interaction.guild), ephemeral=True
         )
 
-    @discord.ui.button(label="القوانين والتكرارات", emoji="🛡️", style=discord.ButtonStyle.secondary, row=1)
+    @discord.ui.button(label="القوانين والتكرارات", emoji="🛡️", style=discord.ButtonStyle.secondary, row=1, custom_id="prison_panel:auto_rules")
     async def auto_rules_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        cog = self._get_cog(interaction)
         await interaction.response.send_message(
-            embed=auto_rules_embed(self.cog, interaction.guild),
-            view=AutoRulesHomeView(self.cog, interaction.guild),
+            embed=auto_rules_embed(cog, interaction.guild),
+            view=AutoRulesHomeView(cog, interaction.guild),
             ephemeral=True,
         )
 
-    @discord.ui.button(label="روابط مسموحة", emoji="🟢", style=discord.ButtonStyle.secondary, row=1)
+    @discord.ui.button(label="روابط مسموحة", emoji="🟢", style=discord.ButtonStyle.secondary, row=1, custom_id="prison_panel:allowed_domains")
     async def allowed_domains_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        cog = self._get_cog(interaction)
         await interaction.response.send_message(
-            embed=allowed_domains_embed(self.cog, interaction.guild),
-            view=AllowedDomainsView(self.cog, interaction.guild),
+            embed=allowed_domains_embed(cog, interaction.guild),
+            view=AllowedDomainsView(cog, interaction.guild),
             ephemeral=True,
         )
 
-    @discord.ui.button(label="Setup / Repair", emoji="🛠️", style=discord.ButtonStyle.primary, row=2)
+    @discord.ui.button(label="Setup / Repair", emoji="🛠️", style=discord.ButtonStyle.primary, row=2, custom_id="prison_panel:setup")
     async def setup_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        cog = self._get_cog(interaction)
         await interaction.response.defer(ephemeral=True, thinking=True)
-        result = await self.cog.ensure_infrastructure(interaction.guild)
-        hidden = await self.cog.hide_everywhere(interaction.guild)
+        result = await cog.ensure_infrastructure(interaction.guild)
+        hidden = await cog.hide_everywhere(interaction.guild)
         embed = discord.Embed(
             title="🛠️ Prison Setup",
             color=discord.Color.green() if not result["errors"] else discord.Color.orange(),
@@ -2201,11 +2216,12 @@ class PrisonOwnerPanelView(OwnerOnlyPrisonView):
             embed.description = "✅ كلشي واجد. الرولات، الزنازن، والصلاحيات مركّبين."
         await interaction.followup.send(embed=embed, ephemeral=True)
 
-    @discord.ui.button(label="Refresh", emoji="🔄", style=discord.ButtonStyle.secondary, row=2)
+    @discord.ui.button(label="Refresh", emoji="🔄", style=discord.ButtonStyle.secondary, row=2, custom_id="prison_panel:refresh")
     async def refresh_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        cog = self._get_cog(interaction)
         await interaction.response.defer(ephemeral=True, thinking=True)
-        await self.cog.publish_prison_code(interaction.guild)
-        await self.cog.refresh_board(interaction.guild)
+        await cog.publish_prison_code(interaction.guild)
+        await cog.refresh_board(interaction.guild)
         await interaction.followup.send(
             "🔄 لوحة القانون ولوحة السجناء تحدثو.", ephemeral=True
         )
@@ -2215,19 +2231,25 @@ class WardenPanelView(WardenScopedView):
     """بانل مصغّرة للشرطة."""
 
     def __init__(self, cog):
-        super().__init__()
+        super().__init__(timeout=None)
         self.cog = cog
 
-    @discord.ui.button(label="Imprison (خفيف)", emoji="⛓️", style=discord.ButtonStyle.danger)
+    def _get_cog(self, interaction: discord.Interaction):
+        cog = self.cog or _cog(interaction)
+        self.cog = cog
+        return cog
+
+    @discord.ui.button(label="Imprison (خفيف)", emoji="⛓️", style=discord.ButtonStyle.danger, custom_id="warden_panel:imprison")
     async def imprison_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message(
             "⛓️ اختار العضو:", view=ImprisonFlowView(True), ephemeral=True
         )
 
-    @discord.ui.button(label="Inmates", emoji="📋", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="Inmates", emoji="📋", style=discord.ButtonStyle.secondary, custom_id="warden_panel:inmates")
     async def inmates_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        cog = self._get_cog(interaction)
         await interaction.response.send_message(
-            embed=self.cog.board_embed(interaction.guild), ephemeral=True
+            embed=cog.board_embed(interaction.guild), ephemeral=True
         )
 
 
@@ -2238,6 +2260,16 @@ class WardenPanelView(WardenScopedView):
 class PrisonPanel(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+
+    async def cog_load(self):
+        # كنسجلو الـ views كـ persistent (custom_id ثابت) باش الأزرار تخدم دائما،
+        # حتى منين البانل القديم كيعدي عليه 5 دقايق، وحتى منين البوت كيعاود يتشغل.
+        # ملاحظة: إلا PrisonSystem مازال ما تحملش وقت هاد اللحظة، الـ view غادي تسجل
+        # بـ cog=None وتجيبو ديناميكيا (_get_cog) فأول تفاعل — خاص PrisonSystem يكون
+        # متحمل قبل PrisonPanel فترتيب load_extension باش هادشي يخدم من البداية.
+        cog = self.bot.get_cog("PrisonSystem")
+        self.bot.add_view(PrisonOwnerPanelView(cog, None))
+        self.bot.add_view(WardenPanelView(cog))
 
     @commands.hybrid_command(name="prison", description="🔒 البانل ديال السجن (Owner / Warden)")
     @app_commands.default_permissions(administrator=True)
