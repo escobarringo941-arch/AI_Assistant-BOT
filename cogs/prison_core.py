@@ -488,6 +488,8 @@ def _blank_guild() -> dict:
         "visit_seq": 0,
         "visits_message_id": 0,
         "visits_admin_message_id": 0,
+        # ── الروابط المسموحة (بيباس لقانون "روابط ممنوعة") ──
+        "allowed_domains": [],
     }
 
 
@@ -833,6 +835,61 @@ class PrisonStore:
         removed = dict(overrides.pop(key))
         self.save()
         return removed
+
+    # ───── الروابط المسموحة ─────
+
+    ALLOWED_DOMAINS_MAX = 50
+
+    def allowed_domains(self, guild_id: int) -> list[str]:
+        domains = self.guild(guild_id).setdefault("allowed_domains", [])
+        return sorted(domains)
+
+    def add_allowed_domains(self, guild_id: int, raw_items: list) -> dict:
+        """كيزيد لائحة دومينات دفعة وحدة، وكيرجع تفاصيل شحال تزاد/تكرر/ماصحش."""
+        record = self.guild(guild_id)
+        existing = set(record.setdefault("allowed_domains", []))
+        created: list[str] = []
+        skipped: list[str] = []
+        invalid: list[str] = []
+        for raw in raw_items:
+            text = str(raw or "").strip()
+            if not text:
+                continue
+            domain = normalize_auto_rule_pattern("domain", text)
+            if not domain:
+                invalid.append(text)
+                continue
+            if domain in existing:
+                skipped.append(domain)
+                continue
+            if len(existing) + len(created) >= self.ALLOWED_DOMAINS_MAX:
+                invalid.append(domain)
+                continue
+            created.append(domain)
+        if created:
+            record["allowed_domains"] = sorted(existing | set(created))
+            self.save()
+        return {"created": created, "skipped": skipped, "invalid": invalid}
+
+    def remove_allowed_domain(self, guild_id: int, domain: str) -> bool:
+        record = self.guild(guild_id)
+        domains = record.setdefault("allowed_domains", [])
+        domain = str(domain or "").strip().casefold()
+        if domain not in domains:
+            return False
+        domains.remove(domain)
+        self.save()
+        return True
+
+    def is_domain_allowed(self, guild_id: int, domain: str) -> bool:
+        """كيتفحص واش دومين (أو subdomain تابع ليه) موجود فلائحة المسموحين."""
+        domain = str(domain or "").strip().casefold()
+        if not domain:
+            return False
+        for allowed in self.guild(guild_id).get("allowed_domains", []):
+            if domain == allowed or domain.endswith(f".{allowed}"):
+                return True
+        return False
 
     # ───── قوانين تلقائية ديال الـOwner ─────
 
