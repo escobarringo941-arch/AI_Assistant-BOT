@@ -26,6 +26,7 @@ from discord.ext import commands
 from discord import app_commands
 
 from cogs.prison_core import format_duration as format_prison_duration
+from cogs.prison_core import gender_of, pick_by_gender
 
 
 async def send_to_prison(bot, member, *, offense_key, reason, actor, seconds=None):
@@ -188,6 +189,17 @@ class Moderation(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.mute_tasks = {}  # {user_id: asyncio.Task}
+        bridge = getattr(bot, "gg", {}) or {}
+        self.boys_role_id = int(bridge.get("BOYS_ROLE_ID") or 0)
+        self.girls_role_id = int(bridge.get("GIRLS_ROLE_ID") or 0)
+
+    def gender(self, member: discord.Member) -> str:
+        """"male" / "female" / "neutral" — حسب الرول BOYS_ROLE_ID / GIRLS_ROLE_ID."""
+        return gender_of(member, self.boys_role_id, self.girls_role_id)
+
+    def g(self, member: discord.Member, *, male: str, female: str, neutral: str) -> str:
+        """كتختار الصيغة الصحيحة (ولد/بنت/محايدة) لرسالة كتخص هاد العضو."""
+        return pick_by_gender(self.gender(member), male=male, female=female, neutral=neutral)
 
     def remove_last_warning(self, user_id: str) -> bool:
         """Wrapper باش cogs أخرى (بحال economy.py — عنصر warn_shield فالمتجر)
@@ -354,7 +366,12 @@ class Moderation(commands.Cog):
         record = result["record"]
         embed = discord.Embed(
             title="⛓️ سجن (بدل الطرد)",
-            description=f"**{member.mention}** تحط فـ السجن.",
+            description=self.g(
+                member,
+                male=f"**{member.mention}** تحط فـ السجن.",
+                female=f"**{member.mention}** تحطات فـ السجن.",
+                neutral=f"**{member.mention}** تحط/تحطات فـ السجن.",
+            ),
             color=COLOR_KICK,
             timestamp=datetime.now(),
         )
@@ -401,7 +418,12 @@ class Moderation(commands.Cog):
         record = result["record"]
         embed = discord.Embed(
             title="🚨 سجن مشدد (بدل الحظر)",
-            description=f"**{member.mention}** تحط فـ Maximum Security.",
+            description=self.g(
+                member,
+                male=f"**{member.mention}** تحط فـ Maximum Security.",
+                female=f"**{member.mention}** تحطات فـ Maximum Security.",
+                neutral=f"**{member.mention}** تحط/تحطات فـ Maximum Security.",
+            ),
             color=COLOR_BAN,
             timestamp=datetime.now(),
         )
@@ -518,7 +540,12 @@ class Moderation(commands.Cog):
         record = result["record"]
         embed = discord.Embed(
             title="⛓️ حبس قصير (بدل الكتم)",
-            description=f"**{member.mention}** تحط فـ Holding Cell.",
+            description=self.g(
+                member,
+                male=f"**{member.mention}** تحط فـ Holding Cell.",
+                female=f"**{member.mention}** تحطات فـ Holding Cell.",
+                neutral=f"**{member.mention}** تحط/تحطات فـ Holding Cell.",
+            ),
             color=COLOR_MUTE,
             timestamp=datetime.now(),
         )
@@ -615,7 +642,12 @@ class Moderation(commands.Cog):
 
         embed = discord.Embed(
             title="⚠️ تحذير",
-            description=f"**{member.mention}** تم تحذيره.",
+            description=self.g(
+                member,
+                male=f"**{member.mention}** تم تحذيره.",
+                female=f"**{member.mention}** تم تحذيرها.",
+                neutral=f"**{member.mention}** تم تحذيره/تحذيرها.",
+            ),
             color=COLOR_WARN,
             timestamp=datetime.now(),
         )
@@ -672,7 +704,12 @@ class Moderation(commands.Cog):
         clear_warns(str(member.id))
         embed = discord.Embed(
             title="✅ مسح التحذيرات",
-            description=f"**{member.mention}** تم مسح تحذيراتو.",
+            description=self.g(
+                member,
+                male=f"**{member.mention}** تم مسح تحذيراتو.",
+                female=f"**{member.mention}** تم مسح تحذيراتها.",
+                neutral=f"**{member.mention}** تم مسح تحذيراتو/تحذيراتها.",
+            ),
             color=discord.Color.green(),
             timestamp=datetime.now(),
         )
