@@ -136,9 +136,9 @@ def patch_discord_rtl():
 
         def _init(self, *args, **kwargs):
             if "title" in kwargs:
-                kwargs["title"] = auto_rtl(kwargs["title"])
+                kwargs["title"] = _ui_text(kwargs["title"], 256)
             if "description" in kwargs:
-                kwargs["description"] = auto_rtl(kwargs["description"])
+                kwargs["description"] = _ui_text(kwargs["description"], 4096)
             return orig_init(self, *args, **kwargs)
 
         discord.Embed.__init__ = _init
@@ -150,7 +150,16 @@ def patch_discord_rtl():
         orig = discord.Embed.add_field
 
         def _add_field(self, *, name=None, value=None, inline=True):
-            return orig(self, name=auto_rtl(name), value=auto_rtl(value), inline=inline)
+            # Apply RTL first and trim the original text until the transformed
+            # payload is inside Discord's limits.  ``auto_rtl`` can add one or
+            # more invisible bidi characters per line, so slicing to 1024 in a
+            # caller *before* this patch is not sufficient.
+            return orig(
+                self,
+                name=_ui_text(name, 256),
+                value=_ui_text(value, 1024),
+                inline=inline,
+            )
 
         discord.Embed.add_field = _add_field
 
@@ -161,7 +170,7 @@ def patch_discord_rtl():
         orig = discord.Embed.set_footer
 
         def _set_footer(self, *, text=None, icon_url=None):
-            return orig(self, text=auto_rtl(text), icon_url=icon_url)
+            return orig(self, text=_ui_text(text, 2048), icon_url=icon_url)
 
         discord.Embed.set_footer = _set_footer
 
@@ -172,7 +181,7 @@ def patch_discord_rtl():
         orig = discord.Embed.set_author
 
         def _set_author(self, *, name=None, url=None, icon_url=None):
-            return orig(self, name=auto_rtl(name), url=url, icon_url=icon_url)
+            return orig(self, name=_ui_text(name, 256), url=url, icon_url=icon_url)
 
         discord.Embed.set_author = _set_author
 

@@ -559,9 +559,12 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                 color=discord.Color.blue(),
             )
             embed.set_thumbnail(url=guild.icon.url if guild.icon else None)
-            for field_name, field_value in _owner_prison_rules_blacklist_field(guild, "darija"):
-                embed.add_field(name=field_name, value=field_value, inline=False)
             embed.set_footer(text="GGMW9 | القوانين والتفعيل • الدارجة هي الأساسية")
+            _add_bounded_blacklist_fields(
+                embed,
+                _owner_prison_rules_blacklist_field(guild, "darija"),
+                "darija",
+            )
             signature = _public_panel_signature(embed)
             if _public_panel_was_just_published("rules", guild.id, signature):
                 return True
@@ -580,7 +583,10 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                 content=None,
                 embed=embed,
                 view=RulesVerifyView(),
-                message_id=getattr(rules_channel, "last_message_id", None),
+                # ``last_message_id`` may point at a deleted message after a
+                # purge. Let the registry scan once, then use its canonical
+                # process cache for later refreshes.
+                message_id=None,
                 history_limit=100,
             )
             if message is not None:
@@ -957,7 +963,10 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                     content=None,
                     embed=embed,
                     view=BlacklistLanguageView("darija"),
-                    message_id=getattr(channel, "last_message_id", None),
+                    # The channel's last-message pointer can remain stale after
+                    # deletion and caused a 404 on every retry. The registry
+                    # already owns canonical discovery and caching.
+                    message_id=None,
                     history_limit=100,
                 )
                 if message is not None:
