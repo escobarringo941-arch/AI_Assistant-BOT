@@ -401,6 +401,26 @@ def _format_arabic_count(value: int, singular: str, dual: str, plural: str) -> s
     return f"{value} {singular}"
 
 
+def warning_trigger_note(trigger: int, lang: str = "darija") -> str:
+    """نص موحّد لعدد التحذيرات قبل الحكم — مصدر واحد (single source of truth)
+    باش الصياغة النحوية (تحذير/تحذيرين/تحذيرات) ما تتكررش غالطة فبانلز بزاف
+    (Prison Code، Blacklist، إلخ). كل مكان خاصو يستدعي هاد الدالة، ماشي
+    يصاوب النص بروحه.
+    """
+    prior = max(0, int(trigger) - 1)
+    if lang == "en":
+        if prior == 0:
+            return "no prior warning"
+        return f"after {prior} warning{'s' if prior != 1 else ''}"
+    if lang == "fr":
+        if prior == 0:
+            return "sans avertissement préalable"
+        return f"après {prior} avertissement{'s' if prior != 1 else ''}"
+    if prior == 0:
+        return "بلا تحذير مسبق"
+    return f"بعد {_format_arabic_count(prior, 'تحذير', 'تحذيرين', 'تحذيرات')}"
+
+
 def format_duration(seconds: int) -> str:
     """ثواني → مدة عربية مضبوطة: 'دقيقتان' / '10 دقائق' / '11 دقيقة'."""
     seconds = int(seconds)
