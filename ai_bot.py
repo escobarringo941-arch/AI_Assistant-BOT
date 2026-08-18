@@ -10,6 +10,7 @@ import traceback
 from cogs.bootstrap import bot
 from cogs._component_runtime import runtime_namespace, runtime_value
 from cogs.panel_registry import upsert_fixed_panel
+from cogs.panel_i18n import configure_panel_i18n
 from cogs._rtl import patch_discord_rtl
 
 # Fix Darija/Arabic RTL rendering globally, before any cog builds an embed
@@ -183,6 +184,8 @@ async def setup_hook():
 
     shared = runtime_namespace()
     _configure_cog_bridge(shared)
+    shared["set_panel_language"] = configure_panel_i18n(bot, shared["call_openrouter_chat"], shared["get_panel_language"], shared["set_panel_language"], shared["DATA_DIR"])
+    bot.gg["set_panel_language"] = shared["set_panel_language"]
 
     # Persistent public/private control centers (same three as before).
     bot.add_view(shared["LevelsInfoView"]())

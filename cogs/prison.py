@@ -27,6 +27,7 @@ from typing import Iterable, Optional
 import discord
 from discord.ext import commands, tasks
 
+from cogs.panel_i18n import attach_panel_language, panel_language_view
 from cogs.prison_core import (
     AUTO_ACTION_LABELS,
     CELL_RANK,
@@ -4549,12 +4550,18 @@ class PrisonSystem(commands.Cog):
             if message_id:
                 try:
                     message = await channel.fetch_message(message_id)
-                    await message.edit(content=member.mention, embed=embed, view=PrisonerCardView())
+                    await message.edit(
+                        content=member.mention,
+                        embed=embed,
+                        view=attach_panel_language(PrisonerCardView(), "prisoner_card"),
+                    )
                 except (discord.NotFound, discord.Forbidden, discord.HTTPException):
                     message = None
             if message is None:
                 message = await channel.send(
-                    content=member.mention, embed=embed, view=PrisonerCardView()
+                    content=member.mention,
+                    embed=embed,
+                    view=attach_panel_language(PrisonerCardView(), "prisoner_card"),
                 )
             solitary["message_id"] = message.id
             record.pop("solitary_message_id", None)
@@ -4910,12 +4917,18 @@ class PrisonSystem(commands.Cog):
                     if message_id:
                         try:
                             message = channel.get_partial_message(message_id)
-                            await message.edit(embed=embed, view=CellHelpView())
+                            await message.edit(
+                                embed=embed,
+                                view=attach_panel_language(CellHelpView(), f"prison_cell_{cell}"),
+                            )
                         except (discord.NotFound, discord.Forbidden, discord.HTTPException):
                             message = None
                     if message is None:
                         try:
-                            message = await channel.send(embed=embed, view=CellHelpView())
+                            message = await channel.send(
+                                embed=embed,
+                                view=attach_panel_language(CellHelpView(), f"prison_cell_{cell}"),
+                            )
                             message_ids[cell] = message.id
                             changed = True
                             try:
@@ -4940,7 +4953,12 @@ class PrisonSystem(commands.Cog):
             if voice_message_id:
                 try:
                     voice_message = voice_chat.get_partial_message(voice_message_id)
-                    await voice_message.edit(embed=voice_embed, view=CellVoiceHelpView())
+                    await voice_message.edit(
+                        embed=voice_embed,
+                        view=attach_panel_language(
+                            CellVoiceHelpView(), f"prison_voice_{cell}"
+                        ),
+                    )
                 except (discord.NotFound, discord.Forbidden, discord.HTTPException):
                     voice_message = None
             if voice_message is None:
@@ -4951,7 +4969,9 @@ class PrisonSystem(commands.Cog):
                             "منين كتضغط، الاختيار والسبب كيبقاو سريين عندك."
                         ),
                         embed=voice_embed,
-                        view=CellVoiceHelpView(),
+                        view=attach_panel_language(
+                            CellVoiceHelpView(), f"prison_voice_{cell}"
+                        ),
                     )
                     voice_message_ids[cell] = voice_message.id
                     changed = True
@@ -4983,12 +5003,18 @@ class PrisonSystem(commands.Cog):
         if message_id:
             try:
                 message = await channel.fetch_message(message_id)
-                await message.edit(embed=embed, view=VisitPanelView())
+                await message.edit(
+                    embed=embed,
+                    view=attach_panel_language(VisitPanelView(), "prison_visits"),
+                )
                 return
             except (discord.NotFound, discord.Forbidden, discord.HTTPException):
                 pass
         try:
-            message = await channel.send(embed=embed, view=VisitPanelView())
+            message = await channel.send(
+                embed=embed,
+                view=attach_panel_language(VisitPanelView(), "prison_visits"),
+            )
             record["visits_message_id"] = message.id
             self.store.save()
         except (discord.Forbidden, discord.HTTPException):
@@ -5027,12 +5053,22 @@ class PrisonSystem(commands.Cog):
         if message_id:
             try:
                 message = await channel.fetch_message(message_id)
-                await message.edit(embed=embed, view=VisitManagementPanelView())
+                await message.edit(
+                    embed=embed,
+                    view=attach_panel_language(
+                        VisitManagementPanelView(), "prison_visit_control"
+                    ),
+                )
                 return
             except (discord.NotFound, discord.Forbidden, discord.HTTPException):
                 pass
         try:
-            message = await channel.send(embed=embed, view=VisitManagementPanelView())
+            message = await channel.send(
+                embed=embed,
+                view=attach_panel_language(
+                    VisitManagementPanelView(), "prison_visit_control"
+                ),
+            )
             record["visits_admin_message_id"] = message.id
             self.store.save()
         except (discord.Forbidden, discord.HTTPException):
@@ -5419,12 +5455,18 @@ class PrisonSystem(commands.Cog):
         if message_id:
             try:
                 message = await channel.fetch_message(message_id)
-                await message.edit(embeds=embeds)
+                await message.edit(
+                    embeds=embeds,
+                    view=panel_language_view("prison_code"),
+                )
                 return
             except (discord.NotFound, discord.Forbidden, discord.HTTPException):
                 pass
         try:
-            message = await channel.send(embeds=embeds)
+            message = await channel.send(
+                embeds=embeds,
+                view=panel_language_view("prison_code"),
+            )
             record["code_message_id"] = message.id
             self.store.save()
         except (discord.Forbidden, discord.HTTPException):
@@ -5503,12 +5545,18 @@ class PrisonSystem(commands.Cog):
         if message_id:
             try:
                 message = await channel.fetch_message(message_id)
-                await message.edit(embed=embed)
+                await message.edit(
+                    embed=embed,
+                    view=panel_language_view("prison_board"),
+                )
                 return
             except (discord.NotFound, discord.Forbidden, discord.HTTPException):
                 pass
         try:
-            message = await channel.send(embed=embed)
+            message = await channel.send(
+                embed=embed,
+                view=panel_language_view("prison_board"),
+            )
             record["board_message_id"] = message.id
             self.store.save()
         except (discord.Forbidden, discord.HTTPException):
@@ -5660,12 +5708,22 @@ class PrisonSystem(commands.Cog):
         if message_id:
             try:
                 message = await channel.fetch_message(message_id)
-                await message.edit(embed=embed, view=PublicPrisonRegistryView())
+                await message.edit(
+                    embed=embed,
+                    view=attach_panel_language(
+                        PublicPrisonRegistryView(), "prison_wanted_board"
+                    ),
+                )
                 return
             except (discord.NotFound, discord.Forbidden, discord.HTTPException):
                 pass
         try:
-            message = await channel.send(embed=embed, view=PublicPrisonRegistryView())
+            message = await channel.send(
+                embed=embed,
+                view=attach_panel_language(
+                    PublicPrisonRegistryView(), "prison_wanted_board"
+                ),
+            )
             record["wanted_message_id"] = message.id
             self.store.save()
         except (discord.Forbidden, discord.HTTPException):

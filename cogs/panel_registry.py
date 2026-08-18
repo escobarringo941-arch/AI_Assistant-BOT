@@ -202,6 +202,20 @@ async def upsert_fixed_panel(
     if channel is None:
         return None
 
+    # Every fixed server panel gets the same private Darija/EN/FR selector.
+    # Panels that already implement their own language workflow are detected
+    # and left untouched.  Import lazily so the registry remains usable in
+    # lightweight stdlib-only tests where discord.py is not installed.
+    try:
+        from cogs.panel_i18n import attach_panel_language
+
+        if view is _UNSET:
+            view = attach_panel_language(None, str(key))
+        else:
+            view = attach_panel_language(view, str(key))
+    except (ImportError, ModuleNotFoundError, AttributeError):
+        pass
+
     lock = _lock_for(bot, channel, key)
     async with lock:
         candidates: list[Any] = []
@@ -346,6 +360,17 @@ async def upsert_fixed_panel(
         # must not make the next concurrent refresh send another message.
         if canonical_id:
             cache[cache_key] = canonical_id
+        # Register the exact message-scoped persistent View even when the REST
+        # payload was already identical and no edit call was needed.  This is
+        # what keeps the automatically attached language selector alive after
+        # a process restart.
+        if canonical_id and view is not _UNSET and view is not None:
+            try:
+                is_persistent = getattr(view, "is_persistent", None)
+                if callable(is_persistent) and is_persistent():
+                    bot.add_view(view, message_id=canonical_id)
+            except (AttributeError, TypeError, ValueError):
+                pass
         if save_message_id is not None and canonical_id:
             try:
                 await _maybe_await(save_message_id(canonical_id))
