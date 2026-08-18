@@ -545,42 +545,81 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         rules_channel = bot.get_channel(RULES_CHANNEL_ID)
         if not rules_channel:
             return False
+
+        lock = _public_panel_refresh_lock("rules", guild.id)
+        async with lock:
+            embed = discord.Embed(
+                title="📜 قوانين السيرفر",
+                description=(
+                    f"{_rules_body('darija')}\n\n"
+                    "⚠️ **بالضغط على ✅ كتوافق على القوانين وكيتم التفعيل ديالك أوتوماتيكياً.**\n"
+                    "**الرفض ❌ = طرد أوتوماتيكي من السيرفر.**\n\n"
+                    "🌐 إلا بغيتي ترجمة، اختار اللغة من اللائحة لتحت. الترجمة كتبان غير ليك وما كتبدلش الرسالة العامة."
+                ),
+                color=discord.Color.blue(),
+            )
+            embed.set_thumbnail(url=guild.icon.url if guild.icon else None)
+            for field_name, field_value in _owner_prison_rules_blacklist_field(guild, "darija"):
+                embed.add_field(name=field_name, value=field_value, inline=False)
+            embed.set_footer(text="GGMW9 | القوانين والتفعيل • الدارجة هي الأساسية")
+            signature = _public_panel_signature(embed)
+            if _public_panel_was_just_published("rules", guild.id, signature):
+                return True
+            message = await upsert_fixed_panel(
+                bot,
+                rules_channel,
+                key="rules",
+                matches=lambda message: (
+                    message.author == bot.user
+                    and bool(message.embeds)
+                    and any(
+                        marker in (message.embeds[0].title or "")
+                        for marker in ("قوانين السيرفر", "Server Rules", "Règles du serveur")
+                    )
+                ),
+                content=None,
+                embed=embed,
+                view=RulesVerifyView(),
+                message_id=getattr(rules_channel, "last_message_id", None),
+                history_limit=100,
+            )
+            if message is not None:
+                _remember_public_panel_publish("rules", guild.id, signature)
+            return message is not None
     
-        embed = discord.Embed(
-            title="📜 قوانين السيرفر",
-            description=(
-                f"{_rules_body('darija')}\n\n"
-                "⚠️ **بالضغط على ✅ كتوافق على القوانين وكيتم التفعيل ديالك أوتوماتيكياً.**\n"
-                "**الرفض ❌ = طرد أوتوماتيكي من السيرفر.**\n\n"
-                "🌐 إلا بغيتي ترجمة، اختار اللغة من اللائحة لتحت. الترجمة كتبان غير ليك وما كتبدلش الرسالة العامة."
-            ),
-            color=discord.Color.blue(),
-            timestamp=datetime.now()
+    
+    _PUBLIC_PANEL_REFRESH_LOCKS = {}
+    _PUBLIC_PANEL_RECENT_SIGNATURES = {}
+
+
+    def _public_panel_refresh_lock(panel: str, guild_id: int):
+        key = (str(panel), int(guild_id))
+        lock = _PUBLIC_PANEL_REFRESH_LOCKS.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            _PUBLIC_PANEL_REFRESH_LOCKS[key] = lock
+        return lock
+
+
+    def _public_panel_signature(embed: discord.Embed) -> str:
+        return json.dumps(embed.to_dict(), ensure_ascii=False, sort_keys=True)
+
+
+    def _public_panel_was_just_published(panel: str, guild_id: int, signature: str) -> bool:
+        key = (str(panel), int(guild_id))
+        previous = _PUBLIC_PANEL_RECENT_SIGNATURES.get(key)
+        if not previous or previous[0] != signature:
+            return False
+        return asyncio.get_running_loop().time() - float(previous[1]) < 5.0
+
+
+    def _remember_public_panel_publish(panel: str, guild_id: int, signature: str) -> None:
+        _PUBLIC_PANEL_RECENT_SIGNATURES[(str(panel), int(guild_id))] = (
+            signature,
+            asyncio.get_running_loop().time(),
         )
-        embed.set_thumbnail(url=guild.icon.url if guild.icon else None)
-        for field_name, field_value in _owner_prison_rules_blacklist_field(guild, "darija"):
-            embed.add_field(name=field_name, value=field_value, inline=False)
-        embed.set_footer(text="GGMW9 | القوانين والتفعيل • الدارجة هي الأساسية")
-        message = await upsert_fixed_panel(
-            bot,
-            rules_channel,
-            key="rules",
-            matches=lambda message: (
-                message.author == bot.user
-                and bool(message.embeds)
-                and any(
-                    marker in (message.embeds[0].title or "")
-                    for marker in ("قوانين السيرفر", "Server Rules", "Règles du serveur")
-                )
-            ),
-            content=None,
-            embed=embed,
-            view=RulesVerifyView(),
-            history_limit=None,
-        )
-        return message is not None
-    
-    
+
+
     def _owner_prison_rules_blacklist_field(guild: discord.Guild, lang: str):
         """Build chunked public fields from the complete live Owner catalogue.
 
@@ -677,7 +716,6 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                     "pour éviter d'être sanctionné sans le savoir."
                 ),
                 color=discord.Color.dark_red(),
-                timestamp=datetime.now(),
             )
             fields = [
                 ("1️⃣ Spam et Publicité", "**Interdit :** répéter le même message, poster un lien d'invitation Discord vers un autre serveur sans permission, faire de la publicité pour un salon/produit/service sans l'accord du staff, mentions excessives (@everyone/@here sans droit).\n**Exemple :** poster `discord.gg/xxxx` dans #general pour attirer des membres vers un autre serveur → avertissement + message supprimé."),
@@ -700,7 +738,6 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                     "so you don't get punished without knowing why."
                 ),
                 color=discord.Color.dark_red(),
-                timestamp=datetime.now(),
             )
             fields = [
                 ("1️⃣ Spam & Advertising", "**Forbidden:** repeating the same message, posting a Discord invite link to another server without permission, advertising a channel/product/service without staff approval, excessive mentions (@everyone/@here without the right to).\n**Example:** posting `discord.gg/xxxx` in #general to bring people to another server → warning + message deleted."),
@@ -723,7 +760,6 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                     "الهدف من هاد الصفحة ماشي نخوفوك، بغينا غير تفهم/ي شنو ممنوع بالضبط باش ما تتعاقب/ي بلا وعي."
                 ),
                 color=discord.Color.dark_red(),
-                timestamp=datetime.now(),
             )
             fields = [
                 ("1️⃣ السبام والإعلانات", "**ممنوع:** تكرار نفس الرسالة، بعث رابط ديسكورد ديال سيرفر آخر بلا إذن، الإعلان لقناة/منتوج/خدمة بلا موافقة الإدارة، منشن بزاف (@everyone/@here بلا حق).\n**مثال:** بعثتي `discord.gg/xxxx` فـ #general باش تجيب ناس لسيرفر آخر → تحذير + مسح الرسالة."),
@@ -823,30 +859,43 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         channel = bot.get_channel(BLACKLIST_CHANNEL_ID)
         if not channel:
             return
-    
-        message = await upsert_fixed_panel(
-            bot,
-            channel,
-            key="blacklist",
-            matches=lambda message: (
-                message.author == bot.user
-                and bool(message.embeds)
-                and any(
-                    marker in (message.embeds[0].title or "")
-                    for marker in (
-                        "الممنوعات والعقوبات",
-                        "Règles et Sanctions",
-                        "Rules & Penalties",
+
+        lock = _public_panel_refresh_lock("blacklist", guild.id)
+        async with lock:
+            embed = _build_blacklist_embed("darija", guild)
+            signature = _public_panel_signature(embed)
+            if _public_panel_was_just_published("blacklist", guild.id, signature):
+                return True
+            message = await upsert_fixed_panel(
+                bot,
+                channel,
+                key="blacklist",
+                matches=lambda message: (
+                    message.author == bot.user
+                    and bool(message.embeds)
+                    and any(
+                        marker in (message.embeds[0].title or "")
+                        for marker in (
+                            "الممنوعات والعقوبات",
+                            "Règles et Sanctions",
+                            "Rules & Penalties",
+                        )
                     )
+                ),
+                content=None,
+                embed=embed,
+                view=BlacklistLanguageView("darija"),
+                message_id=getattr(channel, "last_message_id", None),
+                history_limit=100,
+            )
+            if message is None:
+                print(
+                    "[BLACKLIST] ما قدرتش نحدّث الواجهة دابا؛ "
+                    "شوف سطر [PANEL-REGISTRY] اللي قبل هاد السطر للتفاصيل."
                 )
-            ),
-            content=None,
-            embed=_build_blacklist_embed("darija", guild),
-            view=BlacklistLanguageView("darija"),
-            history_limit=None,
-        )
-        if message is None:
-            print("[BLACKLIST] ما قدرتش نحدّث الواجهة دابا.")
+                return False
+            _remember_public_panel_publish("blacklist", guild.id, signature)
+            return True
     
     
 # ORIGINAL SOURCE END

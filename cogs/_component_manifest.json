@@ -1,6 +1,6 @@
 {
   "description": "Hashes lock the reviewed component bytes and execution order; intentional feature revisions update this baseline.",
-  "joined_sha256": "9a28a106190296d6421fcae6aacaf9bef89eb413195ceadf5963b49e5b1b50d9",
+  "joined_sha256": "ff211d51afc7891acead8e1c3a159cb8c3247f42a577a043d53a6d5ab3104e91",
   "events_before_setup_hook": [
     "on_voice_state_update",
     "on_member_join",
@@ -78,7 +78,7 @@
       "path": "cogs/access_panels.py",
       "original_start_line": 3522,
       "original_end_line": 4289,
-      "sha256": "1aaa994d2312510197ecfed59ea3d570860815e42c2e17e04feac27e619d6715"
+      "sha256": "da9e4323535c6d8527c2a557c7cbf26dbe4d00b041421025ac0656f9bb977ba3"
     },
     {
       "name": "support_system",

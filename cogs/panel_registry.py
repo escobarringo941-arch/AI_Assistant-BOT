@@ -66,6 +66,106 @@ def _is_discord_exception(exc: BaseException) -> bool:
         return exc.__class__.__name__ in {"NotFound", "Forbidden", "HTTPException"}
 
 
+def _discord_error_details(exc: BaseException) -> str:
+    """Small, safe diagnostic for a failed panel REST operation.
+
+    The old registry swallowed every Discord exception and callers only saw a
+    generic "could not refresh" line.  That made an invalid embed, a missing
+    permission and a deleted message look identical.  Status/code/text are the
+    useful Discord fields and do not contain the bot token.
+    """
+    parts = [f"{type(exc).__name__}: {exc}"]
+    for name in ("status", "code"):
+        value = getattr(exc, name, None)
+        if value not in (None, ""):
+            parts.append(f"{name}={value}")
+    text = str(getattr(exc, "text", "") or "").strip()
+    if text and text not in str(exc):
+        parts.append(f"details={text[:700]}")
+    return " | ".join(parts)
+
+
+def _normalise_embed_dict(value: Any) -> Any:
+    """Return a comparable embed payload across local/API discord.py objects."""
+    to_dict = getattr(value, "to_dict", None)
+    if not callable(to_dict):
+        return None
+    try:
+        payload = to_dict()
+    except Exception:
+        return None
+    if isinstance(payload, dict):
+        payload = dict(payload)
+        # Discord may add the default type while a freshly built Embed omits it.
+        if payload.get("type") == "rich":
+            payload.pop("type", None)
+    return payload
+
+
+def _normalise_components(value: Any) -> Any:
+    """Return the action-row payload for either a View or Message.components."""
+    if value is None:
+        return []
+    to_components = getattr(value, "to_components", None)
+    if callable(to_components):
+        try:
+            return to_components()
+        except Exception:
+            return None
+    try:
+        rows = list(value)
+    except (TypeError, ValueError):
+        return None
+    output = []
+    for row in rows:
+        to_dict = getattr(row, "to_dict", None)
+        if not callable(to_dict):
+            return None
+        try:
+            output.append(to_dict())
+        except Exception:
+            return None
+    return output
+
+
+def _payload_is_unchanged(
+    message: Any,
+    *,
+    content: Any,
+    embed: Any,
+    embeds: Any,
+    view: Any,
+) -> bool:
+    """Compare only values supplied by the caller; unknown shapes fail open."""
+    if content is not _UNSET:
+        current = getattr(message, "content", None)
+        if (current or None) != (content or None):
+            return False
+
+    current_embeds = list(getattr(message, "embeds", []) or [])
+    if embed is not _UNSET:
+        expected = [] if embed is None else [_normalise_embed_dict(embed)]
+        actual = [_normalise_embed_dict(item) for item in current_embeds]
+        if None in expected or None in actual or actual != expected:
+            return False
+    elif embeds is not _UNSET:
+        expected = [_normalise_embed_dict(item) for item in list(embeds or [])]
+        actual = [_normalise_embed_dict(item) for item in current_embeds]
+        if None in expected or None in actual or actual != expected:
+            return False
+
+    if view is not _UNSET:
+        expected_components = _normalise_components(view)
+        actual_components = _normalise_components(getattr(message, "components", []))
+        if (
+            expected_components is None
+            or actual_components is None
+            or actual_components != expected_components
+        ):
+            return False
+    return True
+
+
 async def _maybe_await(value: Any) -> Any:
     if inspect.isawaitable(value):
         return await value
@@ -129,6 +229,12 @@ async def upsert_fixed_panel(
                     fetch_failed = True
             except Exception as exc:
                 fetch_failed = True
+                if _is_discord_exception(exc):
+                    print(
+                        f"[PANEL-REGISTRY] {key}: fetch failed for message "
+                        f"{fetched_id} in channel {channel_id} | "
+                        f"{_discord_error_details(exc)}"
+                    )
                 if not _is_discord_exception(exc) and not isinstance(exc, (TypeError, ValueError)):
                     raise
 
@@ -136,7 +242,14 @@ async def upsert_fixed_panel(
         # scan and removes every old duplicate, even when a saved ID exists.
         # A stale ID also triggers a full recovery scan.  Later loop/reconnect
         # refreshes use a bounded scan and the cached ID.
-        scan_limit = None if (first_process_scan or fetch_failed) else (100 if cached_id and history_limit is None else history_limit)
+        # Respect the caller's explicit bound even on the first process scan.
+        # The previous implementation silently changed every first scan to an
+        # unbounded channel walk, so dozens of startup panels could flood the
+        # REST bucket and make the Blacklist refresh fail with 429/HTTP errors.
+        if first_process_scan or fetch_failed:
+            scan_limit = history_limit
+        else:
+            scan_limit = 100 if cached_id and history_limit is None else history_limit
 
         history_ok = True
         known_new_empty_channel = bool(
@@ -157,6 +270,10 @@ async def upsert_fixed_panel(
             except Exception as exc:
                 if _is_discord_exception(exc):
                     history_ok = False
+                    print(
+                        f"[PANEL-REGISTRY] {key}: history failed in channel "
+                        f"{channel_id} | {_discord_error_details(exc)}"
+                    )
                 else:
                     raise
 
@@ -187,14 +304,30 @@ async def upsert_fixed_panel(
                 canonical = await channel.send(**edit_kwargs)
             except Exception as exc:
                 if _is_discord_exception(exc):
+                    print(
+                        f"[PANEL-REGISTRY] {key}: send failed in channel "
+                        f"{channel_id} | {_discord_error_details(exc)}"
+                    )
                     return None
                 raise
         else:
             try:
                 if edit_kwargs:
-                    await canonical.edit(**edit_kwargs)
+                    if not _payload_is_unchanged(
+                        canonical,
+                        content=content,
+                        embed=embed,
+                        embeds=embeds,
+                        view=view,
+                    ):
+                        await canonical.edit(**edit_kwargs)
             except Exception as exc:
                 if _is_discord_exception(exc):
+                    print(
+                        f"[PANEL-REGISTRY] {key}: edit failed for message "
+                        f"{getattr(canonical, 'id', 0)} in channel {channel_id} | "
+                        f"{_discord_error_details(exc)}"
+                    )
                     return None
                 raise
 
