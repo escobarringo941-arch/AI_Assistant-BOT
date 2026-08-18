@@ -248,11 +248,6 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         )
         if guild and guild.icon:
             embed.set_thumbnail(url=guild.icon.url)
-        live_prison_rules = _owner_prison_rules_blacklist_field(guild, lang)
-        if live_prison_rules is not None:
-            embed.add_field(
-                name=live_prison_rules[0], value=live_prison_rules[1], inline=False
-            )
         embed.set_footer(text=footer)
         return embed
     
@@ -560,11 +555,6 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             timestamp=datetime.now()
         )
         embed.set_thumbnail(url=guild.icon.url if guild.icon else None)
-        live_prison_rules = _owner_prison_rules_blacklist_field(guild, "darija")
-        if live_prison_rules is not None:
-            embed.add_field(
-                name=live_prison_rules[0], value=live_prison_rules[1], inline=False
-            )
         embed.set_footer(text="GGMW9 | القوانين والتفعيل • الدارجة هي الأساسية")
         message = await upsert_fixed_panel(
             bot,
@@ -586,59 +576,51 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         return message is not None
     
     
-    def _owner_prison_rules_blacklist_field(guild: discord.Guild, lang: str):
-        """ملخص حي من نفس PrisonStore؛ ما كايناش أرقام منسوخة فـBlacklist."""
+    # مفاتيح المخالفات اللي كنبانو ليهم "الحكم + المدة" فـ blacklist.
+    # ⚠️ هادشي كيقرا غير اللقب + المدة + عدد التحذيرات — بلا الكلمات/الروابط
+    # المحظورة (patterns) ولا الزنزانة ولا أي تفصيل داخلي آخر ديال الـOwner.
+    _BLACKLIST_OFFENSE_KEYS = ["spam", "mention_spam", "insult", "links", "nsfw"]
+
+    def _prison_offense_penalties_field(guild: discord.Guild, lang: str):
+        """أحكام + مدد حية من نفس PrisonStore (offenses catalogue)، بلا ما نطلعو
+        شي pattern/كلمة/رابط محظور. كتحدث روحها أوتوماتيكياً ملي الـOwner يبدل
+        مدة، يزيد/ينقص تحذيرات، أو يبدل حكم من البانل."""
         prison_cog = bot.get_cog("PrisonSystem") if guild is not None else None
         if prison_cog is None:
             return None
-        from cogs.prison_core import AUTO_ACTION_LABELS, format_duration
+        from cogs.prison_core import format_duration
 
-        rules = [
-            rule for rule in prison_cog.store.auto_rules(guild.id).values()
-            if bool(rule.get("enabled", True))
-        ]
-        rules.sort(key=lambda item: int(item.get("id", 0) or 0))
-        if not rules:
-            return None
-
+        catalogue = prison_cog.store.offenses(guild.id)
         titles = {
-            "darija": "🔗 قوانين الـOwner المرتبطة بالسجن (مباشرة)",
-            "en": "🔗 Owner Prison Rules (Live)",
-            "fr": "🔗 Règles Prison du Owner (Direct)",
-        }
-        more_templates = {
-            "darija": "… وزيد **{count}** قوانين؛ اللائحة الكاملة فـ Prison Code/Owner Panel.",
-            "en": "… plus **{count}** rules; the full list is in Prison Code/Owner Panel.",
-            "fr": "… plus **{count}** règles ; liste complète dans Prison Code/Owner Panel.",
+            "darija": "⏱️ الأحكام والمدد (كتحدّث أوتوماتيكياً)",
+            "en": "⏱️ Judgments & Durations (auto-updated)",
+            "fr": "⏱️ Jugements et durées (mise à jour automatique)",
         }
         lines = []
-        hidden = 0
-        for rule in rules:
-            offense = prison_cog.store.offense(
-                guild.id, str(rule.get("offense", "manual"))
-            )
-            subject = str(rule.get("pattern", ""))
-            if rule.get("kind") == "action":
-                subject = AUTO_ACTION_LABELS.get(subject, subject)
-            line = (
-                f"• `{subject[:45]}` ×**{int(rule.get('trigger_count', 1) or 1)}** "
-                f"→ **{offense.get('label', '—')}** "
-                f"({format_duration(int(offense.get('seconds', 3600)))}, "
-                f"{offense.get('cell', 'holding')})"
-            )
-            if len("\n".join([*lines, line])) > 870:
-                hidden += 1
+        for key in _BLACKLIST_OFFENSE_KEYS:
+            entry = catalogue.get(key)
+            if not entry:
                 continue
-            lines.append(line)
-        if hidden:
-            lines.append(more_templates[lang].format(count=hidden))
+            try:
+                trigger = prison_cog.store.offense_trigger_count(guild.id, key)
+            except Exception:
+                trigger = 1
+            if lang == "en":
+                note = "no prior warning" if trigger == 1 else f"after {trigger - 1} warning(s)"
+            elif lang == "fr":
+                note = "sans avertissement préalable" if trigger == 1 else f"après {trigger - 1} avertissement(s)"
+            else:
+                note = "بلا تحذير مسبق" if trigger == 1 else f"بعد {trigger - 1} تحذيرات"
+            lines.append(f"**{entry.get('label', key)}** — `{format_duration(int(entry.get('seconds', 3600)))}` ({note})")
+        if not lines:
+            return None
         return titles[lang], "\n".join(lines)
+
 
 
     def _build_blacklist_embed(
         lang: str = "darija",
         guild: Optional[discord.Guild] = None,
-        include_owner_rules: bool = True,
     ) -> discord.Embed:
         """Same Blacklist content in 3 languages.
     
@@ -646,9 +628,10 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         member's private ephemeral panel so the channel never contains 3 duplicate
         rule messages.
 
-        include_owner_rules: إلا كانت False، الفيلد "🔗 قوانين الـOwner المرتبطة
-        بالسجن (مباشرة)" ما كيتزادش. مستعملة باش هاد الفيلد ما يبانش فالرسالة
-        العمومية الثابتة فـ #blacklist (كاع الناس)، ويبقى واضح غير فالنسخ الخاصة.
+        Always includes the live "⏱️ الأحكام والمدد" field — label + duration +
+        warning count per offense, pulled straight from the Owner's Prison
+        catalogue. Never includes raw patterns/words/links or internal
+        auto-rule details.
         """
         lang = lang if lang in {"darija", "en", "fr"} else "darija"
         if lang == "fr":
@@ -722,10 +705,10 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                 fields.append(("🚨 كيفاش تبلغ عن مخالفة", "دخل لـ **مركز المساعدة** واختار **بلغ على عضو** إلا كان البلاغ على شخص محدد، أو **بلاغ عام** إلا كان مشكل عام. البلاغ كيمشي مباشرة للإدارة وبشكل خاص."))
             footer = "GGMW9 | نظام المراقبة والعقوبات الأوتوماتيكي"
     
-        if include_owner_rules:
-            live_prison_rules = _owner_prison_rules_blacklist_field(guild, lang)
-            if live_prison_rules is not None:
-                fields.append(live_prison_rules)
+        if guild is not None:
+            penalties_field = _prison_offense_penalties_field(guild, lang)
+            if penalties_field is not None:
+                fields.append(penalties_field)
 
         for name, value in fields:
             embed.add_field(name=name, value=value, inline=False)
@@ -827,7 +810,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                 )
             ),
             content=None,
-            embed=_build_blacklist_embed("darija", guild, include_owner_rules=False),
+            embed=_build_blacklist_embed("darija", guild),
             view=BlacklistLanguageView("darija"),
             history_limit=None,
         )
