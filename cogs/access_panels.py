@@ -642,6 +642,11 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             "en": "⏱️ Judgments & Durations (auto-updated)",
             "fr": "⏱️ Jugements et durées (mise à jour automatique)",
         }
+        duration_labels = {
+            "darija": "المدة",
+            "en": "Duration",
+            "fr": "Durée",
+        }
         ordered = sorted(
             catalogue.items(),
             key=lambda item: (
@@ -657,9 +662,10 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             except Exception:
                 trigger = 1
             note = warning_trigger_note(trigger, lang)
+            duration = format_duration(int(entry.get("seconds", 3600)))
             lines.append(
-                f"• **{entry.get('label', key)}** — "
-                f"`{format_duration(int(entry.get('seconds', 3600)))}` • {note}"
+                f"• **{entry.get('label', key)}**\n"
+                f"  ⏱️ **{duration_labels[lang]}:** **{duration}** • ⚠️ {note}"
             )
         if not lines:
             return []
