@@ -588,7 +588,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         prison_cog = bot.get_cog("PrisonSystem") if guild is not None else None
         if prison_cog is None:
             return None
-        from cogs.prison_core import format_duration
+        from cogs.prison_core import format_duration, warning_trigger_note
 
         catalogue = prison_cog.store.offenses(guild.id)
         titles = {
@@ -605,12 +605,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                 trigger = prison_cog.store.offense_trigger_count(guild.id, key)
             except Exception:
                 trigger = 1
-            if lang == "en":
-                note = "no prior warning" if trigger == 1 else f"after {trigger - 1} warning(s)"
-            elif lang == "fr":
-                note = "sans avertissement préalable" if trigger == 1 else f"après {trigger - 1} avertissement(s)"
-            else:
-                note = "بلا تحذير مسبق" if trigger == 1 else f"بعد {trigger - 1} تحذيرات"
+            note = warning_trigger_note(trigger, lang)
             lines.append(f"**{entry.get('label', key)}** — `{format_duration(int(entry.get('seconds', 3600)))}` ({note})")
         if not lines:
             return None
