@@ -730,6 +730,11 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             "en": "Duration",
             "fr": "Durée",
         }
+        warning_labels = {
+            "darija": "التحذيرات",
+            "en": "Warnings",
+            "fr": "Avertissements",
+        }
         ordered = sorted(
             catalogue.items(),
             key=lambda item: (
@@ -748,8 +753,9 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             duration = format_duration(int(entry.get("seconds", 3600)), lang)
             label = _localized_public_offense_label(key, entry, lang)
             lines.append(
-                f"• **{label}**\n"
-                f"  ⏱️ **{duration_labels[lang]}:** **{duration}** • ⚠️ {note}"
+                f"⚖️ **{label}**\n"
+                f"⏱️ **{duration_labels[lang]}:** **{duration}**\n"
+                f"⚠️ **{warning_labels[lang]}:** {note}"
             )
         if not lines:
             return []
@@ -758,15 +764,15 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         current: list[str] = []
         current_size = 0
         for line in lines:
-            added = len(line) + (1 if current else 0)
+            added = len(line) + (2 if current else 0)
             if current and current_size + added > 980:
-                chunks.append("\n".join(current))
+                chunks.append("\n\n".join(current))
                 current = []
                 current_size = 0
             current.append(line)
-            current_size += len(line) + (1 if len(current) > 1 else 0)
+            current_size += len(line) + (2 if len(current) > 1 else 0)
         if current:
-            chunks.append("\n".join(current))
+            chunks.append("\n\n".join(current))
 
         # Blacklist already uses seven fields. Discord accepts 25 fields, so
         # eighteen catalogue chunks are the maximum candidates. The final

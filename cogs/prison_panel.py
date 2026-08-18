@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 import re
 from typing import Optional
@@ -22,6 +23,7 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 
+from cogs.panel_i18n import translate_panel_text
 from cogs.prison_core import (
     AUTO_ACTION_LABELS,
     AUTO_RULE_TRIGGER_MAX,
@@ -74,6 +76,28 @@ async def _deny(interaction: discord.Interaction, message: str) -> None:
         await interaction.followup.send(message, ephemeral=True)
     else:
         await interaction.response.send_message(message, ephemeral=True)
+
+
+async def _persist_offense_translations(cog, guild_id: int, key: str, label: str) -> dict:
+    """Cache the live Owner label in both public Blacklist languages."""
+    source = " ".join(str(label or "").strip().split())
+    if not source:
+        return cog.store.offense(guild_id, key)
+    results = await asyncio.gather(
+        translate_panel_text(source, "en"),
+        translate_panel_text(source, "fr"),
+        return_exceptions=True,
+    )
+    changes: dict[str, str] = {}
+    for language, translated in zip(("en", "fr"), results):
+        if isinstance(translated, Exception):
+            continue
+        value = " ".join(str(translated or "").strip().split())
+        if value and value.casefold() != source.casefold():
+            changes[f"label_{language}"] = value[:80]
+    if changes:
+        return cog.store.set_offense(guild_id, key, **changes)
+    return cog.store.offense(guild_id, key)
 
 
 # ═══════════════════════════════════════════════════════
@@ -799,6 +823,10 @@ class OffenseEditModal(discord.ui.Modal, title="⚖️ تعديل مخالفة")
                 interaction.guild.id,
                 self.key,
                 label=str(self.label_input.value).strip(),
+                # Never keep an old translation after the Owner renames a
+                # judgment. Fresh values are generated just below.
+                label_en="",
+                label_fr="",
                 seconds=seconds,
                 cell=cell,
                 severity=severity,
@@ -807,6 +835,9 @@ class OffenseEditModal(discord.ui.Modal, title="⚖️ تعديل مخالفة")
             await _deny(interaction, f"❌ {exc}")
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
+        entry = await _persist_offense_translations(
+            cog, interaction.guild.id, self.key, entry["label"]
+        )
         await cog.refresh_rule_surfaces(interaction.guild)
         await interaction.followup.send(
             content="✅ تعدّل الحكم وتحدثات لوحة `prison-code`.",
@@ -944,6 +975,9 @@ class OffenseCreateModal(discord.ui.Modal, title="➕ إضافة حكم جديد
             await _deny(interaction, f"❌ {exc}")
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
+        entry = await _persist_offense_translations(
+            cog, interaction.guild.id, key, entry["label"]
+        )
         await cog.refresh_rule_surfaces(interaction.guild)
         await interaction.followup.send(
             content="✅ تزاد الحكم الجديد وولا متاح فالسجن وAuto Rules.",

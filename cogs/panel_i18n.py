@@ -309,6 +309,21 @@ async def _translate_texts(texts: list[str], lang: str) -> dict[str, str]:
     return result
 
 
+async def translate_panel_text(text: str, lang: str) -> str:
+    """Translate one dynamic Owner-provided label through the shared cache.
+
+    Prison judgments created or renamed from the Owner panel use this helper
+    to persist their English/French names.  That keeps later Blacklist refreshes
+    fully localized without making a new AI request for every member click.
+    """
+    source = str(text or "").strip()
+    lang = _normalise_lang(lang)
+    if not source or lang == "darija":
+        return source
+    translated = await _translate_texts([source], lang)
+    return str(translated.get(source, source) or source).strip()
+
+
 def _component_specs(view: Any) -> tuple[list[Any], list[dict[str, Any]]]:
     if not isinstance(view, discord.ui.View):
         return [], []
@@ -933,4 +948,5 @@ __all__ = [
     "attach_panel_language",
     "configure_panel_i18n",
     "panel_language_view",
+    "translate_panel_text",
 ]
