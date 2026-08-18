@@ -621,6 +621,89 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         )
 
 
+    _PUBLIC_OFFENSE_LABELS = {
+        "en": {
+            "spam": "Spam / Flood",
+            "insult": "Disrespect / Insults",
+            "mention_spam": "Mention Spam",
+            "mute": "Mute",
+            "warns": "Accumulated Warnings",
+            "links": "Forbidden Links / Advertising",
+            "temp_bypass": "Bypassing a Temp Room Block",
+            "nsfw": "Pornographic Content / NSFW",
+            "harassment": "Harassment / Bullying / Threats",
+            "doxxing": "Sharing Personal Information / Doxxing",
+            "scam": "Scam / Impersonation",
+            "security_bypass": "Attempting to Bypass Bot Protection",
+            "ban_evasion": "Ban Evasion / Alternate Account",
+            "kick": "Kick",
+            "raid": "Raid / Attempted Server Sabotage",
+            "ban": "Ban",
+            "severe": "Repeated Serious Offense",
+            "manual": "Manual Staff Judgment",
+        },
+        "fr": {
+            "spam": "Spam / Flood",
+            "insult": "Impolitesse / Insultes",
+            "mention_spam": "Spam de Mentions",
+            "mute": "Mise en Sourdine",
+            "warns": "Accumulation d’Avertissements",
+            "links": "Liens Interdits / Publicité",
+            "temp_bypass": "Contournement du Blocage d’un Salon Temporaire",
+            "nsfw": "Contenu Pornographique / NSFW",
+            "harassment": "Harcèlement / Intimidation / Menaces",
+            "doxxing": "Publication d’Informations Personnelles / Doxxing",
+            "scam": "Escroquerie / Usurpation d’Identité",
+            "security_bypass": "Tentative de Contournement de la Protection du Bot",
+            "ban_evasion": "Contournement de Bannissement / Compte Secondaire",
+            "kick": "Expulsion",
+            "raid": "Raid / Tentative de Sabotage du Serveur",
+            "ban": "Bannissement",
+            "severe": "Infraction Grave Répétée",
+            "manual": "Sanction Manuelle de l’Administration",
+        },
+    }
+
+    # Exact custom labels already used by the live Owner catalogue.  Future
+    # custom entries can also provide label_en/label_fr in their stored record.
+    _PUBLIC_CUSTOM_OFFENSE_LABELS = {
+        "Porn / محتوى إباحي": {
+            "en": "Pornography / Explicit Content",
+            "fr": "Pornographie / Contenu Pornographique",
+        },
+    }
+
+
+    def _localized_public_offense_label(key: str, entry: dict, lang: str) -> str:
+        """Return a label with no source-language leakage in EN/FR panels."""
+        label = str(entry.get("label", key) or key)
+        if lang == "darija":
+            return label
+
+        stored_translation = str(entry.get(f"label_{lang}", "") or "").strip()
+        if stored_translation:
+            return stored_translation
+
+        translated = _PUBLIC_OFFENSE_LABELS.get(lang, {}).get(str(key))
+        if translated:
+            return translated
+
+        translated = _PUBLIC_CUSTOM_OFFENSE_LABELS.get(label, {}).get(lang)
+        if translated:
+            return translated
+
+        # An arbitrary custom Owner label cannot be translated reliably without
+        # a saved translation.  Use a fully localized neutral name instead of
+        # leaking Arabic into a panel the member explicitly requested in EN/FR.
+        match = re.fullmatch(r"custom_(\d+)", str(key))
+        suffix = f" #{match.group(1)}" if match else ""
+        return (
+            f"Custom Judgment{suffix}"
+            if lang == "en"
+            else f"Sanction Personnalisée{suffix}"
+        )
+
+
     def _owner_prison_rules_blacklist_field(guild: discord.Guild, lang: str):
         """Build candidate public fields from the live Owner catalogue.
 
@@ -662,9 +745,10 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             except Exception:
                 trigger = 1
             note = warning_trigger_note(trigger, lang)
-            duration = format_duration(int(entry.get("seconds", 3600)))
+            duration = format_duration(int(entry.get("seconds", 3600)), lang)
+            label = _localized_public_offense_label(key, entry, lang)
             lines.append(
-                f"• **{entry.get('label', key)}**\n"
+                f"• **{label}**\n"
                 f"  ⏱️ **{duration_labels[lang]}:** **{duration}** • ⚠️ {note}"
             )
         if not lines:
@@ -769,7 +853,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         lang = lang if lang in {"darija", "en", "fr"} else "darija"
         if lang == "fr":
             embed = discord.Embed(
-                title="🚫 Blacklist Things — Règles et Sanctions",
+                title="🚫 Interdictions — Règles et Sanctions",
                 description=(
                     "Lisez cette page en entier avant de discuter sur le serveur. "
                     "Le bot surveille ces points **automatiquement 24h/24**, et chaque infraction a un prix.\n"
@@ -784,10 +868,10 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                 ("3️⃣ Contenu +18 / Violent / Choquant", "**Interdit :** images/vidéos/liens à caractère sexuel, contenu violent explicite (sang, torture...), scènes choquantes.\n**Exemple :** envoyer une image/un lien à caractère sexuel même « pour rire » → **bannissement immédiat, sans avertissement**."),
                 ("4️⃣ Vie privée (Doxxing)", "**Interdit :** publier un numéro de téléphone, une adresse, des photos personnelles, ou toute information identifiant quelqu'un sans son consentement.\n**Exemple :** publier une capture d'écran contenant le numéro d'un autre membre → **bannissement immédiat**."),
                 ("5️⃣ Mauvaise utilisation des salons", "**Interdit :** discuter hors sujet dans un salon dédié (ex. discussion informelle dans #announcements).\n**Exemple :** poster un mème dans le salon d'actualités officiel → message supprimé + rappel."),
-                ("⚖️ Sanctions progressives", f"1️⃣ **Avertissement** — chaque infraction légère déclenche un avertissement automatique\n2️⃣ **Mute** — à {bot_settings['mute_after_warns']} avertissements ({bot_settings['mute_duration_minutes']} min)\n3️⃣ **Kick** — à {bot_settings['kick_after_warns']} avertissements\n4️⃣ **Ban** — à {bot_settings['ban_after_warns']} avertissements, ou immédiatement en cas de doxxing/contenu +18/menace grave\n🔗 Les seuils de spam, liens, mots et actions sont toujours ceux de la liste dynamique ci-dessous."),
+                ("⚖️ Sanctions progressives", f"1️⃣ **Avertissement** — chaque infraction légère déclenche un avertissement automatique\n2️⃣ **Mise en sourdine** — à {bot_settings['mute_after_warns']} avertissements ({bot_settings['mute_duration_minutes']} min)\n3️⃣ **Expulsion** — à {bot_settings['kick_after_warns']} avertissements\n4️⃣ **Bannissement** — à {bot_settings['ban_after_warns']} avertissements, ou immédiatement en cas de doxxing/contenu +18/menace grave\n🔗 Les seuils de spam, liens, mots et actions sont toujours ceux de la liste dynamique ci-dessous."),
             ]
             if REPORTS_CHANNEL_ID:
-                fields.append(("🚨 Comment signaler une infraction", "Utilise le **Support Center** du serveur : choisis **Signaler un membre** pour une personne précise ou **Signalement général** pour un problème global. Les signalements sont privés et envoyés directement au staff."))
+                fields.append(("🚨 Comment signaler une infraction", "Utilise le **centre d’assistance** du serveur : choisis **Signaler un membre** pour une personne précise ou **Signalement général** pour un problème global. Les signalements sont privés et envoyés directement à l’équipe de modération."))
             footer = "GGMW9 | Système de Modération Automatique"
         elif lang == "en":
             embed = discord.Embed(

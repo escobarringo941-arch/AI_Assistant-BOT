@@ -451,9 +451,55 @@ def warning_trigger_note(trigger: int, lang: str = "darija") -> str:
     return f"بعد {_format_arabic_count(prior, 'تحذير', 'تحذيرين', 'تحذيرات')}"
 
 
-def format_duration(seconds: int) -> str:
-    """ثواني → مدة عربية مضبوطة: 'دقيقتان' / '10 دقائق' / '11 دقيقة'."""
+def format_duration(seconds: int, lang: str = "darija") -> str:
+    """Format a duration for public panels while keeping Darija as default.
+
+    Existing prison/admin surfaces call this function without ``lang`` and
+    therefore keep their exact Arabic wording.  Translated public panels can
+    explicitly request English or French so no Arabic unit leaks into them.
+    """
     seconds = int(seconds)
+    lang = str(lang or "darija").lower()
+    if lang not in {"darija", "en", "fr"}:
+        lang = "darija"
+
+    if lang in {"en", "fr"}:
+        if seconds < 0:
+            return "Permanent ♾️" if lang == "en" else "À vie ♾️"
+
+        if lang == "en":
+            units = (
+                (DAY, "day", "days"),
+                (HOUR, "hour", "hours"),
+                (MINUTE, "minute", "minutes"),
+            )
+            second_names = ("second", "seconds")
+            joiner = " and "
+            under_minute = "Less than a minute"
+        else:
+            units = (
+                (DAY, "jour", "jours"),
+                (HOUR, "heure", "heures"),
+                (MINUTE, "minute", "minutes"),
+            )
+            second_names = ("seconde", "secondes")
+            joiner = " et "
+            under_minute = "Moins d’une minute"
+
+        if seconds < 60:
+            singular, plural = second_names
+            return f"{seconds} {singular if seconds == 1 else plural}"
+
+        parts: list[str] = []
+        remaining = seconds
+        for size, singular, plural in units:
+            value, remaining = divmod(remaining, size)
+            if value:
+                parts.append(f"{value} {singular if value == 1 else plural}")
+            if len(parts) == 2:
+                break
+        return joiner.join(parts) if parts else under_minute
+
     if seconds < 0:
         return "مؤبّد ♾️"
     if seconds < 60:
@@ -783,7 +829,7 @@ class PrisonStore:
         # مخالفات جديدة زادها الاونر
         for key, extra in overrides.items():
             if key not in merged and isinstance(extra, dict):
-                merged[key] = {
+                custom_entry = {
                     "label": extra.get("label", key),
                     "seconds": int(extra.get("seconds", HOUR)),
                     "cell": extra.get("cell", "holding"),
@@ -791,6 +837,11 @@ class PrisonStore:
                     "custom": True,
                     "created": int(extra.get("created", 0) or 0),
                 }
+                for language in ("en", "fr"):
+                    translated_label = str(extra.get(f"label_{language}", "") or "").strip()
+                    if translated_label:
+                        custom_entry[f"label_{language}"] = translated_label[:80]
+                merged[key] = custom_entry
         return merged
 
     def offense(self, guild_id: int, key: str) -> dict:
