@@ -63,6 +63,7 @@ from cogs.prison_core import (
     now_ts,
     normalize_auto_rule_pattern,
     remaining_seconds,
+    warning_trigger_note,
 )
 
 # ═══════════════════════════════════════════════════════
@@ -5362,10 +5363,7 @@ class PrisonSystem(commands.Cog):
             if cell not in by_cell:
                 cell = "holding"
             trigger = self.store.offense_trigger_count(guild.id, offense_key)
-            warning_note = (
-                "بلا تحذير مسبق" if trigger == 1
-                else f"{trigger - 1} تحذيرات • الحكم فالمرة {trigger}"
-            )
+            warning_note = warning_trigger_note(trigger, "darija")
             by_cell[cell].append(
                 f"• **{entry['label']}** — `{format_duration(entry['seconds'])}`\n"
                 f"  ↳ {warning_note}"
