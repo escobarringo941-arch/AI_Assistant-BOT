@@ -83,13 +83,13 @@ async def _persist_offense_translations(cog, guild_id: int, key: str, label: str
     source = " ".join(str(label or "").strip().split())
     if not source:
         return cog.store.offense(guild_id, key)
+    languages = ("ar", "en", "fr", "es", "it")
     results = await asyncio.gather(
-        translate_panel_text(source, "en"),
-        translate_panel_text(source, "fr"),
+        *(translate_panel_text(source, language) for language in languages),
         return_exceptions=True,
     )
     changes: dict[str, str] = {}
-    for language, translated in zip(("en", "fr"), results):
+    for language, translated in zip(languages, results):
         if isinstance(translated, Exception):
             continue
         value = " ".join(str(translated or "").strip().split())
@@ -827,6 +827,9 @@ class OffenseEditModal(discord.ui.Modal, title="⚖️ تعديل مخالفة")
                 # judgment. Fresh values are generated just below.
                 label_en="",
                 label_fr="",
+                label_ar="",
+                label_es="",
+                label_it="",
                 seconds=seconds,
                 cell=cell,
                 severity=severity,

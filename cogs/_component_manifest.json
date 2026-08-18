@@ -1,6 +1,6 @@
 {
   "description": "Hashes lock the reviewed component bytes and execution order; intentional feature revisions update this baseline.",
-  "joined_sha256": "8aa5a8dc7ff60f9ac6113c6853c89e316140f091cc3fd3cca8fe73b0575cfd3d",
+  "joined_sha256": "beac7a2318e0271158def603b440ce049770c67d593588ef9e774494a95297dc",
   "events_before_setup_hook": [
     "on_voice_state_update",
     "on_member_join",
@@ -29,7 +29,7 @@
       "path": "cogs/bootstrap.py",
       "original_start_line": 1,
       "original_end_line": 696,
-      "sha256": "c5e19fa939ca9071defad9a65cbd7a45c12482a5fbc01d61982f41660e6b43b7"
+      "sha256": "7e0940d6fe1b45901a42136893ef3b48706a0296ba9ed18262c2b91d1f14af81"
     },
     {
       "name": "persistent_state",

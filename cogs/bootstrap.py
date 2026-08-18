@@ -52,8 +52,9 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     DATA_DIR = "/app/data"
     os.makedirs(DATA_DIR, exist_ok=True)
     
-    # ═══════ Public Panels — fixed Darija + fresh private language sessions ═══════
-    # Public messages stay Darija. A language choice ALWAYS opens a fresh ephemeral panel; private selectors edit that same ephemeral message.
+    # ═══════ Public Panels — fixed Darija + one private language session ═══════
+    # Public messages stay Darija. The first choice opens one private panel;
+    # every later language choice edits that same private message.
     PANEL_LANGUAGES_FILE = os.path.join(DATA_DIR, "panel_languages.json")
     PANEL_LANGUAGES = {}
     try:
@@ -72,12 +73,12 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     
     def get_panel_language(guild_id: int, user_id: int) -> str:
         lang = str(PANEL_LANGUAGES.get(_panel_lang_key(guild_id, user_id), "darija") or "darija").lower()
-        return lang if lang in {"darija", "en", "fr"} else "darija"
+        return lang if lang in {"darija", "ar", "en", "fr", "es", "it"} else "darija"
     
     
     def set_panel_language(guild_id: int, user_id: int, lang: str) -> str:
         lang = str(lang or "darija").lower()
-        if lang not in {"darija", "en", "fr"}:
+        if lang not in {"darija", "ar", "en", "fr", "es", "it"}:
             lang = "darija"
         PANEL_LANGUAGES[_panel_lang_key(guild_id, user_id)] = lang
         try:

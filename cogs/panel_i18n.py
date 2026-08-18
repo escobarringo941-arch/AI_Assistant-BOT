@@ -23,8 +23,14 @@ from weakref import WeakKeyDictionary
 import discord
 
 
-LANGUAGES = {"darija", "en", "fr"}
-TARGET_NAMES = {"en": "English", "fr": "French"}
+LANGUAGES = {"darija", "ar", "en", "fr", "es", "it"}
+TARGET_NAMES = {
+    "ar": "Modern Standard Arabic",
+    "en": "English",
+    "fr": "French",
+    "es": "Spanish",
+    "it": "Italian",
+}
 _PROTECTED_RE = re.compile(
     r"<(?:(?:@!?|@&|#)[0-9]+|t:[0-9]+(?::[A-Za-z])?|a?:[^>]+)>"
     r"|https?://[^\s<>]+|discord\.gg/[^\s<>]+",
@@ -95,6 +101,16 @@ def _normalise_lang(lang: Any) -> str:
     return value if value in LANGUAGES else "darija"
 
 
+def _translation_placeholder(lang: str) -> str:
+    return {
+        "ar": "🌐 جارٍ ترجمة اللوحة…",
+        "en": "🌐 Translating the panel…",
+        "fr": "🌐 Traduction du panneau…",
+        "es": "🌐 Traduciendo el panel…",
+        "it": "🌐 Traduzione del pannello…",
+    }.get(_normalise_lang(lang), "🌐 كنترجم البانل…")
+
+
 def _language_custom_id(panel_key: str) -> str:
     digest = hashlib.sha1(str(panel_key).encode("utf-8")).hexdigest()[:16]
     return f"ggmw9:i18n:{digest}"
@@ -110,6 +126,48 @@ def _is_language_item(item: Any) -> bool:
         or "language" in placeholder
         or "langue" in placeholder
     )
+
+
+def _language_options(lang: str) -> list[discord.SelectOption]:
+    lang = _normalise_lang(lang)
+    return [
+        discord.SelectOption(
+            label="Darija", value="darija", emoji="🇲🇦", default=lang == "darija"
+        ),
+        discord.SelectOption(
+            label="العربية الفصحى", value="ar", emoji="🌐", default=lang == "ar"
+        ),
+        discord.SelectOption(
+            label="English", value="en", emoji="🇬🇧", default=lang == "en"
+        ),
+        discord.SelectOption(
+            label="Français", value="fr", emoji="🇫🇷", default=lang == "fr"
+        ),
+        discord.SelectOption(
+            label="Español", value="es", emoji="🇪🇸", default=lang == "es"
+        ),
+        discord.SelectOption(
+            label="Italiano", value="it", emoji="🇮🇹", default=lang == "it"
+        ),
+    ]
+
+
+def _upgrade_language_item(item: Any) -> None:
+    """Give legacy three-language selectors the universal five-language menu."""
+    if not isinstance(item, discord.ui.Select):
+        return
+    current = "darija"
+    for option in list(getattr(item, "options", []) or []):
+        if bool(getattr(option, "default", False)):
+            current = _normalise_lang(getattr(option, "value", "darija"))
+            break
+    try:
+        item.options.clear()
+        for option in _language_options(current):
+            item.append_option(option)
+        item.placeholder = "🌐 اللغة / Language / Langue / Idioma / Lingua"
+    except Exception as exc:
+        print(f"[PANEL-I18N] could not upgrade language selector: {exc}")
 
 
 def _rendered_row(item: Any) -> int | None:
@@ -140,7 +198,10 @@ def attach_panel_language(view: Any, panel_key: str) -> Any:
         view = discord.ui.View(timeout=None)
     if not isinstance(view, discord.ui.View):
         return view
-    if any(_is_language_item(child) for child in view.children):
+    language_items = [child for child in view.children if _is_language_item(child)]
+    if language_items:
+        for item in language_items:
+            _upgrade_language_item(item)
         return view
     row = _free_select_row(view)
     if row is None:
@@ -155,6 +216,34 @@ def attach_panel_language(view: Any, panel_key: str) -> Any:
 
 def panel_language_view(panel_key: str) -> discord.ui.View:
     return attach_panel_language(None, panel_key)
+
+
+def _future_panel_key(target: Any, view: discord.ui.View) -> str:
+    channel = getattr(target, "channel", None) or target
+    channel_id = int(getattr(channel, "id", 0) or 0)
+    view_type = type(view)
+    identity = f"{view_type.__module__}.{view_type.__qualname__}"
+    return f"future_panel:{channel_id}:{identity}"
+
+
+def _auto_attach_future_panel(target: Any, kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Future-proof direct sends/edits of persistent interactive panels.
+
+    Fixed official panels are already covered by ``upsert_fixed_panel``. This
+    safety net covers a future developer sending a persistent View directly,
+    while deliberately ignoring short-lived games, confirmations and alerts.
+    """
+    output = dict(kwargs)
+    view = output.get("view")
+    if (
+        _ACTIVE_PANEL.get() is None
+        and isinstance(view, discord.ui.View)
+        and view.timeout is None
+    ):
+        output["view"] = attach_panel_language(
+            view, _future_panel_key(target, view)
+        )
+    return output
 
 
 def _protect(text: str) -> tuple[str, dict[str, str]]:
@@ -313,7 +402,7 @@ async def translate_panel_text(text: str, lang: str) -> str:
     """Translate one dynamic Owner-provided label through the shared cache.
 
     Prison judgments created or renamed from the Owner panel use this helper
-    to persist their English/French names.  That keeps later Blacklist refreshes
+    to persist all translated names. That keeps later Blacklist refreshes
     fully localized without making a new AI request for every member click.
     """
     source = str(text or "").strip()
@@ -675,12 +764,8 @@ class UniversalPanelLanguageSelect(discord.ui.Select):
         self.source_embeds = deepcopy(source_embeds) if source_embeds is not None else None
         self.source_view = source_view
         super().__init__(
-            placeholder="🌐 اللغة / Language / Langue",
-            options=[
-                discord.SelectOption(label="Darija", value="darija", emoji="🇲🇦", default=self.lang == "darija"),
-                discord.SelectOption(label="English", value="en", emoji="🇬🇧", default=self.lang == "en"),
-                discord.SelectOption(label="Français", value="fr", emoji="🇫🇷", default=self.lang == "fr"),
-            ],
+            placeholder="🌐 اللغة / Language / Langue / Idioma / Lingua",
+            options=_language_options(self.lang),
             min_values=1,
             max_values=1,
             custom_id=_language_custom_id(self.panel_key),
@@ -714,7 +799,13 @@ class UniversalPanelLanguageSelect(discord.ui.Select):
         if not isinstance(source_view, discord.ui.View):
             source_view = discord.ui.View(timeout=None)
 
-        await interaction.response.defer(ephemeral=True, thinking=True)
+        # Public selector: create exactly one private original response.
+        # Private selector: defer a message update, then edit that same message.
+        # In both cases no follow-up message is created.
+        if self.owner_id is None:
+            await interaction.response.defer(ephemeral=True, thinking=True)
+        else:
+            await interaction.response.defer()
         content, embeds, items, specs = await _translated_parts(
             source_content, source_embeds, source_view, lang
         )
@@ -728,13 +819,13 @@ class UniversalPanelLanguageSelect(discord.ui.Select):
             items,
             specs,
         )
-        kwargs: dict[str, Any] = {"ephemeral": True, "view": translated_view}
-        if isinstance(content, str) and content:
-            kwargs["content"] = _trim(content, 2000)
+        kwargs: dict[str, Any] = {
+            "content": _trim(content, 2000) if isinstance(content, str) and content else None,
+            "view": translated_view,
+        }
         rendered_embeds = _embeds_from_dicts(embeds)
-        if rendered_embeds:
-            kwargs["embeds"] = rendered_embeds
-        await interaction.followup.send(**kwargs)
+        kwargs["embeds"] = rendered_embeds
+        await interaction.edit_original_response(**kwargs)
 
 
 async def _translate_outgoing(
@@ -824,6 +915,15 @@ def _patch_discord_panel_responses() -> None:
 
     original_response_send = discord.InteractionResponse.send_message
     original_interaction_edit = discord.Interaction.edit_original_response
+    original_messageable_send = discord.abc.Messageable.send
+
+    async def messageable_send(self, content=_UNSET, *args, **kwargs):
+        kwargs = _auto_attach_future_panel(self, kwargs)
+        if content is _UNSET:
+            return await original_messageable_send(self, *args, **kwargs)
+        return await original_messageable_send(self, content, *args, **kwargs)
+
+    discord.abc.Messageable.send = messageable_send
 
     def final_edit_fields(content: Any, kwargs: dict[str, Any], fallback_content: Any) -> dict[str, Any]:
         fields: dict[str, Any] = {}
@@ -835,6 +935,8 @@ def _patch_discord_panel_responses() -> None:
 
     async def response_send(self, content=_UNSET, *args, **kwargs):
         active = _ACTIVE_PANEL.get()
+        if active is None:
+            kwargs = _auto_attach_future_panel(getattr(self, "_parent", self), kwargs)
         if active is not None:
             # A first-time AI translation can take longer than Discord's
             # three-second acknowledgement window.  Acknowledge immediately,
@@ -844,12 +946,7 @@ def _patch_discord_panel_responses() -> None:
                 key in kwargs for key in ("file", "files", "poll", "delete_after", "tts")
             )
             if not special and getattr(self, "_parent", None) is not None:
-                lang = active[0]
-                placeholder = (
-                    "🌐 Translating the panel…"
-                    if lang == "en"
-                    else "🌐 Traduction du panneau…"
-                )
+                placeholder = _translation_placeholder(active[0])
                 response = await original_response_send(
                     self,
                     placeholder,
@@ -873,15 +970,13 @@ def _patch_discord_panel_responses() -> None:
 
     async def response_edit(self, **kwargs):
         active = _ACTIVE_PANEL.get()
+        if active is None:
+            kwargs = _auto_attach_future_panel(getattr(self, "_parent", self), kwargs)
         if active is not None:
             parent = getattr(self, "_parent", None)
             original_content = getattr(getattr(parent, "message", None), "content", None)
             if parent is not None:
-                placeholder = (
-                    "🌐 Translating the panel…"
-                    if active[0] == "en"
-                    else "🌐 Traduction du panneau…"
-                )
+                placeholder = _translation_placeholder(active[0])
                 await original_response_edit(self, content=placeholder)
             content = kwargs.pop("content", _UNSET)
             content, kwargs = await _translate_outgoing(content, kwargs, active)
@@ -911,6 +1006,8 @@ def _patch_discord_panel_responses() -> None:
 
     async def webhook_send(self, content=_UNSET, *args, **kwargs):
         active = _ACTIVE_PANEL.get()
+        if active is None:
+            kwargs = _auto_attach_future_panel(self, kwargs)
         if active is not None:
             content, kwargs = await _translate_outgoing(content, kwargs, active)
         if content is _UNSET:
@@ -921,6 +1018,8 @@ def _patch_discord_panel_responses() -> None:
 
     async def interaction_edit(self, **kwargs):
         active = _ACTIVE_PANEL.get()
+        if active is None:
+            kwargs = _auto_attach_future_panel(self, kwargs)
         if active is not None:
             content = kwargs.pop("content", _UNSET)
             content, kwargs = await _translate_outgoing(content, kwargs, active)
@@ -934,6 +1033,8 @@ def _patch_discord_panel_responses() -> None:
 
     async def message_edit(self, **kwargs):
         active = _ACTIVE_PANEL.get()
+        if active is None:
+            kwargs = _auto_attach_future_panel(self, kwargs)
         if active is not None:
             content = kwargs.pop("content", _UNSET)
             content, kwargs = await _translate_outgoing(content, kwargs, active)

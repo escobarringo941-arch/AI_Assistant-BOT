@@ -837,7 +837,7 @@ class PrisonStore:
                     "custom": True,
                     "created": int(extra.get("created", 0) or 0),
                 }
-                for language in ("en", "fr"):
+                for language in ("ar", "en", "fr", "es", "it"):
                     translated_label = str(extra.get(f"label_{language}", "") or "").strip()
                     if translated_label:
                         custom_entry[f"label_{language}"] = translated_label[:80]
