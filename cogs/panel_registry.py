@@ -202,17 +202,22 @@ async def upsert_fixed_panel(
     if channel is None:
         return None
 
-    # Every fixed server panel gets the same private Darija/EN/FR selector.
+    # Every fixed server panel gets the same private six-language selector.
     # Panels that already implement their own language workflow are detected
     # and left untouched.  Import lazily so the registry remains usable in
     # lightweight stdlib-only tests where discord.py is not installed.
+    schedule_translation_warmup = None
     try:
-        from cogs.panel_i18n import attach_panel_language
+        from cogs.panel_i18n import (
+            attach_panel_language,
+            schedule_panel_translation_warmup,
+        )
 
         if view is _UNSET:
             view = attach_panel_language(None, str(key))
         else:
             view = attach_panel_language(view, str(key))
+        schedule_translation_warmup = schedule_panel_translation_warmup
     except (ImportError, ModuleNotFoundError, AttributeError):
         pass
 
@@ -378,6 +383,17 @@ async def upsert_fixed_panel(
                 # The Discord message is already canonical; a local JSON write
                 # failure must not make the ready handler abort all other panels.
                 print(f"[PANEL-REGISTRY] could not persist {key}={canonical_id}: {exc}")
+        if callable(schedule_translation_warmup):
+            warm_embeds: list[Any] = []
+            if embeds is not _UNSET:
+                warm_embeds = list(embeds or [])
+            elif embed is not _UNSET and embed is not None:
+                warm_embeds = [embed]
+            schedule_translation_warmup(
+                None if content is _UNSET else content,
+                warm_embeds,
+                None if view is _UNSET else view,
+            )
         return canonical
 
 

@@ -43,16 +43,20 @@ _UNSET = object()
 _CONFIG: dict[str, Any] = {}
 _CACHE: dict[str, str] = {}
 _CACHE_PATH: Path | None = None
-_CACHE_LOCK: asyncio.Lock | None = None
+_CACHE_LOCKS: dict[str, asyncio.Lock] = {}
 _ITEM_LOCKS: WeakKeyDictionary[Any, asyncio.Lock] = WeakKeyDictionary()
+_WARMUP_TASKS: set[asyncio.Task[Any]] = set()
+_WARMUP_KEYS: set[str] = set()
 _PATCHED = False
 
 
-def _cache_lock() -> asyncio.Lock:
-    global _CACHE_LOCK
-    if _CACHE_LOCK is None:
-        _CACHE_LOCK = asyncio.Lock()
-    return _CACHE_LOCK
+def _cache_lock(lang: str) -> asyncio.Lock:
+    key = _normalise_lang(lang)
+    lock = _CACHE_LOCKS.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _CACHE_LOCKS[key] = lock
+    return lock
 
 
 def configure_panel_i18n(
@@ -71,7 +75,13 @@ def configure_panel_i18n(
         # call this shared setter immediately before responding.  Keeping the
         # selected language in the current interaction task lets the universal
         # response wrappers translate any nested panel those selectors open.
-        _ACTIVE_PANEL.set((selected, int(user_id), "panel_session"))
+        # Darija/English/French panels already own reviewed, instant copy.
+        # Only the three new languages need the automatic translation wrapper.
+        _ACTIVE_PANEL.set(
+            (selected, int(user_id), "panel_session")
+            if selected in {"ar", "es", "it"}
+            else None
+        )
         return selected
 
     _CONFIG.update(
@@ -101,16 +111,6 @@ def _normalise_lang(lang: Any) -> str:
     return value if value in LANGUAGES else "darija"
 
 
-def _translation_placeholder(lang: str) -> str:
-    return {
-        "ar": "🌐 جارٍ ترجمة اللوحة…",
-        "en": "🌐 Translating the panel…",
-        "fr": "🌐 Traduction du panneau…",
-        "es": "🌐 Traduciendo el panel…",
-        "it": "🌐 Traduzione del pannello…",
-    }.get(_normalise_lang(lang), "🌐 كنترجم البانل…")
-
-
 def _language_custom_id(panel_key: str) -> str:
     digest = hashlib.sha1(str(panel_key).encode("utf-8")).hexdigest()[:16]
     return f"ggmw9:i18n:{digest}"
@@ -135,7 +135,7 @@ def _language_options(lang: str) -> list[discord.SelectOption]:
             label="Darija", value="darija", emoji="🇲🇦", default=lang == "darija"
         ),
         discord.SelectOption(
-            label="العربية الفصحى", value="ar", emoji="🌐", default=lang == "ar"
+            label="العربية الفصحى", value="ar", emoji="🇸🇦", default=lang == "ar"
         ),
         discord.SelectOption(
             label="English", value="en", emoji="🇬🇧", default=lang == "en"
@@ -235,6 +235,13 @@ def _auto_attach_future_panel(target: Any, kwargs: dict[str, Any]) -> dict[str, 
     """
     output = dict(kwargs)
     view = output.get("view")
+    if isinstance(view, discord.ui.View):
+        language_items = [child for child in view.children if _is_language_item(child)]
+        if language_items:
+            for item in language_items:
+                _upgrade_language_item(item)
+            output["view"] = view
+            return output
     if (
         _ACTIVE_PANEL.get() is None
         and isinstance(view, discord.ui.View)
@@ -364,7 +371,7 @@ async def _translate_texts(texts: list[str], lang: str) -> dict[str, str]:
     if not missing:
         return result
 
-    async with _cache_lock():
+    async with _cache_lock(lang):
         still_missing: list[str] = []
         for text in missing:
             cached = _CACHE.get(_translation_key(lang, text))
@@ -551,6 +558,85 @@ async def _translated_parts(
         _fit_embed_dicts(holder["embeds"]),
         items,
         holder["components"],
+    )
+
+
+def schedule_panel_translation_warmup(
+    content: Any,
+    embeds: list[Any],
+    source_view: Any,
+) -> None:
+    """Pre-cache every non-Darija panel language in the background.
+
+    Publishing stays non-blocking. By the time members use a normal fixed
+    panel, its translations are usually already cached and switching languages
+    only performs the Discord message edit.
+    """
+    if not callable(_CONFIG.get("call_chat")):
+        return
+    embed_dicts: list[dict[str, Any]] = []
+    for embed in list(embeds or [])[:10]:
+        if isinstance(embed, dict):
+            embed_dicts.append(deepcopy(embed))
+        elif hasattr(embed, "to_dict"):
+            try:
+                embed_dicts.append(embed.to_dict())
+            except Exception:
+                continue
+    view = source_view if isinstance(source_view, discord.ui.View) else discord.ui.View(timeout=None)
+    _items, specs = _component_specs(view)
+    holder, slots = _collect_slots(content, embed_dicts, specs)
+    source_texts = [str(container[key]) for container, key in slots]
+    if not source_texts:
+        return
+    signature = hashlib.sha256(
+        json.dumps(source_texts, ensure_ascii=False).encode("utf-8")
+    ).hexdigest()
+    if signature in _WARMUP_KEYS:
+        return
+
+    async def warm() -> None:
+        await asyncio.gather(
+            *(
+                _translate_texts(source_texts, language)
+                for language in ("ar", "en", "fr", "es", "it")
+            ),
+            return_exceptions=True,
+        )
+
+    try:
+        task = asyncio.create_task(warm())
+    except RuntimeError:
+        return
+    _WARMUP_KEYS.add(signature)
+    _WARMUP_TASKS.add(task)
+
+    def finished(done: asyncio.Task[Any]) -> None:
+        _WARMUP_TASKS.discard(done)
+        _WARMUP_KEYS.discard(signature)
+        try:
+            done.result()
+        except Exception as exc:
+            print(f"[PANEL-I18N] translation warmup failed: {exc}")
+
+    task.add_done_callback(finished)
+
+
+def _schedule_outgoing_panel_warmup(content: Any, kwargs: dict[str, Any]) -> None:
+    view = kwargs.get("view")
+    if not isinstance(view, discord.ui.View):
+        return
+    if not any(_is_language_item(child) for child in view.children):
+        return
+    embed_values: list[Any] = []
+    if kwargs.get("embeds") is not None:
+        embed_values = list(kwargs.get("embeds") or [])
+    elif kwargs.get("embed") is not None:
+        embed_values = [kwargs["embed"]]
+    schedule_panel_translation_warmup(
+        None if content is _UNSET else content,
+        embed_values,
+        view,
     )
 
 
@@ -914,11 +1000,13 @@ def _patch_discord_panel_responses() -> None:
     _PATCHED = True
 
     original_response_send = discord.InteractionResponse.send_message
+    original_response_defer = discord.InteractionResponse.defer
     original_interaction_edit = discord.Interaction.edit_original_response
     original_messageable_send = discord.abc.Messageable.send
 
     async def messageable_send(self, content=_UNSET, *args, **kwargs):
         kwargs = _auto_attach_future_panel(self, kwargs)
+        _schedule_outgoing_panel_warmup(content, kwargs)
         if content is _UNSET:
             return await original_messageable_send(self, *args, **kwargs)
         return await original_messageable_send(self, content, *args, **kwargs)
@@ -946,12 +1034,10 @@ def _patch_discord_panel_responses() -> None:
                 key in kwargs for key in ("file", "files", "poll", "delete_after", "tts")
             )
             if not special and getattr(self, "_parent", None) is not None:
-                placeholder = _translation_placeholder(active[0])
-                response = await original_response_send(
+                response = await original_response_defer(
                     self,
-                    placeholder,
-                    *args,
                     ephemeral=bool(kwargs.get("ephemeral", False)),
+                    thinking=True,
                 )
                 content, kwargs = await _translate_outgoing(content, kwargs, active)
                 await original_interaction_edit(
@@ -976,8 +1062,7 @@ def _patch_discord_panel_responses() -> None:
             parent = getattr(self, "_parent", None)
             original_content = getattr(getattr(parent, "message", None), "content", None)
             if parent is not None:
-                placeholder = _translation_placeholder(active[0])
-                await original_response_edit(self, content=placeholder)
+                response = await original_response_defer(self)
             content = kwargs.pop("content", _UNSET)
             content, kwargs = await _translate_outgoing(content, kwargs, active)
             if parent is not None:
@@ -985,7 +1070,7 @@ def _patch_discord_panel_responses() -> None:
                     parent,
                     **final_edit_fields(content, kwargs, original_content),
                 )
-                return None
+                return response
             if content is not _UNSET:
                 kwargs["content"] = content
         return await original_response_edit(self, **kwargs)
@@ -1035,6 +1120,7 @@ def _patch_discord_panel_responses() -> None:
         active = _ACTIVE_PANEL.get()
         if active is None:
             kwargs = _auto_attach_future_panel(self, kwargs)
+            _schedule_outgoing_panel_warmup(kwargs.get("content", _UNSET), kwargs)
         if active is not None:
             content = kwargs.pop("content", _UNSET)
             content, kwargs = await _translate_outgoing(content, kwargs, active)
