@@ -248,9 +248,6 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         )
         if guild and guild.icon:
             embed.set_thumbnail(url=guild.icon.url)
-        if guild is not None:
-            for field_name, field_value in _owner_prison_rules_blacklist_field(guild, lang):
-                embed.add_field(name=field_name, value=field_value, inline=False)
         embed.set_footer(text=footer)
         return embed
     
@@ -560,11 +557,6 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             )
             embed.set_thumbnail(url=guild.icon.url if guild.icon else None)
             embed.set_footer(text="GGMW9 | القوانين والتفعيل • الدارجة هي الأساسية")
-            _add_bounded_blacklist_fields(
-                embed,
-                _owner_prison_rules_blacklist_field(guild, "darija"),
-                "darija",
-            )
             signature = _public_panel_signature(embed)
             if _public_panel_was_just_published("rules", guild.id, signature):
                 return True
