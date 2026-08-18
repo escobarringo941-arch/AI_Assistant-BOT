@@ -1,6 +1,6 @@
 {
   "description": "Hashes lock the reviewed component bytes and execution order; intentional feature revisions update this baseline.",
-  "joined_sha256": "ff211d51afc7891acead8e1c3a159cb8c3247f42a577a043d53a6d5ab3104e91",
+  "joined_sha256": "ffc18e1c702f085c8e5699e0e24daaca5f9ec2ef4d95c0ae89742995cf1bdd66",
   "events_before_setup_hook": [
     "on_voice_state_update",
     "on_member_join",
@@ -29,14 +29,14 @@
       "path": "cogs/bootstrap.py",
       "original_start_line": 1,
       "original_end_line": 696,
-      "sha256": "645d7de38da03840991cd21d1c2090de3cda0e2f82425af3ed1be92aa420a762"
+      "sha256": "c5e19fa939ca9071defad9a65cbd7a45c12482a5fbc01d61982f41660e6b43b7"
     },
     {
       "name": "persistent_state",
       "path": "cogs/persistent_state.py",
       "original_start_line": 697,
       "original_end_line": 1449,
-      "sha256": "55ec07551be8504c3799c0f218c22c657b1baf692cf045138f5954e84922e89d"
+      "sha256": "941d5a864806b9af204bb21f7f2e2510a19d784c47713e15c1d9b38a7c1cac66"
     },
     {
       "name": "xp_runtime",
@@ -78,7 +78,7 @@
       "path": "cogs/access_panels.py",
       "original_start_line": 3522,
       "original_end_line": 4289,
-      "sha256": "da9e4323535c6d8527c2a557c7cbf26dbe4d00b041421025ac0656f9bb977ba3"
+      "sha256": "f751290d5af5d684bf8b0f838ce156383ca2ae05cd0943ed6aa01ad9e43e0b7e"
     },
     {
       "name": "support_system",
@@ -211,7 +211,7 @@
       "path": "cogs/owner_control.py",
       "original_start_line": 12456,
       "original_end_line": 13608,
-      "sha256": "a016298abe850dec4d7794c5563a21d73d4a2ec7756d2c32042cbb75fddc5862"
+      "sha256": "0ec156dac660a2f0e3cc937c2722c8b34327e8faebc74afaa94edd2cb8329c51"
     },
     {
       "name": "ready_events",

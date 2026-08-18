@@ -107,7 +107,14 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         response.  Buttons inside that private view still edit the same message with
         ``interaction.response.edit_message`` as before.
         """
-        kwargs = {"content": content, "view": view}
+        # discord.py 2.6 treats an explicitly supplied ``view=None`` as a real
+        # view and calls ``view.is_finished()``.  That crashes before Discord is
+        # contacted (Birthday Center's profile button was the visible victim).
+        # A new ephemeral response has no components by default, so omit the
+        # keyword completely when the caller does not provide a View.
+        kwargs = {"content": content}
+        if view is not None:
+            kwargs["view"] = view
         if embeds is not None:
             kwargs["embeds"] = embeds
         elif embed is not None:
@@ -503,6 +510,8 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         """يوحّد XP فالرولات اليدوية Level X ويصلح صلاحياتها التراكمية."""
         state = globals().get("milestone_roles_db", {"tier_roles": {}, "legend_roles": {}})
         result = await consolidate_legacy_xp_roles(guild, state)
+        permissions_updated = []
+        permission_errors = []
         if result["deleted"] and "save_milestone_roles" in globals():
             save_milestone_roles()
         if result["missing"]:
@@ -522,8 +531,19 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             if role.permissions.value != desired.value:
                 try:
                     await role.edit(permissions=desired, reason=f"Level {level} Perks Sync")
+                    permissions_updated.append(level)
                 except (discord.Forbidden, discord.HTTPException) as e:
-                    print(f"[LEVEL PERKS] ما قدرتش نبدل صلاحيات رول Level {level}: {e}")
+                    detail = f"Level {level}: {type(e).__name__}: {e}"
+                    permission_errors.append(detail)
+                    print(f"[LEVEL PERKS] ما قدرتش نبدل صلاحيات رول {detail}")
+
+        # The Owner panel consumes this report.  Startup callers may ignore it,
+        # but they still keep the detailed logs above.
+        return {
+            **result,
+            "permissions_updated": permissions_updated,
+            "permission_errors": permission_errors,
+        }
     
     # ═══════ نظام مكافآت الـ Milestones (10 → 100) — أوتوماتيكي بالكامل ═══════
     # كل رول هنا كيتصاوب أوتوماتيكياً من طرف البوت أول مرة يوصل ليها شي عضو (ماخصكش

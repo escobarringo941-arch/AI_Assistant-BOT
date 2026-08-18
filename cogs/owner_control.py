@@ -397,9 +397,39 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         @discord.ui.button(label="Sync Roles", emoji="🔄", style=discord.ButtonStyle.secondary)
         async def sync_roles(self, interaction: discord.Interaction, button: discord.ui.Button):
             await interaction.response.defer(ephemeral=True, thinking=True)
-            await sync_level_role_permissions(interaction.guild)
-            await sync_all_level_member_roles(interaction.guild)
-            await interaction.followup.send("✅ Level Roles كاملين تراجعو وتصالحو.", ephemeral=True)
+            role_report = await sync_level_role_permissions(interaction.guild)
+            member_report = await sync_all_level_member_roles(interaction.guild)
+
+            lines = [
+                "✅ **Level Role Sync سالا.**",
+                f"👥 تبدلو: **{member_report['changed_members']}** عضو",
+                f"🎛️ تصلحات الصلاحيات ديال: **{len(role_report['permissions_updated'])}** رول",
+            ]
+            if role_report["missing"]:
+                lines.append(
+                    "⚠️ رولات ناقصين: "
+                    + ", ".join(f"Level {level}" for level in role_report["missing"])
+                )
+            total_errors = (
+                int(member_report["errors"])
+                + len(role_report["permission_errors"])
+                + len(role_report["failed"])
+            )
+            if total_errors:
+                lines.append(f"❌ أخطاء حقيقية: **{total_errors}**")
+                details = [
+                    *role_report["permission_errors"],
+                    *member_report["error_details"],
+                ][:5]
+                if details:
+                    lines.append("```\n" + "\n".join(details)[:1200] + "\n```")
+                lines.append(
+                    "تأكد أن رول البوت فوق جميع `Level X` وعندو `Manage Roles`."
+                )
+            else:
+                lines.append("🟢 ما كاين حتى خطأ فـpermissions ولا hierarchy.")
+
+            await interaction.followup.send("\n".join(lines), ephemeral=True)
     
         @discord.ui.button(label="Refresh XP Center", emoji="📊", style=discord.ButtonStyle.secondary, row=1)
         async def refresh_xp_center(self, interaction: discord.Interaction, button: discord.ui.Button):

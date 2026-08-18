@@ -590,6 +590,9 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     
     _PUBLIC_PANEL_REFRESH_LOCKS = {}
     _PUBLIC_PANEL_RECENT_SIGNATURES = {}
+    # Discord rejects a message when all text across one embed exceeds 6000
+    # characters.  Keep a margin for future copy/footer changes.
+    BLACKLIST_EMBED_MAX_CHARS = 5800
 
 
     def _public_panel_refresh_lock(panel: str, guild_id: int):
@@ -621,11 +624,12 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
 
 
     def _owner_prison_rules_blacklist_field(guild: discord.Guild, lang: str):
-        """Build chunked public fields from the complete live Owner catalogue.
+        """Build candidate public fields from the live Owner catalogue.
 
         No offense allow-list lives here.  Original offenses, the important
         security offenses and every custom judgment created later in the Owner
-        panel are read from ``PrisonStore.offenses`` on every refresh.  Only the
+        panel are read from ``PrisonStore.offenses`` on every refresh.  The final
+        embed fitter below keeps the Discord-wide 6000-character limit.  Only the
         public label, duration and warning threshold are exposed; private rule
         patterns and internal detector details stay hidden.
         """
@@ -677,8 +681,8 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             chunks.append("\n".join(current))
 
         # Blacklist already uses seven fields. Discord accepts 25 fields, so
-        # eighteen catalogue chunks still leave the panel valid and cover far
-        # more judgments than the Owner UI can reasonably hold at once.
+        # eighteen catalogue chunks are the maximum candidates. The final
+        # builder also enforces Discord's separate 6000-character total limit.
         chunks = chunks[:18]
         return [
             (
@@ -687,6 +691,59 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             )
             for index, value in enumerate(chunks)
         ]
+
+
+    def _add_bounded_blacklist_fields(
+        embed: discord.Embed,
+        fields: list[tuple[str, str]],
+        lang: str,
+    ) -> int:
+        """Add fields without ever crossing Discord's embed limits.
+
+        The live Owner catalogue is intentionally unbounded, while one Discord
+        embed is not.  Older code respected the 1024-character per-field limit
+        but could still build a 15k+ embed and receive HTTP 400.  The public
+        panel now keeps one field slot and enough text budget for a clear
+        continuation note.
+        """
+        omitted = 0
+        reserve_for_note = 260
+        for index, (name, value) in enumerate(fields):
+            safe_name = (str(name) or "\u200b")[:256]
+            safe_value = (str(value) or "\u200b")[:1024]
+            projected = len(embed) + len(safe_name) + len(safe_value)
+            if len(embed.fields) >= 24 or projected + reserve_for_note > BLACKLIST_EMBED_MAX_CHARS:
+                omitted = len(fields) - index
+                break
+            embed.add_field(name=safe_name, value=safe_value, inline=False)
+
+        if omitted:
+            notes = {
+                "darija": (
+                    "📚 كاينين أحكام إضافية ما كيساعوش فـرسالة Discord وحدة. "
+                    "اللائحة الكاملة كتبقى فـ **Prison Code** وكتتحدّث من Owner Panel."
+                ),
+                "en": (
+                    "📚 More judgments exist than one Discord message can hold. "
+                    "The complete live list remains available in **Prison Code**."
+                ),
+                "fr": (
+                    "📚 D'autres sanctions existent au-delà de la limite d'un message Discord. "
+                    "La liste complète reste disponible dans **Prison Code**."
+                ),
+            }
+            note_name = {
+                "darija": "➕ باقي الأحكام",
+                "en": "➕ More judgments",
+                "fr": "➕ Autres sanctions",
+            }[lang]
+            note_value = notes[lang]
+            if (
+                len(embed.fields) < 25
+                and len(embed) + len(note_name) + len(note_value) <= BLACKLIST_EMBED_MAX_CHARS
+            ):
+                embed.add_field(name=note_name, value=note_value, inline=False)
+        return omitted
 
 
 
@@ -774,12 +831,11 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                 fields.append(("🚨 كيفاش تبلغ عن مخالفة", "دخل لـ **مركز المساعدة** واختار **بلغ على عضو** إلا كان البلاغ على شخص محدد، أو **بلاغ عام** إلا كان مشكل عام. البلاغ كيمشي مباشرة للإدارة وبشكل خاص."))
             footer = "GGMW9 | نظام المراقبة والعقوبات الأوتوماتيكي"
     
+        embed.set_footer(text=footer)
         if guild is not None:
             fields.extend(_owner_prison_rules_blacklist_field(guild, lang))
 
-        for name, value in fields:
-            embed.add_field(name=name, value=value, inline=False)
-        embed.set_footer(text=footer)
+        _add_bounded_blacklist_fields(embed, fields, lang)
         return embed
     
     
@@ -858,7 +914,8 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         """Keep ONE public Darija blacklist message; translations are always private and fresh."""
         channel = bot.get_channel(BLACKLIST_CHANNEL_ID)
         if not channel:
-            return
+            print(f"[BLACKLIST] Channel ID {BLACKLIST_CHANNEL_ID} ما تلقاش فـ cache ديال البوت.")
+            return False
 
         lock = _public_panel_refresh_lock("blacklist", guild.id)
         async with lock:
@@ -866,31 +923,50 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             signature = _public_panel_signature(embed)
             if _public_panel_was_just_published("blacklist", guild.id, signature):
                 return True
-            message = await upsert_fixed_panel(
-                bot,
-                channel,
-                key="blacklist",
-                matches=lambda message: (
-                    message.author == bot.user
-                    and bool(message.embeds)
-                    and any(
-                        marker in (message.embeds[0].title or "")
-                        for marker in (
-                            "الممنوعات والعقوبات",
-                            "Règles et Sanctions",
-                            "Rules & Penalties",
+            if len(embed) > BLACKLIST_EMBED_MAX_CHARS or len(embed.fields) > 25:
+                print(
+                    f"[BLACKLIST] رفضنا payload محلياً: chars={len(embed)}, "
+                    f"fields={len(embed.fields)}."
+                )
+                return False
+
+            message = None
+            # Startup publishes many panels.  If Discord temporarily rejects a
+            # REST operation (commonly 429), retry this one important public
+            # surface after short, bounded backoff periods.  The shared lock
+            # keeps concurrent ready/prison refreshes single-flight.
+            for attempt, delay in enumerate((0, 2, 5), start=1):
+                if delay:
+                    await asyncio.sleep(delay)
+                message = await upsert_fixed_panel(
+                    bot,
+                    channel,
+                    key="blacklist",
+                    matches=lambda candidate: (
+                        candidate.author == bot.user
+                        and bool(candidate.embeds)
+                        and any(
+                            marker in (candidate.embeds[0].title or "")
+                            for marker in (
+                                "الممنوعات والعقوبات",
+                                "Règles et Sanctions",
+                                "Rules & Penalties",
+                            )
                         )
-                    )
-                ),
-                content=None,
-                embed=embed,
-                view=BlacklistLanguageView("darija"),
-                message_id=getattr(channel, "last_message_id", None),
-                history_limit=100,
-            )
+                    ),
+                    content=None,
+                    embed=embed,
+                    view=BlacklistLanguageView("darija"),
+                    message_id=getattr(channel, "last_message_id", None),
+                    history_limit=100,
+                )
+                if message is not None:
+                    break
+                if attempt < 3:
+                    print(f"[BLACKLIST] محاولة {attempt}/3 فشلات؛ غادي نعاود من بعد.")
             if message is None:
                 print(
-                    "[BLACKLIST] ما قدرتش نحدّث الواجهة دابا؛ "
+                    "[BLACKLIST] ما قدرتش نحدّث الواجهة من بعد 3 محاولات؛ "
                     "شوف سطر [PANEL-REGISTRY] اللي قبل هاد السطر للتفاصيل."
                 )
                 return False

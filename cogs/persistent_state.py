@@ -445,6 +445,50 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         target_level = max(eligible)
         role = roles[target_level]
         return target_level, (role.id if role is not None else LEVEL_ROLES[target_level])
+
+
+    class LevelRoleSyncResult:
+        """Tuple-compatible result with diagnostics for legacy callers.
+
+        Existing commands unpack ``added, removed = await sync_level_roles(...)``.
+        Keeping iteration over exactly those two lists avoids a broad API break,
+        while bulk/Owner sync can now inspect ``errors`` instead of reporting a
+        misleading zero.
+        """
+        __slots__ = ("added", "removed", "errors")
+
+        def __init__(self, added=None, removed=None, errors=None):
+            self.added = list(added or [])
+            self.removed = list(removed or [])
+            self.errors = list(errors or [])
+
+        def __iter__(self):
+            yield self.added
+            yield self.removed
+
+
+    _LEVEL_ROLE_ERROR_LOG_CACHE = {}
+
+
+    def _log_level_role_sync_error(guild: discord.Guild, message: str) -> None:
+        """Log identical hierarchy/API failures at most once per 30 seconds."""
+        key = (int(guild.id), str(message))
+        now = asyncio.get_running_loop().time()
+        previous = float(_LEVEL_ROLE_ERROR_LOG_CACHE.get(key, 0) or 0)
+        if now - previous >= 30:
+            print(f"[LEVEL ROLE SYNC] ❌ {guild.name}: {message}")
+            _LEVEL_ROLE_ERROR_LOG_CACHE[key] = now
+
+
+    def _level_role_http_detail(exc: Exception) -> str:
+        status = getattr(exc, "status", None)
+        code = getattr(exc, "code", None)
+        details = f"{type(exc).__name__}: {exc}"
+        if status is not None:
+            details += f" | status={status}"
+        if code is not None:
+            details += f" | code={code}"
+        return details
     
     
     async def sync_level_roles(member: discord.Member, guild: discord.Guild, new_level: int):
@@ -453,28 +497,64 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         واحد بوحدو ديال الـ level فأي وقت (سواء صعد ولا هبط المستوى). كترجع
         (roles_added, roles_removed) — لائحتين ديال mentions."""
         all_level_role_ids = safe_managed_level_role_ids(guild, milestone_roles_db)
-        _, target_role_id = get_target_level_role(new_level, guild)
+        target_level, target_role_id = get_target_level_role(new_level, guild)
     
         roles_added, roles_removed = [], []
-    
+        errors = []
+
+        bot_member = guild.me
+        if bot_member is None:
+            errors.append("ما قدرناش نلقاو حساب البوت داخل السيرفر.")
+        elif not bot_member.guild_permissions.manage_roles:
+            errors.append("البوت ماعندوش Manage Roles.")
+
+        if int(new_level) >= min(LEVEL_THRESHOLDS) and target_role_id is None:
+            errors.append(
+                f"ما كاين حتى رول Level X مناسبة لـ Level {int(new_level)}؛ "
+                "خاص الرولات تكون مسمّاة بحال Level 5 وLevel 10."
+            )
+
+        target_role = guild.get_role(target_role_id) if target_role_id else None
+        if target_role_id and target_role is None:
+            errors.append(
+                f"رول Level {target_level} ما بقاتش موجودة (ID: {target_role_id})."
+            )
+
         to_remove = [r for r in member.roles if r.id in all_level_role_ids and r.id != target_role_id]
+        affected_roles = [*to_remove, *([target_role] if target_role is not None else [])]
+        if bot_member is not None:
+            blocked = [role.name for role in affected_roles if role >= bot_member.top_role]
+            if blocked:
+                errors.append(
+                    "رول البوت خاصها تكون فوق هاد Level Roles: " + ", ".join(blocked)
+                )
+
+        if errors:
+            for detail in errors:
+                _log_level_role_sync_error(guild, detail)
+            return LevelRoleSyncResult(errors=errors)
+    
         if to_remove:
             try:
                 await member.remove_roles(*to_remove, reason=f"Level Role Sync — دابا Level {new_level}")
                 roles_removed = [r.mention for r in to_remove]
-            except (discord.Forbidden, discord.HTTPException):
-                pass
+            except (discord.Forbidden, discord.HTTPException) as exc:
+                detail = f"فشل حذف Level Role من {member} ({member.id}): {_level_role_http_detail(exc)}"
+                errors.append(detail)
+                _log_level_role_sync_error(guild, detail)
+                return LevelRoleSyncResult(roles_added, roles_removed, errors)
     
-        if target_role_id:
-            target_role = guild.get_role(target_role_id)
-            if target_role and target_role not in member.roles:
+        if target_role is not None:
+            if target_role not in member.roles:
                 try:
                     await member.add_roles(target_role, reason=f"Level Role Sync — دابا Level {new_level}")
                     roles_added.append(target_role.mention)
-                except (discord.Forbidden, discord.HTTPException):
-                    pass
+                except (discord.Forbidden, discord.HTTPException) as exc:
+                    detail = f"فشل إعطاء {target_role.name} لـ {member} ({member.id}): {_level_role_http_detail(exc)}"
+                    errors.append(detail)
+                    _log_level_role_sync_error(guild, detail)
     
-        return roles_added, roles_removed
+        return LevelRoleSyncResult(roles_added, roles_removed, errors)
     
     
     async def sync_all_level_member_roles(guild: discord.Guild):
@@ -486,6 +566,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         """
         changed_members = 0
         errors = 0
+        error_details = []
         guild_levels = levels_db.get(str(guild.id), {})
     
         for member in guild.members:
@@ -494,17 +575,31 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             data = guild_levels.get(str(member.id), {"level": 0})
             level = max(0, int(data.get("level", 0) or 0))
             try:
-                added, removed = await sync_level_roles(member, guild, level)
+                result = await sync_level_roles(member, guild, level)
+                added, removed = result
                 if added or removed:
                     changed_members += 1
+                if result.errors:
+                    errors += 1
+                    if len(error_details) < 10:
+                        error_details.append(
+                            f"{member} ({member.id}): " + " | ".join(result.errors)
+                        )
             except Exception as e:
                 errors += 1
+                if len(error_details) < 10:
+                    error_details.append(f"{member} ({member.id}): {type(e).__name__}: {e}")
                 print(f"[LEVEL ROLE SYNC] خطأ مع {member} ({member.id}): {e}")
     
         print(
             f"[LEVEL ROLE SYNC] ✅ {guild.name}: تصلحو {changed_members} عضو"
             + (f" | أخطاء: {errors}" if errors else "")
         )
+        return {
+            "changed_members": changed_members,
+            "errors": errors,
+            "error_details": error_details,
+        }
     
     
     # ═══════════════════════════════════════════════════════
