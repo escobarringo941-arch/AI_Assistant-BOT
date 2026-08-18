@@ -646,7 +646,50 @@ async def setup_rules_message(guild: discord.Guild):
         return False
 
 
-def _build_blacklist_embed(lang: str = "darija") -> discord.Embed:
+
+# مفاتيح المخالفات ديال السجن اللي كنبانو ليهم "الحكم + المدة" هنا.
+# ⚠️ هادشي كيقرا غير اللقب + المدة + عدد التحذيرات — والو من التفاصيل
+# الداخلية (الزنزانة، الـauto_rules، الـID...) ما كيطلعش هنا مباشرة.
+_BLACKLIST_OFFENSE_KEYS = ["spam", "mention_spam", "insult", "links", "nsfw"]
+
+
+def _prison_offense_lines(guild_id: int, lang: str = "darija") -> str:
+    """كيرجع لائحة 'الحكم — المدة (عدد التحذيرات)' حية من كتالوج السجن ديال الاونر.
+
+    كتحدّث روحها أوتوماتيكياً ملي الاونر يبدل مدة، يزيد/ينقص تحذيرات، أو يبدل
+    حكم من البانل — بلا ما نحتاجو نبدلو هاد الملف. ما كنطلعوش غير الحكم
+    (label) + المدة + عدد التحذيرات، حيت هوما لي معنيين بالقناة العامة.
+    """
+    try:
+        from cogs.prison_core import PrisonStore, format_duration
+    except Exception:
+        return ""
+    try:
+        store = PrisonStore()
+        catalogue = store.offenses(guild_id)
+    except Exception:
+        return ""
+
+    lines = []
+    for key in _BLACKLIST_OFFENSE_KEYS:
+        entry = catalogue.get(key)
+        if not entry:
+            continue
+        try:
+            trigger = store.offense_trigger_count(guild_id, key)
+        except Exception:
+            trigger = 1
+        if lang == "en":
+            note = "no prior warning" if trigger == 1 else f"after {trigger - 1} warning(s)"
+        elif lang == "fr":
+            note = "sans avertissement préalable" if trigger == 1 else f"après {trigger - 1} avertissement(s)"
+        else:
+            note = "بلا تحذير مسبق" if trigger == 1 else f"بعد {trigger - 1} تحذيرات"
+        lines.append(f"**{entry['label']}** — `{format_duration(entry['seconds'])}` ({note})")
+    return "\n".join(lines)
+
+
+def _build_blacklist_embed(lang: str = "darija", guild_id: int = 0) -> discord.Embed:
     """Same Blacklist content in 3 languages.
 
     The shared channel message is ALWAYS Darija. EN/FR are rendered only in a
@@ -674,6 +717,9 @@ def _build_blacklist_embed(lang: str = "darija") -> discord.Embed:
             ("5️⃣ Mauvaise utilisation des salons", "**Interdit :** discuter hors sujet dans un salon dédié (ex. discussion informelle dans #announcements).\n**Exemple :** poster un mème dans le salon d'actualités officiel → message supprimé + rappel."),
             ("⚖️ Sanctions progressives", f"1️⃣ **Avertissement** — chaque infraction légère déclenche un avertissement automatique\n2️⃣ **Mute** — à {bot_settings['mute_after_warns']} avertissements ({bot_settings['mute_duration_minutes']} min), ou après {SPAM_THRESHOLD} messages en {SPAM_INTERVAL}s (spam)\n3️⃣ **Kick** — à {bot_settings['kick_after_warns']} avertissements\n4️⃣ **Ban** — à {bot_settings['ban_after_warns']} avertissements, ou immédiatement en cas de doxxing/contenu +18/menace grave"),
         ]
+        offense_lines = _prison_offense_lines(guild_id, "fr")
+        if offense_lines:
+            fields.append(("⏱️ Durées actuelles (mise à jour automatique)", offense_lines))
         if REPORTS_CHANNEL_ID:
             fields.append(("🚨 Comment signaler une infraction", "Utilise le **Support Center** du serveur : choisis **Signaler un membre** pour une personne précise ou **Signalement général** pour un problème global. Les signalements sont privés et envoyés directement au staff."))
         footer = "GGMW9 | Système de Modération Automatique"
@@ -697,6 +743,9 @@ def _build_blacklist_embed(lang: str = "darija") -> discord.Embed:
             ("5️⃣ Misusing Channels", "**Forbidden:** off-topic chat in a dedicated channel (e.g. casual talk in #announcements).\n**Example:** posting a meme in the official news channel → message deleted + reminder."),
             ("⚖️ Escalating Penalties", f"1️⃣ **Warning** — every minor offense triggers an automatic warning\n2️⃣ **Mute** — at {bot_settings['mute_after_warns']} warnings ({bot_settings['mute_duration_minutes']} minutes), or after {SPAM_THRESHOLD} messages in {SPAM_INTERVAL}s (spam)\n3️⃣ **Kick** — upon reaching {bot_settings['kick_after_warns']} warnings\n4️⃣ **Ban** — upon reaching {bot_settings['ban_after_warns']} warnings, or immediately for doxxing/NSFW content/serious threats"),
         ]
+        offense_lines = _prison_offense_lines(guild_id, "en")
+        if offense_lines:
+            fields.append(("⏱️ Current durations (auto-updated)", offense_lines))
         if REPORTS_CHANNEL_ID:
             fields.append(("🚨 How to report a violation", "Use the server **Support Center**: choose **Report member** for a specific person or **General report** for a broader issue. Reports are private and go directly to staff."))
         footer = "GGMW9 | Automatic Moderation & Penalty System"
@@ -720,6 +769,9 @@ def _build_blacklist_embed(lang: str = "darija") -> discord.Embed:
             ("5️⃣ استعمال القنوات بطريقة غالطة", "**ممنوع:** الهضرة خارج الموضوع فقناة مخصصة (مثلاً هضرة عادية فقناة الإعلانات).\n**مثال:** كتبتي ميم فقناة الأخبار الرسمية → مسح الرسالة + تنبيه."),
             ("⚖️ العقوبات المتدرجة", f"1️⃣ **تحذير** — كل مخالفة خفيفة كتبان تحذير أوتوماتيكي\n2️⃣ **كتم** — عند {bot_settings['mute_after_warns']} تحذيرات ({bot_settings['mute_duration_minutes']} دقيقة)، ولا إلا بعتي {SPAM_THRESHOLD} رسايل فـ {SPAM_INTERVAL} ثواني (سبام)\n3️⃣ **طرد** — عند الوصول لـ {bot_settings['kick_after_warns']} تحذيرات\n4️⃣ **حظر** — عند الوصول لـ {bot_settings['ban_after_warns']} تحذيرات، ولا مباشرة فحالة نشر معلومات شخصية/محتوى +18/تهديد خطير"),
         ]
+        offense_lines = _prison_offense_lines(guild_id, "darija")
+        if offense_lines:
+            fields.append(("⏱️ المدد الحالية (كتحدّث أوتوماتيكياً)", offense_lines))
         if REPORTS_CHANNEL_ID:
             # Keep the public guide practical with the unified Support Center.
             fields.append(("🚨 كيفاش تبلغ عن مخالفة", "دخل لـ **مركز المساعدة** واختار **بلغ على عضو** إلا كان البلاغ على شخص محدد، أو **بلاغ عام** إلا كان مشكل عام. البلاغ كيمشي مباشرة للإدارة وبشكل خاص."))
@@ -753,7 +805,7 @@ class BlacklistPrivateLanguageSelect(discord.ui.Select):
         lang = set_panel_language(interaction.guild.id if interaction.guild else 0, interaction.user.id, self.values[0])
         await interaction.response.edit_message(
             content=None,
-            embed=_build_blacklist_embed(lang),
+            embed=_build_blacklist_embed(lang, interaction.guild.id if interaction.guild else 0),
             view=BlacklistPrivateLanguageView(interaction.user.id, lang),
         )
 
@@ -789,7 +841,7 @@ class BlacklistLanguageSelect(discord.ui.Select):
         )
         # Always create a fresh private translation. Dismiss never poisons the public selector.
         await interaction.response.send_message(
-            embed=_build_blacklist_embed(lang),
+            embed=_build_blacklist_embed(lang, interaction.guild.id if interaction.guild else 0),
             view=BlacklistPrivateLanguageView(interaction.user.id, lang),
             ephemeral=True,
         )
@@ -828,9 +880,9 @@ async def setup_blacklist_message(guild: discord.Guild):
     keep = all_panels[0] if all_panels else None
     try:
         if keep:
-            await keep.edit(content=None, embed=_build_blacklist_embed("darija"), view=BlacklistLanguageView("darija"))
+            await keep.edit(content=None, embed=_build_blacklist_embed("darija", guild.id), view=BlacklistLanguageView("darija"))
         else:
-            keep = await channel.send(embed=_build_blacklist_embed("darija"), view=BlacklistLanguageView("darija"))
+            keep = await channel.send(embed=_build_blacklist_embed("darija", guild.id), view=BlacklistLanguageView("darija"))
 
         # Clean only true duplicates; never delete the kept original message.
         for old in all_panels:
