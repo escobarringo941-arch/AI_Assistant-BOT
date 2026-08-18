@@ -97,21 +97,16 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         embeds=None,
         view=None,
     ):
-        """One private panel message per guild+user+session.
-    
-        Public buttons never pile ephemeral messages: a later click edits the previous
-        private panel when Discord's webhook token is still valid, otherwise it safely
-        creates a fresh one. Submenus can keep using interaction.response.edit_message.
+        """Open a reliable private panel for the interaction that was just clicked.
+
+        An older implementation deferred the *new* interaction and then edited a
+        cached ephemeral message created by an earlier interaction.  Discord can
+        accept that old edit while leaving the current click on an endless loading
+        state, which made buttons such as Birthday Center's ``الملف ديالي`` appear
+        to do nothing.  Every public click now receives its own acknowledged private
+        response.  Buttons inside that private view still edit the same message with
+        ``interaction.response.edit_message`` as before.
         """
-        if not hasattr(bot, "_ggmw9_panel_sessions"):
-            bot._ggmw9_panel_sessions = {}
-        guild_id = interaction.guild.id if interaction.guild else 0
-        key = (int(guild_id), int(interaction.user.id), str(session_key))
-        sessions = bot._ggmw9_panel_sessions
-    
-        if not interaction.response.is_done():
-            await interaction.response.defer(ephemeral=True)
-    
         kwargs = {"content": content, "view": view}
         if embeds is not None:
             kwargs["embeds"] = embeds
@@ -119,26 +114,26 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             kwargs["embed"] = embed
         else:
             kwargs["embeds"] = []
-    
-        previous = sessions.get(key)
-        if previous is not None:
+
+        if not interaction.response.is_done():
             try:
-                await previous.edit(**kwargs)
-                return previous
-            except (discord.NotFound, discord.HTTPException):
-                sessions.pop(key, None)
-    
-        send_kwargs = dict(kwargs)
-        send_kwargs["ephemeral"] = True
-        send_kwargs["wait"] = True
+                await interaction.response.send_message(ephemeral=True, **kwargs)
+                return await interaction.original_response()
+            except (discord.NotFound, discord.HTTPException, discord.InteractionResponded):
+                # A rare expired acknowledgement is still recoverable through
+                # the interaction webhook below.
+                pass
+
         try:
-            msg = await interaction.followup.send(**send_kwargs)
-            sessions[key] = msg
-            return msg
+            return await interaction.followup.send(
+                ephemeral=True,
+                wait=True,
+                **kwargs,
+            )
         except discord.HTTPException:
-            send_kwargs.pop("wait", None)
-            await interaction.followup.send(**send_kwargs)
-            return None
+            # Keep a last non-waiting fallback for discord.py/webhook variants
+            # that do not return an ephemeral WebhookMessage.
+            return await interaction.followup.send(ephemeral=True, **kwargs)
     
     TARGET_CHANNEL_ID = 1526384339670270012
     WELCOME_CHANNEL_ID = 1524957892925456545

@@ -248,6 +248,9 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         )
         if guild and guild.icon:
             embed.set_thumbnail(url=guild.icon.url)
+        if guild is not None:
+            for field_name, field_value in _owner_prison_rules_blacklist_field(guild, lang):
+                embed.add_field(name=field_name, value=field_value, inline=False)
         embed.set_footer(text=footer)
         return embed
     
@@ -555,6 +558,8 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             timestamp=datetime.now()
         )
         embed.set_thumbnail(url=guild.icon.url if guild.icon else None)
+        for field_name, field_value in _owner_prison_rules_blacklist_field(guild, "darija"):
+            embed.add_field(name=field_name, value=field_value, inline=False)
         embed.set_footer(text="GGMW9 | القوانين والتفعيل • الدارجة هي الأساسية")
         message = await upsert_fixed_panel(
             bot,
@@ -576,18 +581,18 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         return message is not None
     
     
-    # مفاتيح المخالفات اللي كنبانو ليهم "الحكم + المدة" فـ blacklist.
-    # ⚠️ هادشي كيقرا غير اللقب + المدة + عدد التحذيرات — بلا الكلمات/الروابط
-    # المحظورة (patterns) ولا الزنزانة ولا أي تفصيل داخلي آخر ديال الـOwner.
-    _BLACKLIST_OFFENSE_KEYS = ["spam", "mention_spam", "insult", "links", "nsfw"]
+    def _owner_prison_rules_blacklist_field(guild: discord.Guild, lang: str):
+        """Build chunked public fields from the complete live Owner catalogue.
 
-    def _prison_offense_penalties_field(guild: discord.Guild, lang: str):
-        """أحكام + مدد حية من نفس PrisonStore (offenses catalogue)، بلا ما نطلعو
-        شي pattern/كلمة/رابط محظور. كتحدث روحها أوتوماتيكياً ملي الـOwner يبدل
-        مدة، يزيد/ينقص تحذيرات، أو يبدل حكم من البانل."""
+        No offense allow-list lives here.  Original offenses, the important
+        security offenses and every custom judgment created later in the Owner
+        panel are read from ``PrisonStore.offenses`` on every refresh.  Only the
+        public label, duration and warning threshold are exposed; private rule
+        patterns and internal detector details stay hidden.
+        """
         prison_cog = bot.get_cog("PrisonSystem") if guild is not None else None
         if prison_cog is None:
-            return None
+            return []
         from cogs.prison_core import format_duration, warning_trigger_note
 
         catalogue = prison_cog.store.offenses(guild.id)
@@ -596,20 +601,53 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             "en": "⏱️ Judgments & Durations (auto-updated)",
             "fr": "⏱️ Jugements et durées (mise à jour automatique)",
         }
-        lines = []
-        for key in _BLACKLIST_OFFENSE_KEYS:
-            entry = catalogue.get(key)
-            if not entry:
-                continue
+        ordered = sorted(
+            catalogue.items(),
+            key=lambda item: (
+                int(item[1].get("severity", 1) or 1),
+                int(item[1].get("seconds", 3600) or 3600),
+                str(item[1].get("label", item[0])).casefold(),
+            ),
+        )
+        lines: list[str] = []
+        for key, entry in ordered:
             try:
                 trigger = prison_cog.store.offense_trigger_count(guild.id, key)
             except Exception:
                 trigger = 1
             note = warning_trigger_note(trigger, lang)
-            lines.append(f"**{entry.get('label', key)}** — `{format_duration(int(entry.get('seconds', 3600)))}` ({note})")
+            lines.append(
+                f"• **{entry.get('label', key)}** — "
+                f"`{format_duration(int(entry.get('seconds', 3600)))}` • {note}"
+            )
         if not lines:
-            return None
-        return titles[lang], "\n".join(lines)
+            return []
+
+        chunks: list[str] = []
+        current: list[str] = []
+        current_size = 0
+        for line in lines:
+            added = len(line) + (1 if current else 0)
+            if current and current_size + added > 980:
+                chunks.append("\n".join(current))
+                current = []
+                current_size = 0
+            current.append(line)
+            current_size += len(line) + (1 if len(current) > 1 else 0)
+        if current:
+            chunks.append("\n".join(current))
+
+        # Blacklist already uses seven fields. Discord accepts 25 fields, so
+        # eighteen catalogue chunks still leave the panel valid and cover far
+        # more judgments than the Owner UI can reasonably hold at once.
+        chunks = chunks[:18]
+        return [
+            (
+                titles[lang] if index == 0 else f"{titles[lang]} • {index + 1}",
+                value,
+            )
+            for index, value in enumerate(chunks)
+        ]
 
 
 
@@ -701,9 +739,7 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             footer = "GGMW9 | نظام المراقبة والعقوبات الأوتوماتيكي"
     
         if guild is not None:
-            penalties_field = _prison_offense_penalties_field(guild, lang)
-            if penalties_field is not None:
-                fields.append(penalties_field)
+            fields.extend(_owner_prison_rules_blacklist_field(guild, lang))
 
         for name, value in fields:
             embed.add_field(name=name, value=value, inline=False)

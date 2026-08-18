@@ -71,7 +71,7 @@ from cogs.prison_core import (
 # ═══════════════════════════════════════════════════════
 
 REASON_TAG = "GGMW9 Prison System"
-OWNER_RULE_CATALOG_VERSION = "2026-08-owner-rules-v2"
+OWNER_RULE_CATALOG_VERSION = "2026-08-owner-rules-v3"
 
 # ═══════ التصعيد الأوتوماتيكي للزنازن (Auto-Escalation) ═══════
 # إلا سبام السجين ولا كتب حوايج ممنوعة وهو دايما فزنزانتو، البوت كيديه
@@ -1336,7 +1336,8 @@ class PrisonSystem(commands.Cog):
         for action, offense_key in (
             ("message_spam", "spam"),
             ("discord_invite", "links"),
-            ("mass_mentions", "spam"),
+            ("any_link", "links"),
+            ("mass_mentions", "mention_spam"),
             ("caps_spam", "spam"),
             ("emoji_spam", "spam"),
         ):
@@ -2984,8 +2985,13 @@ class PrisonSystem(commands.Cog):
 
         if "discord_invite" in requested and AUTO_DISCORD_INVITE_PATTERN.search(content):
             detected.add("discord_invite")
-        if "any_link" in requested and self._message_domains(content):
-            detected.add("any_link")
+        if "any_link" in requested:
+            domains = self._message_domains(content)
+            if any(
+                not self.store.is_domain_allowed(message.guild.id, domain)
+                for domain in domains
+            ):
+                detected.add("any_link")
         if "mass_mentions" in requested:
             mention_ids = {
                 int(item.id)
@@ -5375,9 +5381,31 @@ class PrisonSystem(commands.Cog):
             "max": "🚨 MAXIMUM SECURITY — عقوبات قاسحة",
         }
         rules = discord.Embed(title="⚖️ العقوبات حسب الزنزانة", color=discord.Color.dark_theme())
+        field_count = 0
         for key in CELL_KEYS:
             lines = by_cell.get(key) or ["—"]
-            rules.add_field(name=titles[key], value="\n".join(lines)[:1024], inline=False)
+            chunks: list[str] = []
+            current: list[str] = []
+            current_size = 0
+            for line in lines:
+                added = len(line) + (1 if current else 0)
+                if current and current_size + added > 980:
+                    chunks.append("\n".join(current))
+                    current = []
+                    current_size = 0
+                current.append(line)
+                current_size += len(line) + (1 if len(current) > 1 else 0)
+            if current:
+                chunks.append("\n".join(current))
+            for index, chunk in enumerate(chunks):
+                if field_count >= 25:
+                    break
+                rules.add_field(
+                    name=titles[key] if index == 0 else f"{titles[key]} • {index + 1}",
+                    value=chunk,
+                    inline=False,
+                )
+                field_count += 1
         rules.set_footer(text="أي حكم كيتسجل بـ Case ID • الاونر بوحدو لي كيقدر يبدل ولا يطلق سراح")
         return [intro, rules]
 

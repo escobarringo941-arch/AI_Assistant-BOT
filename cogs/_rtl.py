@@ -10,11 +10,17 @@ reads that leading character as LTR and renders the whole line left-to-right
 — even though every word after it is Arabic.
 
 THE FIX
---------
+-------
 U+200F (RIGHT-TO-LEFT MARK, "RLM") is an invisible Unicode character that
 tells the renderer "treat this line as RTL from here". Prepending it to any
-Arabic line that doesn't already start with an Arabic letter fixes the
-rendering, with zero visual side effect.
+Arabic line that doesn't already start with an Arabic letter fixes the line
+direction.
+
+Mixed Arabic/Latin counters need one more guard.  Discord can render the
+logical text ``30 دقيقة`` as ``دقيقة 30`` inside embeds and select-option
+descriptions.  Numeric Arabic phrases are therefore wrapped in an invisible
+left-to-right embedding (LRE/PDF).  The words and numbers are unchanged; only
+their visual order is stabilised.
 
 WHY A GLOBAL PATCH INSTEAD OF EDITING EVERY STRING
 ----------------------------------------------------
@@ -28,15 +34,10 @@ the codebase needs to change.
 SCOPE (intentionally conservative)
 ------------------------------------
 Patched:  discord.Embed (title, description, add_field, set_footer,
-          set_author) + plain message content (Messageable.send,
+          set_author), plain message content (Messageable.send,
           InteractionResponse.send_message/edit_message, Webhook.send,
-          Message.edit).
-NOT patched: discord.ui component labels/placeholders and Modal titles.
-In this codebase's own convention, emoji is always passed as a *separate*
-`emoji=` kwarg on buttons/selects (never concatenated into the label text),
-and modal titles are plain Arabic words with no leading emoji — so those
-already render correctly RTL and don't need the fix. Leaving them alone
-also avoids touching less-stable internal discord.py hooks.
+          Message.edit), and UI text (select options/placeholders, buttons,
+          text inputs and modal titles).
 
 Every patch below is wrapped in try/except: if a discord.py version ever
 changes one of these signatures, that one patch is skipped (logged once)
@@ -47,7 +48,15 @@ from __future__ import annotations
 import re
 
 RLM = "\u200f"
+LRE = "\u202a"
+PDF = "\u202c"
 _ARABIC_RE = re.compile(r"[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]")
+_BIDI_CONTROL_RE = re.compile(r"[\u200e\u200f\u202a-\u202e\u2066-\u2069]")
+_NUMBER_ARABIC_PHRASE_RE = re.compile(
+    r"(?<![\w<])"
+    r"([0-9\u0660-\u0669]+(?:[.,:/-][0-9\u0660-\u0669]+)*"
+    r"\s+[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]+)"
+)
 
 
 def _line_needs_rlm(line: str) -> bool:
@@ -61,16 +70,44 @@ def _line_needs_rlm(line: str) -> bool:
     return False
 
 
+def _stabilize_mixed_numbers(text: str) -> str:
+    """Keep ``number + Arabic word`` in logical order in mixed-direction UI.
+
+    LRE/PDF are deliberately used instead of LRI/PDI here.  Discord's select
+    menus and embed renderer keep the Arabic word on the expected side with
+    an embedding, while an isolate can still flip the unit on some clients.
+    Existing bidi-controlled strings are left untouched to avoid nesting.
+    """
+    if not _ARABIC_RE.search(text) or _BIDI_CONTROL_RE.search(text):
+        return text
+    return _NUMBER_ARABIC_PHRASE_RE.sub(
+        lambda match: f"{LRE}{match.group(1)}{PDF}", text
+    )
+
+
 def auto_rtl(text):
     """Prefix every Arabic-but-misreads-as-LTR line in *text* with RLM.
     Non-strings, empty strings, and non-Arabic text pass through untouched.
     """
     if not isinstance(text, str) or not text:
         return text
-    return "\n".join(
-        (RLM + line) if _line_needs_rlm(line) else line
-        for line in text.split("\n")
-    )
+    lines = []
+    for line in text.split("\n"):
+        fixed = _stabilize_mixed_numbers(line)
+        lines.append((RLM + fixed) if _line_needs_rlm(fixed) else fixed)
+    return "\n".join(lines)
+
+
+def _ui_text(text, limit: int):
+    """Apply bidi controls without crossing Discord's component text limit."""
+    if not isinstance(text, str):
+        return text
+    candidate = text
+    fixed = auto_rtl(candidate)
+    while len(fixed) > int(limit) and candidate:
+        candidate = candidate[:-1]
+        fixed = auto_rtl(candidate)
+    return fixed
 
 
 _PATCHED = False
@@ -214,4 +251,55 @@ def patch_discord_rtl():
 
     _safe_patch("Message.edit", _patch_message_edit)
 
-    print("[RTL PATCH] Darija/Arabic RTL auto-fix active for embeds and messages.")
+    # ---- UI component text: options, placeholders, labels and modal titles ----
+    # Prison judgments and many other panels put durations in SelectOption
+    # descriptions, which bypass all message/embed patches above.
+    def _patch_select_option():
+        orig = discord.SelectOption.__init__
+
+        def _init(self, *args, **kwargs):
+            args = list(args)
+            if args:
+                args[0] = _ui_text(args[0], 100)
+            if "label" in kwargs:
+                kwargs["label"] = _ui_text(kwargs["label"], 100)
+            if "description" in kwargs:
+                kwargs["description"] = _ui_text(kwargs["description"], 100)
+            return orig(self, *args, **kwargs)
+
+        discord.SelectOption.__init__ = _init
+
+    _safe_patch("SelectOption.__init__", _patch_select_option)
+
+    def _patch_ui_init(cls, limits):
+        orig = cls.__init__
+
+        def _init(self, *args, **kwargs):
+            for name, limit in limits.items():
+                if name in kwargs:
+                    kwargs[name] = _ui_text(kwargs[name], limit)
+            return orig(self, *args, **kwargs)
+
+        cls.__init__ = _init
+
+    _safe_patch(
+        "ui.Button.__init__",
+        lambda: _patch_ui_init(discord.ui.Button, {"label": 80}),
+    )
+    _safe_patch(
+        "ui.Select.__init__",
+        lambda: _patch_ui_init(discord.ui.Select, {"placeholder": 150}),
+    )
+    _safe_patch(
+        "ui.TextInput.__init__",
+        lambda: _patch_ui_init(
+            discord.ui.TextInput,
+            {"label": 45, "placeholder": 100, "default": 4000},
+        ),
+    )
+    _safe_patch(
+        "ui.Modal.__init__",
+        lambda: _patch_ui_init(discord.ui.Modal, {"title": 45}),
+    )
+
+    print("[RTL PATCH] Darija/Arabic RTL auto-fix active for messages and UI components.")

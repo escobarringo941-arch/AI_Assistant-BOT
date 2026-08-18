@@ -180,6 +180,12 @@ class BirthdayCenterView(discord.ui.View):
         row=0,
     )
     async def my_profile(self, interaction: discord.Interaction, _button: discord.ui.Button):
+        if not interaction.guild or not isinstance(interaction.user, discord.Member):
+            await interaction.response.send_message(
+                "❌ خاص زر الملف يتستعمل داخل السيرفر.",
+                ephemeral=True,
+            )
+            return
         await self.cog.private_panel(
             interaction,
             "birthday-profile",
@@ -457,7 +463,17 @@ class BirthdayCenter(commands.Cog):
         return embed
 
     async def private_panel(self, interaction: discord.Interaction, key: str, **kwargs):
-        return await self.gg["upsert_ephemeral_panel"](interaction, key, **kwargs)
+        """Always acknowledge the current click with a visible ephemeral panel."""
+        helper = self.gg.get("upsert_ephemeral_panel")
+        if callable(helper):
+            return await helper(interaction, key, **kwargs)
+        if not interaction.response.is_done():
+            await interaction.response.send_message(ephemeral=True, **kwargs)
+            try:
+                return await interaction.original_response()
+            except (discord.NotFound, discord.HTTPException):
+                return None
+        return await interaction.followup.send(ephemeral=True, wait=True, **kwargs)
 
     async def store_member_birthday(self, member: discord.Member, day: int, month: int):
         old = self.record(member.id) or {}

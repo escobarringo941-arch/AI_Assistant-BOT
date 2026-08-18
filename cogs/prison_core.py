@@ -130,10 +130,40 @@ DEFAULT_OFFENSES: dict[str, dict[str, Any]] = {
         "severity": 2,
     },
     "nsfw": {
-        "label": "محتوى NSFW",
+        "label": "محتوى إباحي / NSFW",
         "seconds": 7 * DAY,
         "cell": "block",
         "severity": 2,
+    },
+    "harassment": {
+        "label": "تحرش / تنمر / تهديد",
+        "seconds": 3 * DAY,
+        "cell": "block",
+        "severity": 2,
+    },
+    "doxxing": {
+        "label": "نشر معلومات شخصية / Doxxing",
+        "seconds": 90 * DAY,
+        "cell": "max",
+        "severity": 3,
+    },
+    "scam": {
+        "label": "احتيال / انتحال صفة",
+        "seconds": 30 * DAY,
+        "cell": "max",
+        "severity": 3,
+    },
+    "security_bypass": {
+        "label": "محاولة تجاوز حماية البوت",
+        "seconds": 30 * DAY,
+        "cell": "max",
+        "severity": 3,
+    },
+    "ban_evasion": {
+        "label": "التهرب من الحظر / حساب بديل",
+        "seconds": 90 * DAY,
+        "cell": "max",
+        "severity": 3,
     },
     "kick": {
         "label": "طرد (Kick سابقاً)",
@@ -142,7 +172,7 @@ DEFAULT_OFFENSES: dict[str, dict[str, Any]] = {
         "severity": 2,
     },
     "raid": {
-        "label": "Raid / محاولة تخريب",
+        "label": "Raid / محاولة تخريب السيرفر",
         "seconds": 30 * DAY,
         "cell": "max",
         "severity": 3,
@@ -306,9 +336,9 @@ AUTO_ACTION_LABELS = {
 DEFAULT_OFFENSE_AUTO_ACTIONS = {
     "spam": ("message_spam", "caps_spam", "emoji_spam"),
     "mention_spam": ("mass_mentions",),
-    # "any_link" متعمد ماشي هنا: بغينا الروابط تكون مسموحة بالأصل، وغير
-    # الدومينات اللي الاونر كيزيدها بيدو فـ"روابط ممنوعة" هوما اللي كيتحبس عليهم.
-    "links": ("discord_invite",),
+    # الروابط كتدوز غير إلا كانت فـAllowed Domains ديال Owner. هكا نفس حكم
+    # "الروابط الممنوعة" كيتحكم فدعوات Discord وباقي الروابط من مصدر واحد.
+    "links": ("discord_invite", "any_link"),
 }
 
 
