@@ -13,6 +13,7 @@ import asyncio
 from contextvars import ContextVar
 from copy import deepcopy
 import hashlib
+import inspect
 import json
 import os
 from pathlib import Path
@@ -57,6 +58,17 @@ NATIVE_LANGUAGES = {"darija", "en", "fr"}
 AI_TRANSLATED_LANGUAGES = LANGUAGES - NATIVE_LANGUAGES
 TRANSLATABLE_LANGUAGES = tuple(code for code in PANEL_LANGUAGE_MENU if code in TARGET_NAMES)
 LANGUAGE_PLACEHOLDER = "🌐 اللغة / Language / Langue / Idioma / Lingua"
+
+# ═══════════════════════════════════════════════════════════════════════
+# ║  TRANSLATION MODEL                                                   ║
+# ║  Panel translation is short, highly repetitive work, not a chat, so  ║
+# ║  it runs on the cheap model first and only falls back to the         ║
+# ║  expensive one when that fails.  Change these two lines to switch.   ║
+# ║  Do NOT add "openrouter/free" here: it is the model that returned    ║
+# ║  broken JSON and left panels rendering in Darija.                    ║
+# ═══════════════════════════════════════════════════════════════════════
+TRANSLATION_MODEL = "google/gemini-2.5-flash-lite"
+TRANSLATION_FALLBACK_MODELS = ["openai/gpt-5.6-luna"]
 
 _PROTECTED_RE = re.compile(
     r"<(?:(?:@!?|@&|#)[0-9]+|t:[0-9]+(?::[A-Za-z])?|a?:[^>]+)>"
@@ -104,6 +116,25 @@ def _cache_lock(lang: str) -> asyncio.Lock:
     return lock
 
 
+def _accepts_model_override(call_chat: Any) -> bool:
+    """Check once whether the bot's chat helper takes model overrides.
+
+    Checked by signature rather than by catching TypeError from a real call:
+    a TypeError raised *after* the HTTP request would make a retry pay for the
+    same translation twice.
+    """
+    try:
+        parameters = inspect.signature(call_chat).parameters
+    except (TypeError, ValueError):
+        return False
+    if any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for parameter in parameters.values()
+    ):
+        return True
+    return "primary_model" in parameters and "fallback_models" in parameters
+
+
 def configure_panel_i18n(
     bot: Any,
     call_openrouter_chat: Callable[..., Awaitable[tuple[Any, Any]]],
@@ -133,6 +164,7 @@ def configure_panel_i18n(
     _CONFIG.update(
         bot=bot,
         call_chat=call_openrouter_chat,
+        call_chat_accepts_models=_accepts_model_override(call_openrouter_chat),
         get_language=get_language,
         set_language=contextual_set_language,
         raw_set_language=set_language,
@@ -410,9 +442,13 @@ async def _call_translation(messages: list[dict[str, str]], max_tokens: int) -> 
     call_chat = _CONFIG.get("call_chat")
     if not callable(call_chat):
         return None
+    extra: dict[str, Any] = {}
+    if _CONFIG.get("call_chat_accepts_models"):
+        extra["primary_model"] = TRANSLATION_MODEL
+        extra["fallback_models"] = list(TRANSLATION_FALLBACK_MODELS)
     async with _TRANSLATION_CONCURRENCY:
         try:
-            raw, error = await call_chat(messages, int(max_tokens), 0.0)
+            raw, error = await call_chat(messages, int(max_tokens), 0.0, **extra)
         except Exception as exc:
             print(f"[PANEL-I18N] translation call failed: {exc}")
             return None
@@ -763,6 +799,22 @@ async def _translated_parts(
     )
 
 
+def _warmup_languages(view: Any) -> tuple[str, ...]:
+    """Languages this panel genuinely has to buy from the AI.
+
+    A panel wearing the universal selector is Darija-only, so every other
+    language on it is machine-made and worth pre-caching.  A panel that owns a
+    hand-written selector already has reviewed English and French copy, so only
+    the AI-served languages need warming.
+    """
+    children = list(getattr(view, "children", []) or [])
+    if any(isinstance(child, UniversalPanelLanguageSelect) for child in children):
+        return TRANSLATABLE_LANGUAGES
+    return tuple(
+        code for code in TRANSLATABLE_LANGUAGES if code in AI_TRANSLATED_LANGUAGES
+    )
+
+
 def schedule_panel_translation_warmup(
     content: Any,
     embeds: list[Any],
@@ -798,10 +850,15 @@ def schedule_panel_translation_warmup(
         return
 
     async def warm() -> None:
-        # One language at a time.  Firing all five together used to collide
-        # with the member's own live request and trigger 429s, which pushed the
-        # call onto the weakest fallback model and back to untranslated Darija.
-        for language in TRANSLATABLE_LANGUAGES:
+        # A panel that carries its own language selector already ships reviewed
+        # Darija/English/French copy, so warming those three would pay for
+        # translations nobody ever displays.  Only a Darija-only panel wearing
+        # the universal selector needs every language pre-cached.
+        languages = _warmup_languages(view)
+        # One language at a time.  Firing them together used to collide with
+        # the member's own live request and trigger 429s, which pushed the call
+        # onto the weakest fallback model and back to untranslated Darija.
+        for language in languages:
             try:
                 await _translate_texts(source_texts, language)
             except Exception as exc:
