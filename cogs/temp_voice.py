@@ -644,8 +644,20 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             await member.move_to(None, reason=f"Temp room kick by {getattr(actor, 'display_name', actor) or 'owner'}")
         except (discord.Forbidden, discord.HTTPException) as e:
             return False, f"❌ ما قدرتش نخرجو من الروم: {e}"
+    
+        rec = get_temp_voice_acl(channel)
+        note = ""
+        if rec.get("private") and member.id in rec.get("allowed", []):
+            # الروم Private: Kick كيحيد Allow ديالو باش مايقدرش يدخل عاوتاني
+            # حتى الاونر يدير ليه Allow من جديد.
+            rec["allowed"].remove(member.id)
+            save_temp_voice_acl()
+            await apply_temp_voice_member_permissions(
+                channel, member, reason=f"Temp room kick (private) by {getattr(actor, 'display_name', actor) or 'owner'}"
+            )
+            note = " الروم Private، فحيدنا ليه Allow: ماغاديش يقدر يدخل عاوتاني حتى الاونر يدير ليه Allow من جديد."
         await _log_temp_voice_success(channel, member, actor, "Kick from room")
-        return True, f"🚪 {member.mention} خرج من الروم فقط. ما تدارش ليه Block والروم كتبقى باينة ليه."
+        return True, f"🚪 {member.mention} خرج من الروم فقط. ما تدارش ليه Block والروم كتبقى باينة ليه.{note}"
     
     
     async def temp_voice_set_voice_mute(channel: discord.VoiceChannel, member: discord.Member, muted: bool, *, actor=None):
@@ -801,20 +813,37 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                 await apply_temp_voice_member_permissions(channel, m, reason="Temp room privacy ACL resync")
     
         ejected = 0
+        grandfathered = 0
         if private:
-            allowed_ids = {int(x) for x in rec.get("allowed", [])}
+            denied_ids = {int(x) for x in rec.get("denied", [])}
+            blocked_ids = {int(x) for x in rec.get("blocked", [])}
             for current in list(channel.members):
-                if current.bot or current.id == owner_id or current.id in allowed_ids or is_temp_voice_protected_target(current):
+                if current.bot or current.id == owner_id or is_temp_voice_protected_target(current):
                     continue
-                try:
-                    await current.move_to(None, reason="Temp room changed to Private; not Allowed")
-                    ejected += 1
+                if current.id in denied_ids or current.id in blocked_ids:
+                    # Denied/Blocked ما كيبقاوش فالروم حتى ولو كانو فيها من قبل.
                     try:
-                        await current.send(f"🔒 **{channel.name}** ولات Private. الدخول غير بإذن مول الروم.")
+                        await current.move_to(None, reason="Temp room changed to Private; Denied/Blocked")
+                        ejected += 1
+                        try:
+                            await current.send(f"🔒 **{channel.name}** ولات Private. الدخول غير بإذن مول الروم.")
+                        except (discord.Forbidden, discord.HTTPException):
+                            pass
                     except (discord.Forbidden, discord.HTTPException):
                         pass
-                except (discord.Forbidden, discord.HTTPException):
-                    pass
+                    continue
+                # الناس لي كانو ديجا داخلين فالروم من قبل ما تولي Private ما
+                # كيتكيكاوش: كيتزادو فـ Allowed باش يبقاو قادرين يدخلو حتى إلا
+                # قطع عليهم Voice ولا الديسكورد كراش، بحال Owner دار ليهم Allow يدو.
+                if current.id not in rec.setdefault("allowed", []):
+                    rec["allowed"].append(current.id)
+                    grandfathered += 1
+            if grandfathered:
+                save_temp_voice_acl()
+                for uid in [current.id for current in channel.members if not current.bot]:
+                    m = channel.guild.get_member(int(uid))
+                    if m:
+                        await apply_temp_voice_member_permissions(channel, m, reason="Temp room privacy ACL resync (grandfathered)")
     
         await refresh_temp_voice_control_panel(channel, create_if_missing=True)
         await _log_temp_voice_success(
@@ -822,11 +851,11 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             None,
             actor,
             "Private" if private else "Public",
-            f"Members ejected: {ejected}",
+            f"Members ejected: {ejected}, grandfathered (kept + auto-allowed): {grandfathered}",
         )
         if private:
-            return True, (f"🔒 الروم ولات Private: باينة للجميع، الدخول غير لـ Owner + Allowed. خرجنا {ejected} عضو." if ejected
-                          else "🔒 الروم ولات Private: باينة للجميع، الدخول غير لـ Owner + Allowed.")
+            return True, (f"🔒 الروم ولات Private: الناس لي كانو فيها بقاو (تزادو فـ Allowed)، والدخول الجديد غير بإذن مول الروم."
+                          + (f" خرجنا {ejected} عضو Denied/Blocked." if ejected else ""))
         return True, "🔓 الروم ولات Public: الدخول محلول، Denied باقين مايدخلوش وBlocked باقين مخبية عليهم."
     
     
