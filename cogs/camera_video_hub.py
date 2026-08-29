@@ -132,46 +132,17 @@ async def _ensure_hub_channel(guild: "discord.Guild"):
 
 
 def _move_notice_embed(member: "discord.Member") -> "discord.Embed":
-    """Embed ثلاثي اللغة (بحال SERVER_RULES) كيتبعث لكل عضو تهز للهوب بوحدو."""
+    """إشعار بالدارجة فقط — من بغا لغة أخرى كيختارها بروحه من القائمة 🌐 تحت."""
     embed = discord.Embed(
         title="🎥 Video Calls — Camera Room",
-        color=discord.Color.blurple(),
-    )
-    embed.add_field(
-        name="🇲🇦 بالدارجة",
-        value=(
-            f"هاد الروم خاصة غير بـ **Video Calls**. تهزيتي ليها تلقائياً حيت كنتي "
-            f"حالي الكاميرا فروم أخرى.\n"
+        description=(
+            f"{member.mention} هاد الروم خاصة غير بـ **Video Calls**. تهزيتي ليها "
+            f"تلقائياً حيت كنتي حالي الكاميرا فروم أخرى.\n\n"
             f"⚠️ ديسكورد كيسد الكاميرا أوتوماتيك ملي بوت كينقلك — عندك "
             f"**{MOVE_IN_GRACE_SECONDS} ثانية** باش تعاود تحلها يدويا، وإلا "
             f"البوت غايرجعك للروم لي كنتي فيها."
         ),
-        inline=False,
-    )
-    embed.add_field(
-        name="🇬🇧 English",
-        value=(
-            f"This room is reserved for **Video Calls** only. You were moved "
-            f"here automatically because your camera was on in another room.\n"
-            f"⚠️ Discord automatically turns off your camera whenever a bot "
-            f"moves you — you have **{MOVE_IN_GRACE_SECONDS} seconds** to turn "
-            f"it back on manually, otherwise the bot will move you back to "
-            f"your previous room."
-        ),
-        inline=False,
-    )
-    embed.add_field(
-        name="🇫🇷 Français",
-        value=(
-            f"Ce salon est réservé aux **appels vidéo (Video Calls)**. Vous "
-            f"avez été déplacé ici automatiquement car votre caméra était "
-            f"activée dans un autre salon.\n"
-            f"⚠️ Discord désactive automatiquement la caméra lors d'un "
-            f"déplacement par un bot — vous avez **{MOVE_IN_GRACE_SECONDS} "
-            f"secondes** pour la réactiver manuellement, sinon le bot vous "
-            f"renverra dans votre salon précédent."
-        ),
-        inline=False,
+        color=discord.Color.blurple(),
     )
     embed.set_footer(text=f"{member.display_name} • Camera Hub")
     return embed
@@ -276,10 +247,14 @@ class CameraHubCog(commands.Cog):
                             discord.Color.blurple(),
                         )
                         try:
+                            # view فارغة و timeout=None: نظام الترجمة العام ديال
+                            # البانلات (cogs/panel_i18n.py) كيزيد ليها وحدو قائمة
+                            # 🌐 اللغة، وكل عضو يقدر يختار لغتو الخاصة بروحو —
+                            # الرسالة كتبقى (بلا delete_after) بحال باقي البانلات.
                             await hub_channel.send(
                                 content=m.mention,
                                 embed=_move_notice_embed(m),
-                                delete_after=MOVE_IN_GRACE_SECONDS,
+                                view=discord.ui.View(timeout=None),
                                 allowed_mentions=discord.AllowedMentions(users=[m]),
                             )
                         except (discord.Forbidden, discord.HTTPException):
