@@ -31,8 +31,8 @@ import bot_core as core
 core.attach_namespace(globals())
 
 CAMERA_HUB_FILE = os.path.join(DATA_DIR, "camera_hub.json")
-VIDEO_CALLS_CATEGORY_NAME = "video calls"
-VIDEO_HUB_CHANNEL_NAME = "🎥│Camera Room"
+VIDEO_CALLS_CATEGORY_NAME = "Video call's 📹"
+VIDEO_HUB_CHANNEL_NAME = "Camera Room 🎥"
 SCAN_INTERVAL_SECONDS = 5
 
 # مدة سماح بعد كل نقل للهوب (بالثواني) — كتعطي الوقت للعضو يعاود يحل
