@@ -35,7 +35,6 @@ CORE_COGS = [
     "cogs.temp_voice",
     "cogs.temp_music",
     "cogs.voice_runtime",
-    "cogs.camera_room_split",
     "cogs.camera_video_hub",
     "cogs.server_setup",
     "cogs.member_events",
