@@ -131,6 +131,52 @@ async def _ensure_hub_channel(guild: "discord.Guild"):
     return new_channel
 
 
+def _move_notice_embed(member: "discord.Member") -> "discord.Embed":
+    """Embed ثلاثي اللغة (بحال SERVER_RULES) كيتبعث لكل عضو تهز للهوب بوحدو."""
+    embed = discord.Embed(
+        title="🎥 Video Calls — Camera Room",
+        color=discord.Color.blurple(),
+    )
+    embed.add_field(
+        name="🇲🇦 بالدارجة",
+        value=(
+            f"هاد الروم خاصة غير بـ **Video Calls**. تهزيتي ليها تلقائياً حيت كنتي "
+            f"حالي الكاميرا فروم أخرى.\n"
+            f"⚠️ ديسكورد كيسد الكاميرا أوتوماتيك ملي بوت كينقلك — عندك "
+            f"**{MOVE_IN_GRACE_SECONDS} ثانية** باش تعاود تحلها يدويا، وإلا "
+            f"البوت غايرجعك للروم لي كنتي فيها."
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="🇬🇧 English",
+        value=(
+            f"This room is reserved for **Video Calls** only. You were moved "
+            f"here automatically because your camera was on in another room.\n"
+            f"⚠️ Discord automatically turns off your camera whenever a bot "
+            f"moves you — you have **{MOVE_IN_GRACE_SECONDS} seconds** to turn "
+            f"it back on manually, otherwise the bot will move you back to "
+            f"your previous room."
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="🇫🇷 Français",
+        value=(
+            f"Ce salon est réservé aux **appels vidéo (Video Calls)**. Vous "
+            f"avez été déplacé ici automatiquement car votre caméra était "
+            f"activée dans un autre salon.\n"
+            f"⚠️ Discord désactive automatiquement la caméra lors d'un "
+            f"déplacement par un bot — vous avez **{MOVE_IN_GRACE_SECONDS} "
+            f"secondes** pour la réactiver manuellement, sinon le bot vous "
+            f"renverra dans votre salon précédent."
+        ),
+        inline=False,
+    )
+    embed.set_footer(text=f"{member.display_name} • Camera Hub")
+    return embed
+
+
 class CameraHubCog(commands.Cog):
     def __init__(self, bot_instance: commands.Bot):
         self.bot = bot_instance
@@ -231,11 +277,10 @@ class CameraHubCog(commands.Cog):
                         )
                         try:
                             await hub_channel.send(
-                                f"🎥 {m.mention} تم نقلك هنا تلقائياً حيت كنت حالي الكاميرا.\n"
-                                f"-# ديسكورد كيسد الكاميرا أوتوماتيك عند أي نقل بواسطة بوت — "
-                                f"إلا لقيتيها مسدودة دابا، عاود حلها يدويا فـ **{MOVE_IN_GRACE_SECONDS} ثواني** "
-                                f"باش تبقى فهاد الروم، وإلا غادي ترجع للروم اللي كنتي فيها.",
+                                content=m.mention,
+                                embed=_move_notice_embed(m),
                                 delete_after=MOVE_IN_GRACE_SECONDS,
+                                allowed_mentions=discord.AllowedMentions(users=[m]),
                             )
                         except (discord.Forbidden, discord.HTTPException):
                             pass
