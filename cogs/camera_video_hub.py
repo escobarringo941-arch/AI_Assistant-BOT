@@ -13,7 +13,18 @@
    فالـscan اللي كيجي)، عاد كيرجع يتهز لروم الفيديو.
 
 كلشي كيتشيك كل 5 ثواني بنفس اللوب — بسيط ومركزي.
+
+⚠️ ملاحظة مهمة (سبب باگ "كيخرجني وتسد الكاميرا بوحدها"):
+ديسكورد كيسد الكاميرا (self_video) أوتوماتيكياً عند العضو ملي البوت
+كينقلو بالقوة (move_to) من روم لروم — هادشي راجع للـ Discord نفسو، ماشي
+بگ فالبوت. بلا معالجة، السكان اللي جاي (بعد 5 ثواني) كان كيلقى الكاميرا
+مسدودة على طول من بعد النقل وكيرجع العضو تلقائيا (return_from_hub)،
+فكيبان للعضو "دخلت الهوب وطاح مني نيت". الحل: مدة سماح (grace period)
+بعد كل نقل للهوب، ما كنشيكيوش على self_video ديال العضو حتى تعدي، باش
+يقدر يعاود يحل الكاميرا يدويا من بعد النقل بلا ما يتطرد فالسكان الجاي.
 """
+
+import time
 
 import bot_core as core
 
@@ -24,11 +35,19 @@ VIDEO_CALLS_CATEGORY_NAME = "video calls"
 VIDEO_HUB_CHANNEL_NAME = "🎥│Camera Room"
 SCAN_INTERVAL_SECONDS = 5
 
+# مدة سماح بعد كل نقل للهوب (بالثواني) — كتعطي الوقت للعضو يعاود يحل
+# الكاميرا يدويا (ديسكورد كيسدها أوتوماتيك عند move_to)، قبل ما نبداو
+# نشيكيو عليه ونرجعوه. راها بزيادة على الـ SCAN_INTERVAL_SECONDS، ماشي بدالها.
+MOVE_IN_GRACE_SECONDS = 12
+
 # {"enabled": bool, "guilds": {"<guild_id>": {"category_id": int|None, "hub_channel_id": int|None}}}
 camera_hub_config = {"enabled": True, "guilds": {}}
 
 # آخر روم "عادية" (ماشي هوب) شافو فيها كل عضو — باش نقدرو نرجعوه ليها إلا طرد من الهوب
 _last_non_hub_channel = {}  # {member_id: channel_id}
+
+# آخر وقت (monotonic) تهز فيه كل عضو للهوب — باش نطبقو مدة السماح قبل نرجعوه
+_moved_into_hub_at = {}  # {member_id: float}
 
 
 def load_camera_hub_config():
@@ -166,12 +185,25 @@ class CameraHubCog(commands.Cog):
                     _last_non_hub_channel[m.id] = vc.id
 
         # 2) لي كاين فروم الفيديو وماحاليش الكاميرا -> يرجع لفين كان
+        #    (إلا ماعداتش عليه مدة السماح ديال بعد النقل — شوف MOVE_IN_GRACE_SECONDS)
         if hub_channel is not None:
+            now = time.monotonic()
+            hub_member_ids = {m.id for m in hub_channel.members if not m.bot}
+            # تنظيف: نحيدو التوقيتات ديال أي عضو خرج من الهوب (بيدو ولا تطرد)
+            for stale_id in list(_moved_into_hub_at.keys()):
+                if stale_id not in hub_member_ids:
+                    _moved_into_hub_at.pop(stale_id, None)
+
             for m in list(hub_channel.members):
                 if m.bot:
                     continue
-                if not (m.voice and m.voice.self_video):
-                    await self._return_from_hub(m, guild)
+                if m.voice and m.voice.self_video:
+                    continue
+                moved_at = _moved_into_hub_at.get(m.id)
+                if moved_at is not None and (now - moved_at) < MOVE_IN_GRACE_SECONDS:
+                    # مازال فمدة السماح — عطيه الوقت يعاود يحل الكاميرا يدويا
+                    continue
+                await self._return_from_hub(m, guild)
 
         # 3) لي حالي الكاميرا فبراها (وماشي Temp Private) -> يتهز لروم الفيديو
         for vc in guild.voice_channels:
@@ -190,16 +222,28 @@ class CameraHubCog(commands.Cog):
                         hub_id = hub_channel.id
                     try:
                         await m.move_to(hub_channel, reason="Camera Hub: حالي الكاميرا")
+                        _moved_into_hub_at[m.id] = time.monotonic()
                         await log_action(
                             guild,
                             "🎥 Camera Hub — نقل تلقائي",
                             f"**العضو:** {m.mention}\n**من:** {vc.mention}\n**لـ:** {hub_channel.mention}",
                             discord.Color.blurple(),
                         )
+                        try:
+                            await hub_channel.send(
+                                f"🎥 {m.mention} تم نقلك هنا تلقائياً حيت كنت حالي الكاميرا.\n"
+                                f"-# ديسكورد كيسد الكاميرا أوتوماتيك عند أي نقل بواسطة بوت — "
+                                f"إلا لقيتيها مسدودة دابا، عاود حلها يدويا فـ **{MOVE_IN_GRACE_SECONDS} ثواني** "
+                                f"باش تبقى فهاد الروم، وإلا غادي ترجع للروم اللي كنتي فيها.",
+                                delete_after=MOVE_IN_GRACE_SECONDS,
+                            )
+                        except (discord.Forbidden, discord.HTTPException):
+                            pass
                     except (discord.Forbidden, discord.HTTPException):
                         pass
 
     async def _return_from_hub(self, member: "discord.Member", guild: "discord.Guild"):
+        _moved_into_hub_at.pop(member.id, None)
         return_channel_id = _last_non_hub_channel.get(member.id)
         return_channel = guild.get_channel(return_channel_id) if return_channel_id else None
         try:

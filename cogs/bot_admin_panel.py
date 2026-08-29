@@ -2,6 +2,7 @@
 """Unchanged ordered source component: bot_admin_panel."""
 
 from cogs._component_runtime import install_component, uninstall_component
+from cogs import camera_video_hub as _camera_hub_mod
 
 # ORIGINAL SOURCE BEGIN
 if globals().get("_GGMW9_COMPONENT_EXEC", False):
@@ -60,6 +61,15 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
                 f"{_bool_emoji(bot_settings['welcome_card_enabled'])} Welcome Cards\n"
                 f"{_bool_emoji(bot_settings['auto_translate_enabled'])} Auto-Translate | "
                 f"{_bool_emoji(bot_settings['auto_react_enabled'])} Auto-React"
+            ),
+            inline=False
+        )
+        embed.add_field(
+            name="🎥 Camera Hub",
+            value=(
+                f"{_bool_emoji(_camera_hub_mod.camera_hub_config.get('enabled', True))} الحالة | "
+                f"فحص كل **{_camera_hub_mod.SCAN_INTERVAL_SECONDS}**ث | "
+                f"سماح **{_camera_hub_mod.MOVE_IN_GRACE_SECONDS}**ث بعد النقل"
             ),
             inline=False
         )
@@ -323,6 +333,56 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             await self._toggle(interaction, "auto_react_enabled")
     
     
+    # ───────────── Camera Hub ─────────────
+    
+    def _camera_hub_embed(guild: discord.Guild) -> discord.Embed:
+        gstate = _camera_hub_mod._guild_state(guild.id)
+        category = guild.get_channel(gstate.get("category_id")) if gstate.get("category_id") else None
+        hub_channel = guild.get_channel(gstate.get("hub_channel_id")) if gstate.get("hub_channel_id") else None
+        enabled = _camera_hub_mod.camera_hub_config.get("enabled", True)
+        embed = discord.Embed(
+            title="🎥 Camera Hub — تحكم كامل",
+            description=(
+                "أي عضو يحل الكاميرا فأي روم صوتية كيتهز أوتوماتيك لهاد الروم، "
+                "وملي يسدها كيرجع لفين كان."
+            ),
+            color=discord.Color.blurple() if enabled else discord.Color.greyple(),
+            timestamp=datetime.now(),
+        )
+        embed.add_field(name="الحالة", value=_bool_emoji(enabled), inline=True)
+        embed.add_field(name="الفحص كل", value=f"{_camera_hub_mod.SCAN_INTERVAL_SECONDS} ثواني", inline=True)
+        embed.add_field(name="مدة السماح بعد النقل", value=f"{_camera_hub_mod.MOVE_IN_GRACE_SECONDS} ثواني", inline=True)
+        embed.add_field(name="الكاتيگوري", value=category.mention if category else f"غادي تتخلق باسم `{_camera_hub_mod.VIDEO_CALLS_CATEGORY_NAME}`", inline=False)
+        embed.add_field(name="روم الفيديو الحالية", value=hub_channel.mention if hub_channel else "— ماكاينش دابا (كتتخلق أوتوماتيك) —", inline=False)
+        embed.set_footer(text="مدة السماح كتخلي العضو يعاود يحل الكاميرا يدويا بعد النقل بلا ما يتطرد بالغلط.")
+        return embed
+    
+    
+    class CameraHubView(PanelPermissionView):
+        def __init__(self):
+            super().__init__(timeout=300)
+            self.add_item(BackToMainButton())
+    
+        @discord.ui.button(label="تفعيل/تعطيل", emoji="🔌", style=discord.ButtonStyle.primary)
+        async def toggle_enabled(self, interaction: discord.Interaction, button: discord.ui.Button):
+            _camera_hub_mod.camera_hub_config["enabled"] = not _camera_hub_mod.camera_hub_config.get("enabled", True)
+            _camera_hub_mod.save_camera_hub_config()
+            await interaction.response.edit_message(embed=_camera_hub_embed(interaction.guild), view=self)
+    
+        @discord.ui.button(label="امسح الروم الحالية", emoji="🧹", style=discord.ButtonStyle.danger)
+        async def reset_hub_room(self, interaction: discord.Interaction, button: discord.ui.Button):
+            gstate = _camera_hub_mod._guild_state(interaction.guild.id)
+            hub_channel = interaction.guild.get_channel(gstate.get("hub_channel_id")) if gstate.get("hub_channel_id") else None
+            if hub_channel is not None:
+                try:
+                    await hub_channel.delete(reason="Camera Hub: مسح يدوي من الـ Owner Panel")
+                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                    pass
+            gstate["hub_channel_id"] = None
+            _camera_hub_mod.save_camera_hub_config()
+            await interaction.response.edit_message(embed=_camera_hub_embed(interaction.guild), view=self)
+    
+    
     # ───────────── اللوحة الرئيسية ─────────────
     
     class MainPanelView(PanelPermissionView):
@@ -348,6 +408,10 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         @discord.ui.button(label="XP Panel", emoji="📊", style=discord.ButtonStyle.success, row=1)
         async def open_xp(self, interaction: discord.Interaction, button: discord.ui.Button):
             await interaction.response.edit_message(embed=_xp_panel_embed(), view=XPPanelView())
+    
+        @discord.ui.button(label="Camera Hub", emoji="🎥", style=discord.ButtonStyle.success, row=1)
+        async def open_camera_hub(self, interaction: discord.Interaction, button: discord.ui.Button):
+            await interaction.response.edit_message(embed=_camera_hub_embed(interaction.guild), view=CameraHubView())
     
     
     @bot.command(name="botpanel", hidden=True)
