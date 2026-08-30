@@ -1,16 +1,21 @@
 # -*- coding: utf-8 -*-
-"""نظام: Camera Hub — كاتيگوري "video calls" + روم Temp تلقائية لي حاليين الكاميرا.
+"""نظام: Camera Hub — كاتيگوري "video calls" + روم دخول (Gateway) + روم Temp ديال الكاميرا.
 
-الفكرة الكاملة (كيفما تصاوبت):
+الفكرة الكاملة (كيفما تصاوبت من جديد):
 1) البوت كيتأكد أن كاينة كاتيگوري سميتها "video calls" (كيخلقها إلا ماكانتش).
-2) كل 5 ثواني، البوت كيشيكي على السيرفر كامل: شكون حالي الكاميرا (self_video)
-   فأي روم صوتي — ماعدا الرومات Temp اللي مدارين Private من طرف مولاهم.
-3) لي لقاه حالي الكاميرا، كيهزو ويدخلو لروم Temp واحدة كتحل وسط كاتيگوري
-   "video calls" (كتتخلق أول مرة تلقاها، وكتتمسح ملي تبقى فارغة).
-4) هاد الروم مخصصة غير للي حاليين الكاميرا: لي دخلها وهو ماحاليش الكاميرا
-   (سواء دخل بيدو ولا تبقات محلولة عندو من قبل)، البوت كيرجعو تلقائيا
-   للروم اللي كان فيها قبل ما يدخل. ملي يحل الكاميرا (وياكد منها البوت
-   فالـscan اللي كيجي)، عاد كيرجع يتهز لروم الفيديو.
+2) داخل هاد الكاتيگوري، كاينة روم ثابتة "دخول" (Gateway) — سميتها
+   VIDEO_GATEWAY_CHANNEL_NAME — فيها غير رسالة واحدة (بالدارجة + قائمة
+   🌐 اللغة تحتها) كتشرح بحال-اش تحل الكاميرا. هاد الروم مقفولة على
+   الكتابة (send_messages=False لـ @everyone) باش تبقى غير فيها الرسالة.
+3) ماشي لي حل الكاميرا فأي روم كيفما كانت كيتهز — غير لي حلها **وهو
+   داخل روم الدخول (Gateway)** هو اللي كيتهز أوتوماتيك لروم Temp ديال
+   الكاميرا (تتخلق أول مرة تلقاها وسط نفس الكاتيگوري، وكتتمسح ملي تبقى
+   فارغة) — باش يلقى روحو مع باقي الناس اللي حاليين الكاميرا قبلو.
+4) هاد الروم ديال الكاميرا (الهوب) مخصصة غير للي حاليين الكاميرا: لي
+   دخلها (بيدو، ولا تطردت منو الكاميرا) وهو ماحاليش الكاميرا، البوت
+   كيرجعو تلقائيا للروم اللي كان فيها قبل ما يدخل (غالبا روم الدخول).
+   ملي يحل الكاميرا (وياكد منها البوت فالـscan اللي كيجي)، عاد كيرجع
+   يتهز لروم الكاميرا.
 
 كلشي كيتشيك كل 5 ثواني بنفس اللوب — بسيط ومركزي.
 
@@ -33,6 +38,9 @@ core.attach_namespace(globals())
 CAMERA_HUB_FILE = os.path.join(DATA_DIR, "camera_hub.json")
 VIDEO_CALLS_CATEGORY_NAME = "Video call's 📹"
 VIDEO_HUB_CHANNEL_NAME = "Camera Room 🎥"
+# روم الدخول: هي الوحيدة اللي كيتشيك فيها البوت شكون حل الكاميرا. حل الكاميرا
+# فأي روم أخرى ماكيديرش والو — خاصو يدخل من هنا أولا.
+VIDEO_GATEWAY_CHANNEL_NAME = "🎥 join for active camera"
 SCAN_INTERVAL_SECONDS = 5
 
 # مدة سماح بعد كل نقل للهوب (بالثواني) — كتعطي الوقت للعضو يعاود يحل
@@ -48,6 +56,10 @@ _last_non_hub_channel = {}  # {member_id: channel_id}
 
 # آخر وقت (monotonic) تهز فيه كل عضو للهوب — باش نطبقو مدة السماح قبل نرجعوه
 _moved_into_hub_at = {}  # {member_id: float}
+
+# روم الدخول اللي تأكدنا منها هاد الجلسة (channel_id) — باش ماندوزوش نشيكيو
+# على الرسالة/الصلاحيات ديالها فكل scan (كل 5 ثواني)، غير مرة وحدة بالكافي.
+_gateway_verified = set()
 
 
 def load_camera_hub_config():
@@ -77,7 +89,18 @@ load_camera_hub_config()
 
 def _guild_state(guild_id: int) -> dict:
     guilds = camera_hub_config.setdefault("guilds", {})
-    return guilds.setdefault(str(guild_id), {"category_id": None, "hub_channel_id": None})
+    gstate = guilds.setdefault(
+        str(guild_id),
+        {
+            "category_id": None,
+            "hub_channel_id": None,
+            "gateway_channel_id": None,
+            "gateway_message_id": None,
+        },
+    )
+    gstate.setdefault("gateway_channel_id", None)
+    gstate.setdefault("gateway_message_id", None)
+    return gstate
 
 
 def _is_private_temp_room(channel) -> bool:
@@ -131,6 +154,126 @@ async def _ensure_hub_channel(guild: "discord.Guild"):
     return new_channel
 
 
+def _gateway_overwrites(guild: "discord.Guild") -> dict:
+    """حتى حد ميقدرش يكتب فروم الدخول — كتبقى فيها غير رسالة الشرح."""
+    overwrites = {
+        guild.default_role: discord.PermissionOverwrite(
+            view_channel=True, connect=True, speak=True,
+            send_messages=False, add_reactions=False, create_public_threads=False,
+        ),
+    }
+    if guild.me:
+        overwrites[guild.me] = discord.PermissionOverwrite(
+            view_channel=True, connect=True, send_messages=True,
+            embed_links=True, read_message_history=True, manage_messages=True,
+        )
+    return overwrites
+
+
+async def _ensure_gateway_channel(guild: "discord.Guild", category=None):
+    """كيرجع روم الدخول (Gateway) الحالية، ولا كيخلق وحدة جديدة وسط كاتيگوري video calls."""
+    gstate = _guild_state(guild.id)
+
+    gateway_id = gstate.get("gateway_channel_id")
+    if gateway_id:
+        existing = guild.get_channel(gateway_id)
+        if isinstance(existing, discord.VoiceChannel):
+            return existing
+        gstate["gateway_channel_id"] = None
+        gstate["gateway_message_id"] = None
+
+    if category is None:
+        category = await _ensure_category(guild)
+        if category is None:
+            return None
+    gstate["category_id"] = category.id
+
+    try:
+        new_channel = await guild.create_voice_channel(
+            VIDEO_GATEWAY_CHANNEL_NAME,
+            category=category,
+            position=0,
+            overwrites=_gateway_overwrites(guild),
+            reason="Camera Hub: إنشاء روم الدخول (Gateway)",
+        )
+    except (discord.Forbidden, discord.HTTPException) as e:
+        print(f"[CAMERA-HUB] ما قدرتش نخلق روم الدخول فـ {guild}: {e}")
+        return None
+
+    gstate["gateway_channel_id"] = new_channel.id
+    gstate["gateway_message_id"] = None
+    save_camera_hub_config()
+    return new_channel
+
+
+def _gateway_instructions_embed() -> "discord.Embed":
+    """رسالة ثابتة بالدارجة كتشرح بحال-اش تحل الكاميرا. من بغا لغة أخرى
+    كيختارها بروحه من قائمة 🌐 اللغة اللي كتزادها panel_i18n تحت هاد الرسالة."""
+    embed = discord.Embed(
+        title="🎥 دخل هنا باش تفعل الكاميرا",
+        description=(
+            "مرحبا بيك 👋 هاد الروم كتخدم غير باش تنضم للناس اللي حاليين "
+            "الكاميرا ديالهم فـ **Video Calls**.\n\n"
+            "**كيفاش تخدم:**\n"
+            "1️⃣ راك دايرها من دابا.\n"
+            "2️⃣ حل الكاميرا ديالك من ديسكورد (🎥 فتحت، ولا من الإعدادات).\n"
+            "3️⃣ من بعد شي ثواني قليلة البوت غايهزك أوتوماتيك لروم الكاميرا، "
+            "فين كاينين اللي حاليين كاميراتهم قبلك.\n\n"
+            "⚠️ ماشي مسموح تكتب هنا — هاد الروم بقات غير للتوضيح والدخول.\n"
+            "إلا سديتي الكاميرا من بعد، البوت غايرجعك للروم لي كنتي فيها."
+        ),
+        color=discord.Color.blurple(),
+    )
+    embed.set_footer(text="Camera Hub • اختار لغتك 🌐 من تحت")
+    return embed
+
+
+async def _ensure_gateway_message(channel: "discord.VoiceChannel", gstate: dict):
+    """كيتأكد أن رسالة الشرح كاينة فروم الدخول — كيصاوبها إلا ماكانتش
+    (أول مرة، ولا إلا تحيدات بالغلط). ماكيديرش هاد التأكد كل 5 ثواني، غير
+    مرة وحدة فهاد الجلسة (شوف _gateway_verified)."""
+    if channel.id in _gateway_verified:
+        return
+
+    message_id = gstate.get("gateway_message_id")
+    if message_id:
+        try:
+            await channel.fetch_message(message_id)
+            _gateway_verified.add(channel.id)
+            return
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            pass
+
+    try:
+        # view فارغة و timeout=None: نظام الترجمة العام ديال البانلات
+        # (cogs/panel_i18n.py) كيزيد ليها وحدو قائمة 🌐 اللغة تحت الرسالة،
+        # وكل عضو يقدر يختار لغتو الخاصة بروحو.
+        msg = await channel.send(
+            embed=_gateway_instructions_embed(),
+            view=discord.ui.View(timeout=None),
+        )
+    except (discord.Forbidden, discord.HTTPException) as e:
+        print(f"[CAMERA-HUB] ما قدرتش نصيفط رسالة روم الدخول: {e}")
+        return
+
+    gstate["gateway_message_id"] = msg.id
+    save_camera_hub_config()
+    _gateway_verified.add(channel.id)
+
+
+async def resend_gateway_message(guild: "discord.Guild"):
+    """كيعاود يصيفط رسالة الشرح فروم الدخول من الصفر — كتستعملها لوحة
+    تحكم الـ Owner Panel (زر Camera Hub)."""
+    gstate = _guild_state(guild.id)
+    gateway_channel = await _ensure_gateway_channel(guild)
+    if gateway_channel is None:
+        return None
+    gstate["gateway_message_id"] = None
+    _gateway_verified.discard(gateway_channel.id)
+    await _ensure_gateway_message(gateway_channel, gstate)
+    return gateway_channel
+
+
 def _move_notice_embed(member: "discord.Member") -> "discord.Embed":
     """إشعار بالدارجة فقط — من بغا لغة أخرى كيختارها بروحه من القائمة 🌐 تحت."""
     embed = discord.Embed(
@@ -173,6 +316,11 @@ class CameraHubCog(commands.Cog):
 
     async def _scan_guild(self, guild: "discord.Guild"):
         gstate = _guild_state(guild.id)
+
+        # روم الدخول (Gateway) — ثابتة، ماكتمسحش، وفيها رسالة الشرح بلا كتابة.
+        gateway_channel = await _ensure_gateway_channel(guild)
+        if gateway_channel is not None:
+            await _ensure_gateway_message(gateway_channel, gstate)
 
         hub_channel = None
         hub_id = gstate.get("hub_channel_id")
@@ -222,13 +370,11 @@ class CameraHubCog(commands.Cog):
                     continue
                 await self._return_from_hub(m, guild)
 
-        # 3) لي حالي الكاميرا فبراها (وماشي Temp Private) -> يتهز لروم الفيديو
-        for vc in guild.voice_channels:
-            if hub_id and vc.id == hub_id:
-                continue
-            if _is_private_temp_room(vc):
-                continue
-            for m in list(vc.members):
+        # 3) لي حالي الكاميرا وهو داخل روم الدخول (Gateway) بالذات -> يتهز
+        #    لروم الكاميرا. حل الكاميرا فأي روم أخرى ماكيديرش والو — خاصو
+        #    يدخل لروم الدخول أولا باش يتشيكيا عليه.
+        if gateway_channel is not None:
+            for m in list(gateway_channel.members):
                 if m.bot:
                     continue
                 if m.voice and m.voice.self_video:
@@ -238,12 +384,12 @@ class CameraHubCog(commands.Cog):
                             return
                         hub_id = hub_channel.id
                     try:
-                        await m.move_to(hub_channel, reason="Camera Hub: حالي الكاميرا")
+                        await m.move_to(hub_channel, reason="Camera Hub: حالي الكاميرا فروم الدخول")
                         _moved_into_hub_at[m.id] = time.monotonic()
                         await log_action(
                             guild,
                             "🎥 Camera Hub — نقل تلقائي",
-                            f"**العضو:** {m.mention}\n**من:** {vc.mention}\n**لـ:** {hub_channel.mention}",
+                            f"**العضو:** {m.mention}\n**من:** {gateway_channel.mention}\n**لـ:** {hub_channel.mention}",
                             discord.Color.blurple(),
                         )
                         try:
@@ -275,23 +421,18 @@ class CameraHubCog(commands.Cog):
             pass
 
     # ═══════════════════ أوامر تحكم بسيطة ═══════════════════
+    # ملاحظة: التفاصيل الكاملة (الحالة، روم الدخول، إعادة صيفط الرسالة...)
+    # كاينة فـ لوحة تحكم الـ Owner (bot_admin_panel.py -> زر "Camera Hub").
+    # هنا خلينا غير أمر سريع للتفعيل/التوقيف.
     @commands.hybrid_group(name="camerahub", description="إعدادات Camera Hub")
     @commands.has_permissions(manage_channels=True)
     async def camerahub_group(self, ctx):
         if ctx.invoked_subcommand is None:
-            await self.camerahub_status.callback(self, ctx)
-
-    @camerahub_group.command(name="status", description="عرض حالة Camera Hub")
-    async def camerahub_status(self, ctx):
-        gstate = _guild_state(ctx.guild.id)
-        category = ctx.guild.get_channel(gstate.get("category_id")) if gstate.get("category_id") else None
-        hub_channel = ctx.guild.get_channel(gstate.get("hub_channel_id")) if gstate.get("hub_channel_id") else None
-        embed = discord.Embed(title="🎥 Camera Hub — الحالة", color=discord.Color.blurple())
-        embed.add_field(name="النظام", value="🟢 مفعول" if camera_hub_config.get("enabled", True) else "🔴 موقّف", inline=True)
-        embed.add_field(name="الفحص كل", value=f"{SCAN_INTERVAL_SECONDS} ثواني", inline=True)
-        embed.add_field(name="الكاتيگوري", value=category.mention if category else f"غادي تتخلق باسم `{VIDEO_CALLS_CATEGORY_NAME}`", inline=False)
-        embed.add_field(name="روم الفيديو الحالية", value=hub_channel.mention if hub_channel else "— ماكاينش دابا (كتتخلق أوتوماتيك) —", inline=False)
-        await ctx.send(embed=embed)
+            await ctx.send(
+                "ℹ️ استعمل `/camerahub toggle` باش تفعّل/توقّف النظام. "
+                "التفاصيل الكاملة (الحالة، روم الدخول، إعادة صيفط الرسالة...) "
+                "كاينة فـ لوحة تحكم الـ Owner Panel."
+            )
 
     @camerahub_group.command(name="toggle", description="فعّل/وقّف نظام Camera Hub")
     async def camerahub_toggle(self, ctx):
