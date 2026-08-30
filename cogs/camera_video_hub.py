@@ -38,7 +38,7 @@ SCAN_INTERVAL_SECONDS = 5
 # مدة سماح بعد كل نقل للهوب (بالثواني) — كتعطي الوقت للعضو يعاود يحل
 # الكاميرا يدويا (ديسكورد كيسدها أوتوماتيك عند move_to)، قبل ما نبداو
 # نشيكيو عليه ونرجعوه. راها بزيادة على الـ SCAN_INTERVAL_SECONDS، ماشي بدالها.
-MOVE_IN_GRACE_SECONDS = 20
+MOVE_IN_GRACE_SECONDS = 10
 
 # {"enabled": bool, "guilds": {"<guild_id>": {"category_id": int|None, "hub_channel_id": int|None}}}
 camera_hub_config = {"enabled": True, "guilds": {}}
