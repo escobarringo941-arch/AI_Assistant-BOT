@@ -334,6 +334,16 @@ class CameraHubCog(commands.Cog):
         self.bot = bot_instance
         self.camera_scan_loop.start()
 
+    async def cog_load(self):
+        # مهم: رسالة روم الدخول (Gateway) كتصيفط مرة وحدة وكتبقى هي هي عبر
+        # الوقت (_ensure_gateway_message ماكيعاودش يصيفطها إلا تحيدات) — يعني
+        # الـ View (قائمة 🌐 اللغة) ديالها خاصها تتسجل هنا بـ bot.add_view()
+        # باش تبقى خدامة حتى بعد ريستارت البوت. بلا هاد التسجيل، الرسالة
+        # القديمة كتبقى ظاهرة فديسكورد ولكن أي كليك على القائمة ديال اللغة
+        # ماكيوصلش لحتى handler (custom_id ماشي مسجل فهاد الـ process الجديد)
+        # فيبان للعضو "اللغة ماخدامش" — هادو هو السبب ديال البوگ المبلغ عنه.
+        self.bot.add_view(panel_language_view("camera_gateway_instructions"))
+
     def cog_unload(self):
         self.camera_scan_loop.cancel()
 
