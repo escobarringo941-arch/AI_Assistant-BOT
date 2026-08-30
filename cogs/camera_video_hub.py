@@ -5,8 +5,11 @@
 1) البوت كيتأكد أن كاينة كاتيگوري سميتها "video calls" (كيخلقها إلا ماكانتش).
 2) داخل هاد الكاتيگوري، كاينة روم ثابتة "دخول" (Gateway) — سميتها
    VIDEO_GATEWAY_CHANNEL_NAME — فيها غير رسالة واحدة (بالدارجة + قائمة
-   🌐 اللغة تحتها) كتشرح بحال-اش تحل الكاميرا. هاد الروم مقفولة على
-   الكتابة (send_messages=False لـ @everyone) باش تبقى غير فيها الرسالة.
+   🌐 اللغة تحتها) كتشرح بحال-اش تحل الكاميرا. ديسكورد كيطلب صلاحية
+   Send Messages باش تخدم القوائم/الأزرار (components) — فالحقيقة
+   الروم مسموح فيها الكتابة تقنياً، ولكن أي رسالة كتبها شي حد (ماشي
+   البوت) كتتمسح مباشرة (on_message listener) — فالنتيجة كتبقى الروم
+   نظيفة غير فيها رسالة الشرح، وفنفس الوقت قائمة 🌐 اللغة خدامة.
 3) ماشي لي حل الكاميرا فأي روم كيفما كانت كيتهز — غير لي حلها **وهو
    داخل روم الدخول (Gateway)** هو اللي كيتهز أوتوماتيك لروم Temp ديال
    الكاميرا (تتخلق أول مرة تلقاها وسط نفس الكاتيگوري، وكتتمسح ملي تبقى
@@ -16,6 +19,12 @@
    كيرجعو تلقائيا للروم اللي كان فيها قبل ما يدخل (غالبا روم الدخول).
    ملي يحل الكاميرا (وياكد منها البوت فالـscan اللي كيجي)، عاد كيرجع
    يتهز لروم الكاميرا.
+5) إشعار النقل (بحال-اش تحل الكاميرا ديسكورد سداها أوتوماتيك، وعندك
+   مدة سماح باش تعاود تحلها) كيتصيفط فـ **DM خاص بالعضو** — ماشي فروم
+   الكاميرا — باش ما يبقاش الروم كيتعمر برسائل بحال كل عضو حل الكاميرا
+   قبلو. فالـDM كاين زر "تجاهل ❌" باش يمسح الرسالة، وقائمة 🌐 اللغة.
+   إلا كانت الـDM مسدودة عند العضو، الإشعار غير كيتقرا (ماكيتصيفطش،
+   بلا ما يوقف والو من العملية).
 
 كلشي كيتشيك كل 5 ثواني بنفس اللوب — بسيط ومركزي.
 
@@ -34,6 +43,11 @@ import time
 import bot_core as core
 
 core.attach_namespace(globals())
+
+# نستعملو الدوال ديال panel_i18n مباشرة (بحال باقي البانلات فالبوت، شوف
+# cogs/prison.py) عوض ما نعتمدو غير على الـ "auto-attach" العام — هادشي
+# أضمن وخاصة فروم صوتية فيها صلاحيات خاصة.
+from cogs.panel_i18n import attach_panel_language, panel_language_view
 
 CAMERA_HUB_FILE = os.path.join(DATA_DIR, "camera_hub.json")
 VIDEO_CALLS_CATEGORY_NAME = "Video call's 📹"
@@ -155,11 +169,15 @@ async def _ensure_hub_channel(guild: "discord.Guild"):
 
 
 def _gateway_overwrites(guild: "discord.Guild") -> dict:
-    """حتى حد ميقدرش يكتب فروم الدخول — كتبقى فيها غير رسالة الشرح."""
+    """@everyone خاصو يقدر يستعمل القائمة ديال 🌐 اللغة تحت رسالة الشرح —
+    وديسكورد كيطلب صلاحية Send Messages باش تخدم الـ components (قوائم/
+    أزرار)، حتى ملي الرسالة ماشي ديالو. فهاد الحالة سيبنا send_messages=True،
+    وعوضها كنمسحو أوتوماتيك أي رسالة كتبها شي حد (شوف on_message listener
+    فـ CameraHubCog) — كتبقى الروم نظيفة غير فيها رسالة البوت."""
     overwrites = {
         guild.default_role: discord.PermissionOverwrite(
             view_channel=True, connect=True, speak=True,
-            send_messages=False, add_reactions=False, create_public_threads=False,
+            send_messages=True, add_reactions=False, create_public_threads=False,
         ),
     }
     if guild.me:
@@ -245,12 +263,11 @@ async def _ensure_gateway_message(channel: "discord.VoiceChannel", gstate: dict)
             pass
 
     try:
-        # view فارغة و timeout=None: نظام الترجمة العام ديال البانلات
-        # (cogs/panel_i18n.py) كيزيد ليها وحدو قائمة 🌐 اللغة تحت الرسالة،
-        # وكل عضو يقدر يختار لغتو الخاصة بروحو.
+        # كنستعملو panel_language_view بحال باقي البانلات (شوف الاستيراد
+        # فراس الملف) — كتصاوب View فيها قائمة 🌐 اللغة بشكل مضمون.
         msg = await channel.send(
             embed=_gateway_instructions_embed(),
-            view=discord.ui.View(timeout=None),
+            view=panel_language_view("camera_gateway_instructions"),
         )
     except (discord.Forbidden, discord.HTTPException) as e:
         print(f"[CAMERA-HUB] ما قدرتش نصيفط رسالة روم الدخول: {e}")
@@ -274,13 +291,15 @@ async def resend_gateway_message(guild: "discord.Guild"):
     return gateway_channel
 
 
-def _move_notice_embed(member: "discord.Member") -> "discord.Embed":
-    """إشعار بالدارجة فقط — من بغا لغة أخرى كيختارها بروحه من القائمة 🌐 تحت."""
+def _move_notice_embed(member: "discord.Member", guild: "discord.Guild") -> "discord.Embed":
+    """إشعار بالدارجة فقط — من بغا لغة أخرى كيختارها بروحه من القائمة 🌐 تحت.
+    كيتصيفط فـ DM خاص بالعضو (ماشي فروم الكاميرا) باش يبقى خاص بيه وماشي
+    ظاهر لكلشي."""
     embed = discord.Embed(
         title="🎥 Video Calls — Camera Room",
         description=(
-            f"{member.mention} هاد الروم خاصة غير بـ **Video Calls**. تهزيتي ليها "
-            f"تلقائياً حيت كنتي حالي الكاميرا فروم أخرى.\n\n"
+            f"تهزيتي أوتوماتيك لروم الكاميرا فـ **{guild.name}** حيت كنتي "
+            f"حالي الكاميرا وأنت داخل روم الدخول.\n\n"
             f"⚠️ ديسكورد كيسد الكاميرا أوتوماتيك ملي بوت كينقلك — عندك "
             f"**{MOVE_IN_GRACE_SECONDS} ثانية** باش تعاود تحلها يدويا، وإلا "
             f"البوت غايرجعك للروم لي كنتي فيها."
@@ -291,6 +310,25 @@ def _move_notice_embed(member: "discord.Member") -> "discord.Embed":
     return embed
 
 
+class DismissNoticeView(discord.ui.View):
+    """زر تجاهل ❌ تحت إشعار النقل ديال الـ DM — كيمسح الرسالة."""
+
+    def __init__(self, member_id: int):
+        super().__init__(timeout=None)
+        self.member_id = member_id
+
+    @discord.ui.button(label="تجاهل", emoji="❌", style=discord.ButtonStyle.secondary)
+    async def dismiss(self, interaction: discord.Interaction, button: discord.ui.Button):
+        try:
+            await interaction.response.defer()
+        except (discord.NotFound, discord.HTTPException):
+            pass
+        try:
+            await interaction.message.delete()
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            pass
+
+
 class CameraHubCog(commands.Cog):
     def __init__(self, bot_instance: commands.Bot):
         self.bot = bot_instance
@@ -298,6 +336,21 @@ class CameraHubCog(commands.Cog):
 
     def cog_unload(self):
         self.camera_scan_loop.cancel()
+
+    # روم الدخول (Gateway) مسموح فيها الكتابة تقنياً (خاصها Send Messages
+    # باش تخدم قائمة 🌐 اللغة)، فكنمسحو مباشرة أي رسالة كتبها شي حد ماشي
+    # البوت — كتبقى الروم نظيفة غير فيها رسالة الشرح.
+    @commands.Cog.listener("on_message")
+    async def _guard_gateway_channel(self, message: "discord.Message"):
+        if message.author.bot or message.guild is None:
+            return
+        gstate = _guild_state(message.guild.id)
+        if message.channel.id != gstate.get("gateway_channel_id"):
+            return
+        try:
+            await message.delete()
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            pass
 
     # ═══════════════════ اللوب الرئيسي: كل 5 ثواني ═══════════════════
     @tasks.loop(seconds=SCAN_INTERVAL_SECONDS)
@@ -393,17 +446,19 @@ class CameraHubCog(commands.Cog):
                             discord.Color.blurple(),
                         )
                         try:
-                            # view فارغة و timeout=None: نظام الترجمة العام ديال
-                            # البانلات (cogs/panel_i18n.py) كيزيد ليها وحدو قائمة
-                            # 🌐 اللغة، وكل عضو يقدر يختار لغتو الخاصة بروحو —
-                            # الرسالة كتبقى (بلا delete_after) بحال باقي البانلات.
-                            await hub_channel.send(
-                                content=m.mention,
-                                embed=_move_notice_embed(m),
-                                view=discord.ui.View(timeout=None),
-                                allowed_mentions=discord.AllowedMentions(users=[m]),
+                            # كنصيفطو الإشعار فـ DM خاص بالعضو (ماشي فروم
+                            # الكاميرا) باش يبقى خاص بيه وماشي ظاهر لكلشي.
+                            # attach_panel_language: قائمة 🌐 اللغة مضمونة،
+                            # وزر "تجاهل ❌" باش يمسح الرسالة من عندو.
+                            await m.send(
+                                embed=_move_notice_embed(m, guild),
+                                view=attach_panel_language(
+                                    DismissNoticeView(m.id), "camera_hub_move_notice"
+                                ),
                             )
                         except (discord.Forbidden, discord.HTTPException):
+                            # الـDM مسدودة عند العضو — ماكاين حل، غير نكملو
+                            # بلا إشعار (النقل ديال الكاميرا نفسو ماشي متأثر).
                             pass
                     except (discord.Forbidden, discord.HTTPException):
                         pass
