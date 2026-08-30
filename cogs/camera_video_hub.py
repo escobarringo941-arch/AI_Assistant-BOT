@@ -294,18 +294,36 @@ async def resend_gateway_message(guild: "discord.Guild"):
 def _move_notice_embed(member: "discord.Member", guild: "discord.Guild") -> "discord.Embed":
     """إشعار بالدارجة فقط — من بغا لغة أخرى كيختارها بروحه من القائمة 🌐 تحت.
     كيتصيفط فـ DM خاص بالعضو (ماشي فروم الكاميرا) باش يبقى خاص بيه وماشي
-    ظاهر لكلشي."""
+    ظاهر لكلشي — بهاد الشكل ماكاينش تراكم رسائل فحتى روم، كل واحد كيتوصل
+    برسالة ديالو بوحدو."""
     embed = discord.Embed(
         title="🎥 Video Calls — Camera Room",
         description=(
-            f"تهزيتي أوتوماتيك لروم الكاميرا فـ **{guild.name}** حيت كنتي "
-            f"حالي الكاميرا وأنت داخل روم الدخول.\n\n"
+            f"{member.mention} تهزيتي أوتوماتيك لروم الكاميرا فـ **{guild.name}** "
+            f"حيت كنتي حالي الكاميرا وأنت داخل روم الدخول.\n\n"
             f"⚠️ ديسكورد كيسد الكاميرا أوتوماتيك ملي بوت كينقلك — عندك "
             f"**{MOVE_IN_GRACE_SECONDS} ثانية** باش تعاود تحلها يدويا، وإلا "
             f"البوت غايرجعك للروم لي كنتي فيها."
         ),
         color=discord.Color.blurple(),
     )
+    embed.add_field(
+        name="📸 كيفاش تعاود تحل الكاميرا؟",
+        value=(
+            "1️⃣ داخل المكالمة: دوز على أيقونة **🎥 الكاميرا** فشريط التحكم "
+            "(تحت) وضغط عليها باش تحلها.\n"
+            "2️⃣ ولا من الإعدادات: **⚙️ إعدادات ديسكورد → صوت وفيديو 🎙️** "
+            "وتأكد الكاميرا الصحيحة مختارة، من بعد رجع ضغط على أيقونة "
+            "الكاميرا.\n"
+            "3️⃣ ملي تحلها فالوقت، البوت غايهزك تلقائياً لروم الكاميرا فالسكان "
+            "الجاي (كل 5 ثواني)."
+        ),
+        inline=False,
+    )
+    try:
+        embed.set_thumbnail(url=member.display_avatar.url)
+    except Exception:
+        pass
     embed.set_footer(text=f"{member.display_name} • Camera Hub")
     return embed
 
