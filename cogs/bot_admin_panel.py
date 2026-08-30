@@ -338,13 +338,15 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
     def _camera_hub_embed(guild: discord.Guild) -> discord.Embed:
         gstate = _camera_hub_mod._guild_state(guild.id)
         category = guild.get_channel(gstate.get("category_id")) if gstate.get("category_id") else None
+        gateway_channel = guild.get_channel(gstate.get("gateway_channel_id")) if gstate.get("gateway_channel_id") else None
         hub_channel = guild.get_channel(gstate.get("hub_channel_id")) if gstate.get("hub_channel_id") else None
         enabled = _camera_hub_mod.camera_hub_config.get("enabled", True)
         embed = discord.Embed(
             title="🎥 Camera Hub — تحكم كامل",
             description=(
-                "أي عضو يحل الكاميرا فأي روم صوتية كيتهز أوتوماتيك لهاد الروم، "
-                "وملي يسدها كيرجع لفين كان."
+                "غير العضو اللي داخل روم **الدخول** (Gateway) وحل الكاميرا هو اللي "
+                "كيتهز أوتوماتيك لروم الكاميرا. حل الكاميرا فأي روم أخرى ماكيديرش والو. "
+                "ملي يسد الكاميرا، كيرجع لفين كان."
             ),
             color=discord.Color.blurple() if enabled else discord.Color.greyple(),
             timestamp=datetime.now(),
@@ -353,7 +355,8 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
         embed.add_field(name="الفحص كل", value=f"{_camera_hub_mod.SCAN_INTERVAL_SECONDS} ثواني", inline=True)
         embed.add_field(name="مدة السماح بعد النقل", value=f"{_camera_hub_mod.MOVE_IN_GRACE_SECONDS} ثواني", inline=True)
         embed.add_field(name="الكاتيگوري", value=category.mention if category else f"غادي تتخلق باسم `{_camera_hub_mod.VIDEO_CALLS_CATEGORY_NAME}`", inline=False)
-        embed.add_field(name="روم الفيديو الحالية", value=hub_channel.mention if hub_channel else "— ماكاينش دابا (كتتخلق أوتوماتيك) —", inline=False)
+        embed.add_field(name="روم الدخول (Gateway)", value=gateway_channel.mention if gateway_channel else "— ماكاينش دابا (كتتخلق أوتوماتيك) —", inline=False)
+        embed.add_field(name="روم الكاميرا الحالية", value=hub_channel.mention if hub_channel else "— ماكاينش دابا (كتتخلق أوتوماتيك) —", inline=False)
         embed.set_footer(text="مدة السماح كتخلي العضو يعاود يحل الكاميرا يدويا بعد النقل بلا ما يتطرد بالغلط.")
         return embed
     
@@ -381,6 +384,15 @@ if globals().get("_GGMW9_COMPONENT_EXEC", False):
             gstate["hub_channel_id"] = None
             _camera_hub_mod.save_camera_hub_config()
             await interaction.response.edit_message(embed=_camera_hub_embed(interaction.guild), view=self)
+    
+        @discord.ui.button(label="عاود صيفط رسالة الدخول", emoji="📨", style=discord.ButtonStyle.secondary)
+        async def resend_gateway(self, interaction: discord.Interaction, button: discord.ui.Button):
+            await interaction.response.defer()
+            gateway_channel = await _camera_hub_mod.resend_gateway_message(interaction.guild)
+            if gateway_channel is None:
+                await interaction.followup.send("❌ ما قدرتش نلقى/نصاوب روم الدخول.", ephemeral=True)
+                return
+            await interaction.edit_original_response(embed=_camera_hub_embed(interaction.guild), view=self)
     
     
     # ───────────── اللوحة الرئيسية ─────────────
