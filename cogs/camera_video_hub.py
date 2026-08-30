@@ -139,6 +139,36 @@ async def _ensure_category(guild: "discord.Guild"):
         return None
 
 
+def _hub_notice_embed() -> "discord.Embed":
+    """رسالة ثابتة وحيدة داخل روم الكاميرا (Temp) — بلا تاگ، بلا تكرار.
+    كتبقى هي هي طول عمر الروم (كتتصاوب مرة وحدة ملي الروم كتتخلق، وكتمشي
+    وحدها ملي الروم كتتمسح لأنها فارغة). لي دخل للروم كيشوفها ديركت."""
+    embed = discord.Embed(
+        title="🎥 Video Calls — Camera Room",
+        description=(
+            "مرحبا بيك هنا 👋 هاد الروم مخصصة غير للي حاليين الكاميرا "
+            "ديالهم.\n\n"
+            f"⚠️ **إلا سديتي الكاميرا** (بيدو، ولا تطردت منك)، عندك "
+            f"**{MOVE_IN_GRACE_SECONDS} ثانية** باش تعاود تحلها، وإلا "
+            "البوت غايرجعك للروم لي كنتي فيها قبل."
+        ),
+        color=discord.Color.blurple(),
+    )
+    embed.add_field(
+        name="📸 كيفاش تحل الكاميرا؟",
+        value=(
+            "1️⃣ داخل المكالمة: دوز على أيقونة **🎥 الكاميرا** فشريط التحكم "
+            "(تحت) وضغط عليها.\n"
+            "2️⃣ ولا من الإعدادات: **⚙️ إعدادات ديسكورد → صوت وفيديو 🎙️** "
+            "وتأكد الكاميرا الصحيحة مختارة.\n"
+            "3️⃣ ملي تحلها، دوز حاضر — ماكاين حتى نقل زايد."
+        ),
+        inline=False,
+    )
+    embed.set_footer(text="Camera Hub • اختار لغتك 🌐 من تحت")
+    return embed
+
+
 async def _ensure_hub_channel(guild: "discord.Guild"):
     """كيرجع الروم ديال الفيديو الحالية، ولا كيخلق وحدة جديدة وسط كاتيگوري video calls."""
     gstate = _guild_state(guild.id)
@@ -165,6 +195,16 @@ async def _ensure_hub_channel(guild: "discord.Guild"):
 
     gstate["hub_channel_id"] = new_channel.id
     save_camera_hub_config()
+
+    # رسالة ثابتة وحيدة، كتتصاوب مرة وحدة مع الروم — بلا تاگ، بلا تكرار.
+    try:
+        await new_channel.send(
+            embed=_hub_notice_embed(),
+            view=panel_language_view("camera_hub_notice"),
+        )
+    except (discord.Forbidden, discord.HTTPException) as e:
+        print(f"[CAMERA-HUB] ما قدرتش نصيفط رسالة روم الكاميرا: {e}")
+
     return new_channel
 
 
@@ -291,62 +331,6 @@ async def resend_gateway_message(guild: "discord.Guild"):
     return gateway_channel
 
 
-def _move_notice_embed(member: "discord.Member", guild: "discord.Guild") -> "discord.Embed":
-    """إشعار بالدارجة فقط — من بغا لغة أخرى كيختارها بروحه من القائمة 🌐 تحت.
-    كيتصيفط فـ DM خاص بالعضو (ماشي فروم الكاميرا) باش يبقى خاص بيه وماشي
-    ظاهر لكلشي — بهاد الشكل ماكاينش تراكم رسائل فحتى روم، كل واحد كيتوصل
-    برسالة ديالو بوحدو."""
-    embed = discord.Embed(
-        title="🎥 Video Calls — Camera Room",
-        description=(
-            f"{member.mention} تهزيتي أوتوماتيك لروم الكاميرا فـ **{guild.name}** "
-            f"حيت كنتي حالي الكاميرا وأنت داخل روم الدخول.\n\n"
-            f"⚠️ ديسكورد كيسد الكاميرا أوتوماتيك ملي بوت كينقلك — عندك "
-            f"**{MOVE_IN_GRACE_SECONDS} ثانية** باش تعاود تحلها يدويا، وإلا "
-            f"البوت غايرجعك للروم لي كنتي فيها."
-        ),
-        color=discord.Color.blurple(),
-    )
-    embed.add_field(
-        name="📸 كيفاش تعاود تحل الكاميرا؟",
-        value=(
-            "1️⃣ داخل المكالمة: دوز على أيقونة **🎥 الكاميرا** فشريط التحكم "
-            "(تحت) وضغط عليها باش تحلها.\n"
-            "2️⃣ ولا من الإعدادات: **⚙️ إعدادات ديسكورد → صوت وفيديو 🎙️** "
-            "وتأكد الكاميرا الصحيحة مختارة، من بعد رجع ضغط على أيقونة "
-            "الكاميرا.\n"
-            "3️⃣ ملي تحلها فالوقت، البوت غايهزك تلقائياً لروم الكاميرا فالسكان "
-            "الجاي (كل 5 ثواني)."
-        ),
-        inline=False,
-    )
-    try:
-        embed.set_thumbnail(url=member.display_avatar.url)
-    except Exception:
-        pass
-    embed.set_footer(text=f"{member.display_name} • Camera Hub")
-    return embed
-
-
-class DismissNoticeView(discord.ui.View):
-    """زر تجاهل ❌ تحت إشعار النقل ديال الـ DM — كيمسح الرسالة."""
-
-    def __init__(self, member_id: int):
-        super().__init__(timeout=None)
-        self.member_id = member_id
-
-    @discord.ui.button(label="تجاهل", emoji="❌", style=discord.ButtonStyle.secondary)
-    async def dismiss(self, interaction: discord.Interaction, button: discord.ui.Button):
-        try:
-            await interaction.response.defer()
-        except (discord.NotFound, discord.HTTPException):
-            pass
-        try:
-            await interaction.message.delete()
-        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-            pass
-
-
 class CameraHubCog(commands.Cog):
     def __init__(self, bot_instance: commands.Bot):
         self.bot = bot_instance
@@ -361,6 +345,10 @@ class CameraHubCog(commands.Cog):
         # ماكيوصلش لحتى handler (custom_id ماشي مسجل فهاد الـ process الجديد)
         # فيبان للعضو "اللغة ماخدامش" — هادو هو السبب ديال البوگ المبلغ عنه.
         self.bot.add_view(panel_language_view("camera_gateway_instructions"))
+        # نفس السبب: روم الكاميرا (Temp) ممكن تبقى معمورة عبر ريستارت البوت
+        # (ماكتمسحش حيت فيها ناس)، فرسالتها الثابتة (_hub_notice_embed) خاصها
+        # هي الأخرى تسجيل دائم باش القائمة ديال اللغة تبقى خدامة.
+        self.bot.add_view(panel_language_view("camera_hub_notice"))
 
     def cog_unload(self):
         self.camera_scan_loop.cancel()
@@ -473,21 +461,10 @@ class CameraHubCog(commands.Cog):
                             f"**العضو:** {m.mention}\n**من:** {gateway_channel.mention}\n**لـ:** {hub_channel.mention}",
                             discord.Color.blurple(),
                         )
-                        try:
-                            # كنصيفطو الإشعار فـ DM خاص بالعضو (ماشي فروم
-                            # الكاميرا) باش يبقى خاص بيه وماشي ظاهر لكلشي.
-                            # attach_panel_language: قائمة 🌐 اللغة مضمونة،
-                            # وزر "تجاهل ❌" باش يمسح الرسالة من عندو.
-                            await m.send(
-                                embed=_move_notice_embed(m, guild),
-                                view=attach_panel_language(
-                                    DismissNoticeView(m.id), "camera_hub_move_notice"
-                                ),
-                            )
-                        except (discord.Forbidden, discord.HTTPException):
-                            # الـDM مسدودة عند العضو — ماكاين حل، غير نكملو
-                            # بلا إشعار (النقل ديال الكاميرا نفسو ماشي متأثر).
-                            pass
+                        # ملاحظة: ماكاينش رسالة خاصة (DM) بعد دابا — الشرح
+                        # (10 ثواني، بحال-اش تحل الكاميرا...) بقى ثابت داخل
+                        # روم الكاميرا نفسها (شوف _hub_notice_embed فـ
+                        # _ensure_hub_channel)، بلا تاگ وبلا تكرار.
                     except (discord.Forbidden, discord.HTTPException):
                         pass
 
